@@ -1,4 +1,4 @@
-import { signToken, verifyToken } from '@memesh/qr-engine';
+import { isVerifyFailure, signToken, verifyToken } from '@memesh/qr-engine';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { envKeyResolver } from '../qr.js';
@@ -43,7 +43,7 @@ export const qrRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.code(400).send({ error: 'invalid_body' });
     }
     const result = verifyToken(parsed.data.token, envKeyResolver);
-    if (!result.ok) {
+    if (isVerifyFailure(result)) {
       request.log.info({ error: result.error }, '[qr verify] rejected');
       return reply.code(401).send({ ok: false, error: result.error });
     }
