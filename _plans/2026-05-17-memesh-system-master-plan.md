@@ -92,11 +92,11 @@ Success looks like: brother's staff stops using two flaky third-party plugins an
 
 (Detail in brief §2. Locked since user decision 2026-05-17.)
 
-- **Backend API**: Node.js 24 LTS + TypeScript + Express or Fastify. Fastify preferred for type-first ergonomics and lower overhead.
+- **Backend API**: Node.js 24 LTS + TypeScript + **Fastify** (locked).
 - **Database**: PostgreSQL 16 (Neon serverless, EU region — closest to Israel and avoids server management).
+- **ORM**: **Drizzle ORM** (locked 2026-05-17). Reasoning: lightest cold-start on Vercel Fluid Compute, native Neon serverless driver, scales linearly, SQL-aware (N+1 visibility), strong TS safety on the relational chain Activity → Session → Booking → Attendance. drizzle-kit for migrations.
 - **Cache + Queue**: Redis (Upstash, EU region, serverless).
-- **Customer SPA + Staff Portal**: React 19 + TypeScript + Vite + Tailwind RTL preset.
-- **POS PWA**: React + service worker + IndexedDB for offline.
+- **Frontend (all surfaces in one Next.js app)**: **Next.js 16 App Router with route groups** (locked 2026-05-17). Route groups: `(customer)` for parent-facing pages, `(staff)` for instructors + managers + cashiers, `(pos)` for the cashier-tablet POS surface (with `'use client'` + service worker for offline). One Vercel deploy, one auth surface, shared design system. Tailwind v4 with RTL.
 - **Auth**: JWT access + refresh, WordPress SSO bridge.
 - **Email**: Resend (Hebrew RTL templates).
 - **SMS**: Israeli local gateway (InforUMobile or Cellact) — NOT Twilio. See cost analysis.
