@@ -68,6 +68,18 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
+  packages/qr-engine:
+    devDependencies:
+      '@types/node':
+        specifier: ^24.0.0
+        version: 24.12.4
+      tsx:
+        specifier: ^4.19.0
+        version: 4.22.1
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
 packages:
 
   '@drizzle-team/brocli@0.10.2':
