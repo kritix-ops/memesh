@@ -9,6 +9,11 @@ const envSchema = z.object({
     .string()
     .min(32, 'SERVER_SECRET_KEY must be at least 32 characters'),
   QR_KEY_ID: z.string().min(1).default('1'),
+  JWT_SECRET: z
+    .string()
+    .min(32, 'JWT_SECRET must be at least 32 characters'),
+  JWT_ISSUER: z.string().default('memesh'),
+  JWT_AUDIENCE: z.string().default('memesh-api'),
 });
 
 export const env = envSchema.parse(process.env);

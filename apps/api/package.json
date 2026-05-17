@@ -11,9 +11,11 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@fastify/cookie": "^11.0.0",
     "@fastify/cors": "^10.0.0",
     "@fastify/helmet": "^12.0.0",
     "@fastify/rate-limit": "^10.0.0",
+    "@memesh/auth": "workspace:*",
     "@memesh/db": "workspace:*",
     "@memesh/qr-engine": "workspace:*",
     "fastify": "^5.2.0",

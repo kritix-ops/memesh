@@ -1,6 +1,7 @@
 import { isVerifyFailure, signToken, verifyToken } from '@memesh/qr-engine';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
+import { requireRoleHook } from '../lib/auth-guards.js';
 import { envKeyResolver } from '../qr.js';
 
 const signBodySchema = z.object({
@@ -14,7 +15,10 @@ const verifyBodySchema = z.object({
 });
 
 export const qrRoutes: FastifyPluginAsync = async (fastify) => {
-  fastify.post('/qr/sign', async (request, reply) => {
+  fastify.post(
+    '/qr/sign',
+    { preHandler: requireRoleHook('manager', 'admin') },
+    async (request, reply) => {
     const parsed = signBodySchema.safeParse(request.body);
     if (!parsed.success) {
       request.log.info({ issues: parsed.error.issues }, '[qr sign] invalid body');
@@ -36,7 +40,10 @@ export const qrRoutes: FastifyPluginAsync = async (fastify) => {
     return { token };
   });
 
-  fastify.post('/qr/verify', async (request, reply) => {
+  fastify.post(
+    '/qr/verify',
+    { preHandler: requireRoleHook('cashier', 'manager', 'admin') },
+    async (request, reply) => {
     const parsed = verifyBodySchema.safeParse(request.body);
     if (!parsed.success) {
       request.log.info({ issues: parsed.error.issues }, '[qr verify] invalid body');

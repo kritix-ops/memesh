@@ -2,7 +2,9 @@ import cors from '@fastify/cors';
 import Fastify from 'fastify';
 import { randomUUID } from 'node:crypto';
 import { env } from './config.js';
+import { authPlugin } from './plugins/auth.js';
 import { securityPlugin } from './plugins/security.js';
+import { authRoutes } from './routes/auth.js';
 import { qrRoutes } from './routes/qr.js';
 
 const fastify = Fastify({
@@ -20,6 +22,8 @@ await fastify.register(cors, {
 });
 
 await fastify.register(securityPlugin);
+await fastify.register(authPlugin);
+await fastify.register(authRoutes);
 await fastify.register(qrRoutes);
 
 fastify.get('/health', async () => ({
