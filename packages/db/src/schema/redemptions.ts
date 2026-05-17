@@ -1,6 +1,6 @@
 import { boolean, integer, pgEnum, pgTable, timestamp, uuid, varchar } from 'drizzle-orm/pg-core';
-import { tickets } from './tickets.js';
-import { users } from './users.js';
+import { tickets } from './tickets';
+import { users } from './users';
 
 export const redemptionMethodEnum = pgEnum('redemption_method', [
   'qr_scan',

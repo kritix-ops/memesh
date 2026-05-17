@@ -1,5 +1,5 @@
 import { boolean, integer, pgEnum, pgTable, timestamp, uuid, varchar } from 'drizzle-orm/pg-core';
-import { users } from './users.js';
+import { users } from './users';
 
 export const ticketTypeEnum = pgEnum('ticket_type', [
   'baby_single',

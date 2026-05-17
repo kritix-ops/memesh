@@ -1,0 +1,13 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1779048227418,
+      "tag": "0000_careless_garia",
+      "breakpoints": true
+    }
+  ]
+}

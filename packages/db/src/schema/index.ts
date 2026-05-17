@@ -1,3 +1,3 @@
-export * from './users.js';
-export * from './tickets.js';
-export * from './redemptions.js';
+export * from './users';
+export * from './tickets';
+export * from './redemptions';
