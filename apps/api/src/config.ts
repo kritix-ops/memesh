@@ -5,6 +5,10 @@ const envSchema = z.object({
   PORT: z.coerce.number().int().positive().default(3001),
   DATABASE_URL: z.string().url(),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
+  SERVER_SECRET_KEY: z
+    .string()
+    .min(32, 'SERVER_SECRET_KEY must be at least 32 characters'),
+  QR_KEY_ID: z.string().min(1).default('1'),
 });
 
 export const env = envSchema.parse(process.env);

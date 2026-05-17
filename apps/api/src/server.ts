@@ -1,6 +1,9 @@
 import cors from '@fastify/cors';
 import Fastify from 'fastify';
+import { randomUUID } from 'node:crypto';
 import { env } from './config.js';
+import { securityPlugin } from './plugins/security.js';
+import { qrRoutes } from './routes/qr.js';
 
 const fastify = Fastify({
   logger:
@@ -8,12 +11,16 @@ const fastify = Fastify({
       ? { level: env.LOG_LEVEL, transport: { target: 'pino-pretty' } }
       : { level: env.LOG_LEVEL },
   trustProxy: true,
+  genReqId: () => randomUUID(),
 });
 
 await fastify.register(cors, {
   origin: env.NODE_ENV === 'development' ? true : false,
   credentials: true,
 });
+
+await fastify.register(securityPlugin);
+await fastify.register(qrRoutes);
 
 fastify.get('/health', async () => ({
   status: 'ok',
