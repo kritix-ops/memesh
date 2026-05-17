@@ -1,4 +1,13 @@
-import { boolean, integer, pgEnum, pgTable, timestamp, uuid, varchar } from 'drizzle-orm/pg-core';
+import {
+  type AnyPgColumn,
+  boolean,
+  integer,
+  pgEnum,
+  pgTable,
+  timestamp,
+  uuid,
+  varchar,
+} from 'drizzle-orm/pg-core';
 import { users } from './users';
 
 export const ticketTypeEnum = pgEnum('ticket_type', [
@@ -22,6 +31,8 @@ export const tickets = pgTable('tickets', {
   usedEntries: integer('used_entries').notNull().default(0),
   expiresAt: timestamp('expires_at', { withTimezone: true }),
   wcOrderId: varchar('wc_order_id', { length: 64 }),
+  wcProductId: integer('wc_product_id'),
+  companionTicketId: uuid('companion_ticket_id').references((): AnyPgColumn => tickets.id),
   source: ticketSourceEnum('source').notNull(),
   isActive: boolean('is_active').notNull().default(true),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

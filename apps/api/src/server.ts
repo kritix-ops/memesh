@@ -6,6 +6,13 @@ import { authPlugin } from './plugins/auth.js';
 import { securityPlugin } from './plugins/security.js';
 import { authRoutes } from './routes/auth.js';
 import { qrRoutes } from './routes/qr.js';
+import { wcWebhookRoutes } from './routes/wc-webhook.js';
+
+declare module 'fastify' {
+  interface FastifyRequest {
+    rawBody?: Buffer;
+  }
+}
 
 const fastify = Fastify({
   logger:
@@ -21,10 +28,30 @@ await fastify.register(cors, {
   credentials: true,
 });
 
+// Capture raw body for HMAC verification on inbound webhooks while still
+// providing parsed JSON to handlers. Applies to all application/json requests.
+fastify.addContentTypeParser(
+  'application/json',
+  { parseAs: 'buffer' },
+  (request, body: Buffer, done) => {
+    request.rawBody = body;
+    if (body.length === 0) {
+      done(null, undefined);
+      return;
+    }
+    try {
+      done(null, JSON.parse(body.toString('utf8')));
+    } catch (err) {
+      done(err as Error, undefined);
+    }
+  },
+);
+
 await fastify.register(securityPlugin);
 await fastify.register(authPlugin);
 await fastify.register(authRoutes);
 await fastify.register(qrRoutes);
+await fastify.register(wcWebhookRoutes);
 
 fastify.get('/health', async () => ({
   status: 'ok',

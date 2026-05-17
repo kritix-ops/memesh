@@ -14,6 +14,9 @@ const envSchema = z.object({
     .min(32, 'JWT_SECRET must be at least 32 characters'),
   JWT_ISSUER: z.string().default('memesh'),
   JWT_AUDIENCE: z.string().default('memesh-api'),
+  WC_WEBHOOK_SECRET: z
+    .string()
+    .min(20, 'WC_WEBHOOK_SECRET must be at least 20 characters'),
 });
 
 export const env = envSchema.parse(process.env);

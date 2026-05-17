@@ -1,4 +1,4 @@
-import { boolean, integer, pgEnum, pgTable, timestamp, uuid, varchar } from 'drizzle-orm/pg-core';
+import { boolean, integer, pgEnum, pgTable, text, timestamp, uuid, varchar } from 'drizzle-orm/pg-core';
 import { tickets } from './tickets';
 import { users } from './users';
 
@@ -22,6 +22,7 @@ export const redemptions = pgTable('redemptions', {
   companionCount: integer('companion_count').notNull().default(1),
   redeemedAt: timestamp('redeemed_at', { withTimezone: true }).notNull().defaultNow(),
   isOfflineSync: boolean('is_offline_sync').notNull().default(false),
+  notes: text('notes'),
 });
 
 export type Redemption = typeof redemptions.$inferSelect;
