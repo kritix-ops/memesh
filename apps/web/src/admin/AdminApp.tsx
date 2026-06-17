@@ -1,5 +1,6 @@
 import { type CSSProperties, type ReactNode, useState } from 'react';
 import { avatar, fmtDate, fullName, initialCustomers, initials, statusBadge } from '../mock';
+import { useViewport } from '../useViewport';
 
 const ORANGE = '#ffa983';
 const GREEN = '#c4d898';
@@ -79,48 +80,82 @@ export function AdminApp() {
   const [view, setView] = useState<View>('dashboard');
   const [query, setQuery] = useState('');
   const [cardFilter, setCardFilter] = useState<CardFilter>('active');
+  const { width } = useViewport();
+  const stacked = width < 1000;
 
   return (
     <main
       style={{
         maxWidth: 1140,
         margin: '0 auto',
-        padding: '24px 20px 64px',
+        padding: stacked ? '16px 14px 56px' : '24px 20px 64px',
         display: 'flex',
-        gap: 20,
+        flexDirection: stacked ? 'column' : 'row',
+        gap: stacked ? 14 : 20,
       }}
     >
-      <nav style={{ ...card, width: 210, alignSelf: 'flex-start', padding: 10 }}>
+      <nav
+        style={
+          stacked
+            ? {
+                display: 'flex',
+                gap: 8,
+                overflowX: 'auto',
+                padding: 6,
+                background: '#fff',
+                borderRadius: 14,
+                boxShadow: SHADOW,
+              }
+            : { ...card, width: 210, alignSelf: 'flex-start', padding: 10 }
+        }
+      >
         {NAV.map((n) => {
           const on = view === n.key;
           return (
             <button
               key={n.key}
               onClick={() => setView(n.key)}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 10,
-                width: '100%',
-                textAlign: 'right',
-                border: 'none',
-                cursor: 'pointer',
-                borderRadius: 10,
-                padding: '11px 12px',
-                fontWeight: 600,
-                fontSize: 14.5,
-                background: on ? '#fff4ee' : 'transparent',
-                color: on ? '#c97a52' : MUTED,
-              }}
+              style={
+                stacked
+                  ? {
+                      flexShrink: 0,
+                      border: 'none',
+                      cursor: 'pointer',
+                      borderRadius: 9,
+                      padding: '9px 14px',
+                      fontWeight: 600,
+                      fontSize: 14,
+                      whiteSpace: 'nowrap',
+                      background: on ? '#fff4ee' : 'transparent',
+                      color: on ? '#c97a52' : MUTED,
+                    }
+                  : {
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 10,
+                      width: '100%',
+                      textAlign: 'right',
+                      border: 'none',
+                      cursor: 'pointer',
+                      borderRadius: 10,
+                      padding: '11px 12px',
+                      fontWeight: 600,
+                      fontSize: 14.5,
+                      background: on ? '#fff4ee' : 'transparent',
+                      color: on ? '#c97a52' : MUTED,
+                    }
+              }
             >
-              <span
-                style={{
-                  width: 8,
-                  height: 8,
-                  borderRadius: 4,
-                  background: on ? ORANGE : '#dfe3e3',
-                }}
-              />
+              {!stacked && (
+                <span
+                  style={{
+                    width: 8,
+                    height: 8,
+                    borderRadius: 4,
+                    background: on ? ORANGE : '#dfe3e3',
+                  }}
+                />
+              )}
               {n.label}
             </button>
           );
@@ -580,27 +615,29 @@ function Reports() {
 
 function Table({ head, children }: { head: string[]; children: ReactNode }) {
   return (
-    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
-      <thead>
-        <tr>
-          {head.map((h) => (
-            <th
-              key={h}
-              style={{
-                textAlign: 'right',
-                color: MUTED,
-                fontWeight: 600,
-                fontSize: 13,
-                padding: '0 0 8px',
-              }}
-            >
-              {h}
-            </th>
-          ))}
-        </tr>
-      </thead>
-      <tbody>{children}</tbody>
-    </table>
+    <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+      <table style={{ width: '100%', minWidth: 440, borderCollapse: 'collapse', fontSize: 14 }}>
+        <thead>
+          <tr>
+            {head.map((h) => (
+              <th
+                key={h}
+                style={{
+                  textAlign: 'right',
+                  color: MUTED,
+                  fontWeight: 600,
+                  fontSize: 13,
+                  padding: '0 0 8px',
+                }}
+              >
+                {h}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>{children}</tbody>
+      </table>
+    </div>
   );
 }
 
