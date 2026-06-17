@@ -1,4 +1,4 @@
-import type { UserRole } from '@memesh/auth';
+import type { StaffRole } from '@memesh/auth';
 import type { FastifyReply, FastifyRequest, preHandlerHookHandler } from 'fastify';
 
 export const requireAuthHook: preHandlerHookHandler = async (
@@ -11,7 +11,8 @@ export const requireAuthHook: preHandlerHookHandler = async (
   }
 };
 
-export const requireRoleHook = (...roles: UserRole[]): preHandlerHookHandler =>
+export const requireRoleHook =
+  (...roles: StaffRole[]): preHandlerHookHandler =>
   async (request: FastifyRequest, reply: FastifyReply) => {
     if (!request.user) {
       request.log.info({ path: request.url }, '[api auth] unauthorized');

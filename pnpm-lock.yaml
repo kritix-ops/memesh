@@ -116,6 +116,9 @@ importers:
 
   packages/db:
     dependencies:
+      '@memesh/qr-engine':
+        specifier: workspace:*
+        version: link:../qr-engine
       dotenv:
         specifier: ^16.4.0
         version: 16.6.1
@@ -2170,7 +2173,7 @@ snapshots:
   '@types/pg@8.11.6':
     dependencies:
       '@types/node': 24.12.4
-      pg-protocol: 1.13.0
+      pg-protocol: 1.14.0
       pg-types: 4.1.0
     optional: true
 

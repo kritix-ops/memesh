@@ -1,12 +1,12 @@
 import cookie from '@fastify/cookie';
 import { isAuthSuccess, verifyAccessToken } from '@memesh/auth';
-import type { UserRole } from '@memesh/auth';
+import type { StaffRole } from '@memesh/auth';
 import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import { authConfig } from '../auth.js';
 
 export interface RequestUser {
   id: string;
-  role: UserRole;
+  role: StaffRole;
 }
 
 declare module 'fastify' {

@@ -10,13 +10,14 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --test --import tsx src/punch.test.ts",
+    "test": "node --test --import tsx src/punch.test.ts src/cards.test.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio"
   },
   "dependencies": {
+    "@memesh/qr-engine": "workspace:*",
     "dotenv": "^16.4.0",
     "drizzle-orm": "^0.36.0",
     "pg": "^8.13.0"
