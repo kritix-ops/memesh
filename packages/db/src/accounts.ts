@@ -78,3 +78,18 @@ export const updateCustomerProfile = async (
   const rows = await db.update(customers).set(set).where(eq(customers.id, id)).returning();
   return rows[0];
 };
+
+/** Link a customer to their WordPress user id (set once by the WP sync job). */
+export const setCustomerWpUserId = async (
+  db: AnyPgDatabase,
+  id: string,
+  wpUserId: number,
+  now: Date = new Date(),
+) => {
+  const rows = await db
+    .update(customers)
+    .set({ wpUserId, updatedAt: now })
+    .where(eq(customers.id, id))
+    .returning({ id: customers.id, wpUserId: customers.wpUserId });
+  return rows[0];
+};

@@ -3,7 +3,13 @@ import { test } from 'node:test';
 import { PGlite } from '@electric-sql/pglite';
 import { drizzle } from 'drizzle-orm/pglite';
 import { migrate } from 'drizzle-orm/pglite/migrator';
-import { createStaff, getCustomerById, listStaff, updateCustomerProfile } from './accounts';
+import {
+  createStaff,
+  getCustomerById,
+  listStaff,
+  setCustomerWpUserId,
+  updateCustomerProfile,
+} from './accounts';
 import { createCustomer } from './cards';
 
 async function freshDb() {
@@ -65,6 +71,18 @@ test('updateCustomerProfile edits allowed fields and leaves phone unchanged', as
   assert.equal(updated.preferredChannel, 'whatsapp');
   assert.equal(updated.children.length, 1);
   assert.equal(updated.phone, p); // phone is not editable here
+});
+
+test('setCustomerWpUserId links a customer to a WordPress user id', async () => {
+  const db = await freshDb();
+  const customer = await createCustomer(db, {
+    firstName: 'Dana',
+    lastName: 'Levi',
+    phone: phone(),
+  });
+  assert.equal(customer.wpUserId, null);
+  const linked = await setCustomerWpUserId(db, customer.id, 4242);
+  assert.equal(linked?.wpUserId, 4242);
 });
 
 test('getCustomerById returns the customer or undefined', async () => {

@@ -9,7 +9,7 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
-    "test": "node --test --import tsx src/app.test.ts"
+    "test": "node --test --import tsx src/app.test.ts src/lib/wp-sync.test.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.0",
@@ -27,6 +27,7 @@
     "zod": "^3.24.0"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.2.12",
     "@types/node": "^24.0.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0"

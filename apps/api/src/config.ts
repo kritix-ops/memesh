@@ -11,6 +11,11 @@ const envSchema = z.object({
   JWT_ISSUER: z.string().default('memesh'),
   JWT_AUDIENCE: z.string().default('memesh-api'),
   JWT_CUSTOMER_AUDIENCE: z.string().default('memesh-customer'),
+  // WordPress one-way sync (optional). When unset, sync is disabled and customer
+  // creation simply skips it.
+  WP_BASE_URL: z.string().url().optional(),
+  WP_SYNC_USER: z.string().optional(),
+  WP_SYNC_APP_PASSWORD: z.string().optional(),
 });
 
 export const env = envSchema.parse(process.env);

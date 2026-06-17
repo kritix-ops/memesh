@@ -3,8 +3,13 @@ import { ilike, or } from 'drizzle-orm';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { requireRoleHook } from '../lib/auth-guards.js';
+import { getWpClient } from '../lib/wp-client.js';
+import { syncCustomerToWp } from '../lib/wp-sync.js';
 
 const STAFF = ['cashier', 'manager', 'admin'] as const;
+
+// null when WP sync is not configured.
+const wpClient = getWpClient();
 
 const createBodySchema = z.object({
   firstName: z.string().min(1).max(80),
@@ -33,6 +38,12 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
         ...(request.user && { registeredBy: request.user.id }),
       });
       request.log.info({ id: customer.id, number: customer.customerNumber }, '[customers] created');
+      // One-way WP sync, never in the request path: fire-and-forget, errors logged.
+      if (wpClient) {
+        void syncCustomerToWp(wpClient, db, customer).catch((err) =>
+          request.log.warn({ err, id: customer.id }, '[wp sync] failed'),
+        );
+      }
       return reply.code(201).send({ customer });
     } catch (err) {
       // The only collidable unique field on a fresh register is the phone.
