@@ -19,6 +19,7 @@
     "@memesh/auth": "workspace:*",
     "@memesh/db": "workspace:*",
     "@memesh/qr-engine": "workspace:*",
+    "@memesh/sms": "workspace:*",
     "drizzle-orm": "^0.36.0",
     "fastify": "^5.2.0",
     "pino": "^9.5.0",

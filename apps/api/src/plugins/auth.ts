@@ -12,6 +12,7 @@ export interface RequestUser {
 declare module 'fastify' {
   interface FastifyRequest {
     user: RequestUser | null;
+    customer: { id: string } | null;
   }
 }
 
@@ -28,6 +29,7 @@ export const authPlugin: FastifyPluginAsync = async (fastify) => {
   await fastify.register(cookie);
 
   fastify.decorateRequest('user', null);
+  fastify.decorateRequest('customer', null);
 
   fastify.addHook('onRequest', async (request) => {
     const token = extractToken(request);

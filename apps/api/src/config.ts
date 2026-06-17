@@ -10,6 +10,7 @@ const envSchema = z.object({
   JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 characters'),
   JWT_ISSUER: z.string().default('memesh'),
   JWT_AUDIENCE: z.string().default('memesh-api'),
+  JWT_CUSTOMER_AUDIENCE: z.string().default('memesh-customer'),
 });
 
 export const env = envSchema.parse(process.env);

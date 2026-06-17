@@ -41,6 +41,9 @@ importers:
       '@memesh/qr-engine':
         specifier: workspace:*
         version: link:../../packages/qr-engine
+      '@memesh/sms':
+        specifier: workspace:*
+        version: link:../../packages/sms
       drizzle-orm:
         specifier: ^0.36.0
         version: 0.36.4(@electric-sql/pglite@0.2.17)(@neondatabase/serverless@0.10.4)(@types/pg@8.20.0)(@types/react@19.2.14)(pg@8.21.0)(react@19.2.6)
@@ -149,6 +152,18 @@ importers:
         version: 5.9.3
 
   packages/qr-engine:
+    devDependencies:
+      '@types/node':
+        specifier: ^24.0.0
+        version: 24.12.4
+      tsx:
+        specifier: ^4.19.0
+        version: 4.22.1
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/sms:
     devDependencies:
       '@types/node':
         specifier: ^24.0.0

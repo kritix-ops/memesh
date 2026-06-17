@@ -81,6 +81,16 @@ CREATE TABLE "scan_attempts" (
 	"attempted_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
+CREATE TABLE "customer_otps" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"phone" varchar(32) NOT NULL,
+	"code_hash" varchar(128) NOT NULL,
+	"expires_at" timestamp with time zone NOT NULL,
+	"attempts" integer DEFAULT 0 NOT NULL,
+	"consumed_at" timestamp with time zone,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
 ALTER TABLE "customers" ADD CONSTRAINT "customers_registered_by_staff_id_fk" FOREIGN KEY ("registered_by") REFERENCES "public"."staff"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "punch_cards" ADD CONSTRAINT "punch_cards_customer_id_customers_id_fk" FOREIGN KEY ("customer_id") REFERENCES "public"."customers"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "punch_card_entries" ADD CONSTRAINT "punch_card_entries_punch_card_id_punch_cards_id_fk" FOREIGN KEY ("punch_card_id") REFERENCES "public"."punch_cards"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint

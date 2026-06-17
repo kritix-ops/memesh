@@ -43,3 +43,26 @@ test('POST /cards without auth returns 401', async () => {
   const res = await app.inject({ method: 'POST', url: '/cards', payload: {} });
   assert.equal(res.statusCode, 401);
 });
+
+test('POST /auth/customer/request-otp rejects an invalid body with 400', async () => {
+  const res = await app.inject({
+    method: 'POST',
+    url: '/auth/customer/request-otp',
+    payload: { phone: '' },
+  });
+  assert.equal(res.statusCode, 400);
+});
+
+test('POST /auth/customer/verify-otp rejects an invalid body with 400', async () => {
+  const res = await app.inject({
+    method: 'POST',
+    url: '/auth/customer/verify-otp',
+    payload: { phone: '052-1234567', code: 'abc' },
+  });
+  assert.equal(res.statusCode, 400);
+});
+
+test('GET /me/cards without a customer token returns 401', async () => {
+  const res = await app.inject({ method: 'GET', url: '/me/cards' });
+  assert.equal(res.statusCode, 401);
+});

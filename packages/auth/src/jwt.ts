@@ -18,7 +18,7 @@ export interface TokenPayload {
 
 const toKey = (secret: string): Uint8Array => new TextEncoder().encode(secret);
 
-const mapJoseError = (err: unknown): AuthVerifyError => {
+export const mapJoseError = (err: unknown): AuthVerifyError => {
   if (!(err instanceof Error)) return 'invalid_format';
   switch (err.name) {
     case 'JWTExpired':

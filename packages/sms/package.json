@@ -1,5 +1,5 @@
 {
-  "name": "@memesh/auth",
+  "name": "@memesh/sms",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -9,10 +9,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --test --import tsx src/jwt.test.ts src/password.test.ts src/customer-token.test.ts"
-  },
-  "dependencies": {
-    "jose": "^5.9.0"
+    "test": "node --test --import tsx src/console-provider.test.ts"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
