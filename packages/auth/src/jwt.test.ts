@@ -2,12 +2,7 @@ import assert from 'node:assert/strict';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { test } from 'node:test';
 import type { AuthConfig } from './jwt';
-import {
-  signAccessToken,
-  signRefreshToken,
-  verifyAccessToken,
-  verifyRefreshToken,
-} from './jwt';
+import { signAccessToken, signRefreshToken, verifyAccessToken, verifyRefreshToken } from './jwt';
 
 const baseConfig: AuthConfig = {
   secret: 'test-secret-that-is-at-least-32-characters-long',
@@ -70,12 +65,12 @@ test('verifyAccessToken rejects a tampered token', async () => {
 });
 
 test('signRefreshToken + verifyRefreshToken roundtrip', async () => {
-  const token = await signRefreshToken({ sub: userId, role: 'customer' }, baseConfig);
+  const token = await signRefreshToken({ sub: userId, role: 'manager' }, baseConfig);
   const result = await verifyRefreshToken(token, baseConfig);
   assert.equal(result.ok, true);
   if (result.ok) {
     assert.equal(result.claims.sub, userId);
-    assert.equal(result.claims.role, 'customer');
+    assert.equal(result.claims.role, 'manager');
     assert.equal(result.claims.typ, 'refresh');
   }
 });

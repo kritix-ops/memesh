@@ -2,8 +2,8 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { VerifyResult } from './errors.js';
 
 export interface TokenPayload {
-  ticketId: string;
-  userId: string;
+  punchCardId: string;
+  customerId: string;
   createdTs: number;
   serial: string;
   keyId: string;
@@ -24,8 +24,8 @@ const PAYLOAD_DELIMITER = '|';
 
 const serialise = (payload: TokenPayload): string =>
   [
-    payload.ticketId,
-    payload.userId,
+    payload.punchCardId,
+    payload.customerId,
     payload.createdTs.toString(),
     payload.serial,
     payload.keyId,
@@ -34,11 +34,11 @@ const serialise = (payload: TokenPayload): string =>
 const deserialise = (raw: string): TokenPayload | undefined => {
   const parts = raw.split(PAYLOAD_DELIMITER);
   if (parts.length !== 5) return undefined;
-  const [ticketId, userId, createdTsStr, serial, keyId] = parts;
-  if (!ticketId || !userId || !createdTsStr || !serial || !keyId) return undefined;
+  const [punchCardId, customerId, createdTsStr, serial, keyId] = parts;
+  if (!punchCardId || !customerId || !createdTsStr || !serial || !keyId) return undefined;
   const createdTs = Number(createdTsStr);
   if (!Number.isFinite(createdTs)) return undefined;
-  return { ticketId, userId, createdTs, serial, keyId };
+  return { punchCardId, customerId, createdTs, serial, keyId };
 };
 
 const hmac = (payload: string, secret: string): Buffer =>
@@ -49,10 +49,7 @@ const safeEqual = (a: Buffer, b: Buffer): boolean => {
   return timingSafeEqual(a, b);
 };
 
-export const signToken = (
-  payload: Omit<TokenPayload, 'keyId'>,
-  resolver: KeyResolver,
-): string => {
+export const signToken = (payload: Omit<TokenPayload, 'keyId'>, resolver: KeyResolver): string => {
   const { keyId, secret } = resolver.resolveSigningKey();
   const fullPayload: TokenPayload = { ...payload, keyId };
   const serialised = serialise(fullPayload);
@@ -62,10 +59,7 @@ export const signToken = (
   return `${TOKEN_VERSION}.${payloadB64}.${sigB64}`;
 };
 
-export const verifyToken = (
-  token: string,
-  resolver: KeyResolver,
-): VerifyResult<TokenPayload> => {
+export const verifyToken = (token: string, resolver: KeyResolver): VerifyResult<TokenPayload> => {
   const parts = token.split('.');
   if (parts.length !== 3) return { ok: false, error: 'invalid_format' };
   const [version, payloadB64, sigB64] = parts;
