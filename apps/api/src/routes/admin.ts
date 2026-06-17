@@ -1,4 +1,4 @@
-import { dashboardStats, db, dormantCustomers } from '@memesh/db';
+import { dashboardStats, db, dormantCustomers, listStaffActions } from '@memesh/db';
 import type { FastifyPluginAsync } from 'fastify';
 import { requireRoleHook } from '../lib/auth-guards.js';
 
@@ -15,4 +15,9 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
     { preHandler: requireRoleHook('admin', 'manager') },
     async () => ({ customers: await dormantCustomers(db) }),
   );
+
+  // Staff action log (who did what, when).
+  fastify.get('/admin/actions', { preHandler: requireRoleHook('admin', 'manager') }, async () => ({
+    actions: await listStaffActions(db),
+  }));
 };

@@ -54,6 +54,9 @@ CREATE TABLE "punch_cards" (
 	"is_active" boolean DEFAULT true NOT NULL,
 	"expires_at" timestamp with time zone NOT NULL,
 	"source" "punch_card_source" DEFAULT 'pos' NOT NULL,
+	"cancelled_at" timestamp with time zone,
+	"cancelled_by" uuid,
+	"cancel_reason" text,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "punch_cards_serial_number_unique" UNIQUE("serial_number"),
@@ -91,7 +94,17 @@ CREATE TABLE "customer_otps" (
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
+CREATE TABLE "staff_actions" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"staff_id" uuid,
+	"action" varchar(40) NOT NULL,
+	"summary" text NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
 ALTER TABLE "customers" ADD CONSTRAINT "customers_registered_by_staff_id_fk" FOREIGN KEY ("registered_by") REFERENCES "public"."staff"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "punch_cards" ADD CONSTRAINT "punch_cards_customer_id_customers_id_fk" FOREIGN KEY ("customer_id") REFERENCES "public"."customers"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "punch_cards" ADD CONSTRAINT "punch_cards_cancelled_by_staff_id_fk" FOREIGN KEY ("cancelled_by") REFERENCES "public"."staff"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "punch_card_entries" ADD CONSTRAINT "punch_card_entries_punch_card_id_punch_cards_id_fk" FOREIGN KEY ("punch_card_id") REFERENCES "public"."punch_cards"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "punch_card_entries" ADD CONSTRAINT "punch_card_entries_punched_by_staff_id_fk" FOREIGN KEY ("punched_by") REFERENCES "public"."staff"("id") ON DELETE no action ON UPDATE no action;
+ALTER TABLE "punch_card_entries" ADD CONSTRAINT "punch_card_entries_punched_by_staff_id_fk" FOREIGN KEY ("punched_by") REFERENCES "public"."staff"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "staff_actions" ADD CONSTRAINT "staff_actions_staff_id_staff_id_fk" FOREIGN KEY ("staff_id") REFERENCES "public"."staff"("id") ON DELETE no action ON UPDATE no action;

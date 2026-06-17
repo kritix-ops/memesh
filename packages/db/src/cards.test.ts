@@ -4,7 +4,8 @@ import { PGlite } from '@electric-sql/pglite';
 import { verifyToken, type KeyResolver } from '@memesh/qr-engine';
 import { drizzle } from 'drizzle-orm/pglite';
 import { migrate } from 'drizzle-orm/pglite/migrator';
-import { allocateCustomerNumber, createCustomer, createPunchCard } from './cards';
+import { listStaffActions } from './actions';
+import { allocateCustomerNumber, cancelCard, createCustomer, createPunchCard } from './cards';
 import { punchCard } from './punch';
 
 async function freshDb() {
@@ -118,4 +119,30 @@ test('customer numbers and serials use independent sequences', async () => {
   // And the customer-number sequence keeps advancing.
   const next = await allocateCustomerNumber(db);
   assert.equal(Number(next.slice(2)), n2 + 1);
+});
+
+test('cancelCard deactivates a card, records the reason, and logs an action', async () => {
+  const db = await freshDb();
+  const cust = await makeCustomer(db);
+  const card = await createPunchCard(db, resolver, { customerId: cust.id });
+
+  const cancelled = await cancelCard(db, { cardId: card.id, reason: 'בקשת לקוח' });
+  assert.ok(cancelled);
+  assert.equal(cancelled.isActive, false);
+  assert.equal(cancelled.cancelReason, 'בקשת לקוח');
+  assert.ok(cancelled.cancelledAt);
+
+  const actions = await listStaffActions(db);
+  assert.ok(actions.some((a) => a.action === 'cancel_card'));
+});
+
+test('a cancelled card cannot be punched', async () => {
+  const db = await freshDb();
+  const cust = await makeCustomer(db);
+  const card = await createPunchCard(db, resolver, { customerId: cust.id });
+  await cancelCard(db, { cardId: card.id, reason: 'בדיקה' });
+
+  const res = await punchCard(db, { punchCardId: card.id, method: 'qr_scan' });
+  assert.equal(res.ok, false);
+  if (!res.ok) assert.equal(res.reason, 'inactive');
 });

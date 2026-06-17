@@ -1,4 +1,4 @@
-import { createPunchCard, db } from '@memesh/db';
+import { cancelCard, createPunchCard, db } from '@memesh/db';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { requireRoleHook } from '../lib/auth-guards.js';
@@ -11,6 +11,8 @@ const createBodySchema = z.object({
   totalEntries: z.number().int().positive().max(100).optional(),
   source: z.enum(['pos', 'online', 'manual']).optional(),
 });
+
+const cancelBodySchema = z.object({ reason: z.string().min(1).max(500) });
 
 export const cardsRoutes: FastifyPluginAsync = async (fastify) => {
   // Sell a punch card. Payment is taken externally (AccuPOS); staff confirm here,
@@ -28,4 +30,26 @@ export const cardsRoutes: FastifyPluginAsync = async (fastify) => {
     request.log.info({ cardId: card.id, serial: card.serialNumber }, '[cards] created');
     return reply.code(201).send({ card });
   });
+
+  // Cancel a card (manager/admin), with a required reason. Logged to the action log.
+  fastify.post(
+    '/cards/:id/cancel',
+    { preHandler: requireRoleHook('manager', 'admin') },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      if (!z.string().uuid().safeParse(id).success) {
+        return reply.code(400).send({ error: 'invalid_id' });
+      }
+      const parsed = cancelBodySchema.safeParse(request.body);
+      if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
+      const cancelled = await cancelCard(db, {
+        cardId: id,
+        reason: parsed.data.reason,
+        ...(request.user ? { staffId: request.user.id } : {}),
+      });
+      if (!cancelled) return reply.code(404).send({ error: 'not_found' });
+      request.log.info({ cardId: id }, '[cards] cancelled');
+      return reply.send({ card: cancelled });
+    },
+  );
 };

@@ -1,5 +1,15 @@
-import { boolean, integer, pgEnum, pgTable, timestamp, uuid, varchar } from 'drizzle-orm/pg-core';
+import {
+  boolean,
+  integer,
+  pgEnum,
+  pgTable,
+  text,
+  timestamp,
+  uuid,
+  varchar,
+} from 'drizzle-orm/pg-core';
 import { customers } from './customers';
+import { staff } from './staff';
 
 export const punchCardSourceEnum = pgEnum('punch_card_source', ['pos', 'online', 'manual']);
 
@@ -17,6 +27,9 @@ export const punchCards = pgTable('punch_cards', {
   isActive: boolean('is_active').notNull().default(true),
   expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(), // created_at + 365 days
   source: punchCardSourceEnum('source').notNull().default('pos'),
+  cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
+  cancelledBy: uuid('cancelled_by').references(() => staff.id),
+  cancelReason: text('cancel_reason'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });

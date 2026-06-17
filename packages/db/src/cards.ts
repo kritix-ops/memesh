@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { generateSerial, signToken, type KeyResolver } from '@memesh/qr-engine';
-import { sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import type { PgDatabase } from 'drizzle-orm/pg-core';
+import { logStaffAction } from './actions';
 import { customers, punchCards } from './schema/index';
 
 // Accept any PostgreSQL Drizzle database (node-postgres in prod, PGlite in tests).
@@ -128,4 +129,38 @@ export const createPunchCard = async (
   const row = rows[0];
   if (!row) throw new Error('[createPunchCard] insert returned no row');
   return row;
+};
+
+export interface CancelCardInput {
+  cardId: string;
+  staffId?: string;
+  reason: string;
+  now?: Date;
+}
+
+/** Cancel a card: deactivate it, record who/why, and log a staff action. */
+export const cancelCard = async (db: AnyPgDatabase, input: CancelCardInput) => {
+  const now = input.now ?? new Date();
+  return db.transaction(async (tx) => {
+    const rows = await tx
+      .update(punchCards)
+      .set({
+        isActive: false,
+        cancelledAt: now,
+        cancelledBy: input.staffId ?? null,
+        cancelReason: input.reason,
+        updatedAt: now,
+      })
+      .where(eq(punchCards.id, input.cardId))
+      .returning();
+    const card = rows[0];
+    if (!card) return undefined;
+    await logStaffAction(tx, {
+      action: 'cancel_card',
+      summary: `ביטול כרטיסייה · ${card.serialNumber}`,
+      now,
+      ...(input.staffId !== undefined ? { staffId: input.staffId } : {}),
+    });
+    return card;
+  });
 };

@@ -104,3 +104,17 @@ test('GET /customers/:id without auth returns 401', async () => {
   });
   assert.equal(res.statusCode, 401);
 });
+
+test('POST /cards/:id/cancel without auth returns 401', async () => {
+  const res = await app.inject({
+    method: 'POST',
+    url: '/cards/00000000-0000-0000-0000-000000000000/cancel',
+    payload: { reason: 'x' },
+  });
+  assert.equal(res.statusCode, 401);
+});
+
+test('GET /admin/actions without auth returns 401', async () => {
+  const res = await app.inject({ method: 'GET', url: '/admin/actions' });
+  assert.equal(res.statusCode, 401);
+});
