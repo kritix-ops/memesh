@@ -1,11 +1,60 @@
 # Memesh Phase 1 Build Plan
 
 Date: 2026-06-17
-Status: Draft for review (not yet approved)
+Status: Approved and in build. Backend complete + tested; all 3 frontend surfaces built on mock data and deployed to Vercel. See "Build progress / handoff" below for exactly what is done and what to do next.
 Source brief: `memesh-brief-v3.md`
 Design source: `memesh design files/ממש - Memesh.html` (complete interactive prototype of all three surfaces)
 
 This plan was pressure-tested through a 5-perspective council pass. The architecture choices below carry the council's reasoning, including the alternatives we rejected and why.
+
+---
+
+## Build progress / handoff (last updated 2026-06-17)
+
+The entire Phase 1 **backend** is built and tested, and all three **frontend** surfaces are built on mock data and deployed to Vercel. The next big piece is deploying the API and wiring the frontend to it (see NEXT).
+
+### Git + tooling (read first in a new session)
+- Branch: `feat/phase1-secure-core` (not merged to `main`). Latest commit at handoff: `b759926` (plus this plan update).
+- Push as the repo owner: `gh auth switch --user kritix-ops` before `git push`. The repo is private; other gh accounts (e.g. yoav-prog) get a 404.
+- Local commit author is set to `Yoav Mizrahi <yoav@kritix.io>` so Vercel does not block deploys (Vercel blocks commits whose author is not a Vercel team member).
+- pnpm runs via corepack: `corepack pnpm ...` (pnpm is not on PATH; Node 24 + corepack are).
+- Tests use `node --test` + tsx against in-process Postgres (PGlite) — no local DB needed. Run prettier via the Bash tool, not PowerShell (PowerShell mangles `**` globs).
+- `.gitattributes` enforces LF.
+
+### Done — backend (82 tests green, typecheck + prettier clean)
+- `packages/db`: brief-v3 schema (customers, punch_cards, punch_card_entries, staff, scan_attempts, customer_otps, staff_actions + serial/customer-number sequences); `pg`/node-postgres client (Neon HTTP driver was replaced, it cannot hold SELECT FOR UPDATE); atomic punch (SELECT FOR UPDATE + audit + idempotency); card services (allocate serial, mint signed QR, createCustomer, createPunchCard, cancelCard); OTP store + requestOtp/verifyOtp; accounts (createStaff/listStaff, customer profile get/update, setCustomerWpUserId); reports (dashboardStats, customerDetail, dormantCustomers); action log (logStaffAction/listStaffActions). One clean migration.
+- `packages/qr-engine`: HMAC-SHA256 tokens, key rotation by key_id, serial format. Payload = punchCardId|customerId|createdTs|serial.
+- `packages/auth`: staff JWT access/refresh (jose), scrypt password/PIN hashing, customer session tokens on a separate audience.
+- `packages/sms`: SmsProvider seam + ConsoleSmsProvider stub. Real provider (019 SMS) not wired yet.
+- `apps/api` (Fastify): staff password login + refresh/me/logout/dev-login; customers register/search/detail; sell card; punch (QR token or serial fallback, rate-limited); customer OTP request/verify + session + /me + /me/cards; admin dashboard + dormant report + action log; staff management; card cancel; WP one-way sync (fire-and-forget seam, disabled until WP_* env set). Server is a `buildApp()` factory.
+
+### Done — frontend (apps/web: Vite + React 19 + Tailwind 4, RTL, Ploni w/ Assistant fallback)
+- All three surfaces on MOCK data behind a header surface switcher: Staff/POS (home, search, customer card + working punch, new customer, sell, scan), Customer area (OTP login, my cards, profile edit with phone locked), Admin (dashboard, customers, cards + filter, staff + action log, reports).
+- Signature components ported: Sun, Pebble, 12-pebble PunchCard (+ compact), Logo, FauxQr (placeholder QR).
+- Responsive: admin stacks nav + scrolls tables under ~1000px via `useViewport`; POS/customer use fluid auto-fit grids. Standing requirement: keep the whole app responsive on mobile + tablet (saved to memory).
+- Builds + typechecks clean.
+
+### Deployment status
+- Frontend: deployed to Vercel (project `memesh`, team `kritix-ops`), serving the mock-data SPA. Build is driven by a root `vercel.json` (framework=null, build `pnpm --filter @memesh/web build`, output `apps/web/dist`) so it builds from the repo root with no dashboard Root Directory change.
+- API + Postgres: NOT deployed yet.
+
+### Decisions locked during build
+- DB: self-managed Postgres container on Cloudways (not Neon). API + Postgres on a single Cloudways box.
+- Frontend: Vite SPA (Next.js dropped). Staff login: password/PIN (scrypt). Customer login: phone + OTP.
+- SMS: local provider (019) behind the seam; console stub for now. Clean start (no WooCommerce migration).
+- Topology recommendation (pending your pick): serve frontend + API from ONE origin on Cloudways (simplest, same-origin cookies). If keeping Vercel, put it on `app.memesh.co.il` with the API on `api.memesh.co.il` so cookies stay SAME-SITE. Never the cross-site `memesh.vercel.app` -> `api.memesh.co.il` setup (third-party cookies are blocked).
+
+### NEXT (start here tomorrow)
+Deploy the API and wire the frontend to it. Both planned tasks work for either topology option:
+1. **API deployment kit:** `docker-compose.yml` (api + Postgres + Redis), `.env.example`, and a seed script that runs migrations + creates the first admin staff member (so login works).
+2. **Frontend API client:** a typed `api` module in `apps/web` with a configurable base URL (`VITE_API_URL`, default same-origin `/api`), cookie auth wired in, then flip each surface from mock data to live calls.
+
+### Still deferred / pre-launch
+- Real-Postgres concurrency test for the atomic punch (PGlite is single-connection; punch logic is tested, the true 2-connection race is not).
+- Backups/DR runbook for the self-managed Postgres container; key-rotation runbook.
+- Live 019 SMS wiring + sender-ID registration + anti-spam consent for future marketing.
+- Ploni woff2 files into `apps/web/public/fonts`; WP credentials for sync.
+- Merge `feat/phase1-secure-core` -> `main` when ready (Vercel Production tracks `main`, which is still the old code).
 
 ---
 
