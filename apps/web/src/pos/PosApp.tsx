@@ -1,5 +1,5 @@
 import { type CSSProperties, type ReactNode, useEffect, useRef, useState } from 'react';
-import { FauxQr, Logo, PunchCard, Sun } from '../brand';
+import { FauxQr, PunchCard, Sun } from '../brand';
 import {
   avatar,
   companionLabel,
@@ -104,8 +104,7 @@ export function PosApp() {
   });
 
   return (
-    <div dir="rtl" style={{ minHeight: '100%', background: '#f9f9f9', color: INK }}>
-      <TopBar />
+    <>
       <main style={{ maxWidth: 920, margin: '0 auto', padding: '24px 20px 64px' }}>
         {screen === 'home' && <Home />}
         {screen === 'search' && <Search />}
@@ -115,32 +114,8 @@ export function PosApp() {
         {screen === 'scan' && <Scan />}
       </main>
       {toast && <ToastView toast={toast} />}
-    </div>
+    </>
   );
-
-  function TopBar() {
-    return (
-      <header
-        style={{
-          background: '#fff',
-          borderBottom: '1px solid #f0eae5',
-          padding: '14px 20px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-        }}
-      >
-        <button
-          onClick={() => setScreen('home')}
-          style={{ border: 'none', background: 'transparent', cursor: 'pointer', padding: 0 }}
-          aria-label="דף הבית"
-        >
-          <Logo />
-        </button>
-        <span style={{ fontSize: 14, color: MUTED }}>עמדת צוות</span>
-      </header>
-    );
-  }
 
   function BackBar({ label, to }: { label: string; to: Screen }) {
     return (

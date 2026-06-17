@@ -79,16 +79,26 @@ export function Pebble({ size = 34, filled = false, color = ORANGE }: PebbleProp
 interface PunchCardProps {
   used: number;
   total?: number;
+  compact?: boolean;
 }
 
 // The signature element: remaining count + a grid of pebbles (filled = used).
-export function PunchCard({ used, total = 12 }: PunchCardProps) {
+export function PunchCard({ used, total = 12, compact = false }: PunchCardProps) {
   const remaining = total - used;
+  const numSize = compact ? 46 : 52;
+  const pebSize = compact ? 28 : 34;
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 22, alignItems: 'center' }}>
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: compact ? 18 : 22,
+        alignItems: 'center',
+      }}
+    >
       <div style={{ textAlign: 'center' }}>
         <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'center', gap: 8 }}>
-          <span style={{ fontSize: 52, fontWeight: 600, color: ORANGE, lineHeight: 1 }}>
+          <span style={{ fontSize: numSize, fontWeight: 600, color: ORANGE, lineHeight: 1 }}>
             {remaining}
           </span>
           <span style={{ fontSize: 18, color: MUTED }}>מתוך {total}</span>
@@ -99,12 +109,12 @@ export function PunchCard({ used, total = 12 }: PunchCardProps) {
         style={{
           display: 'grid',
           gridTemplateColumns: 'repeat(6, 1fr)',
-          gap: 12,
+          gap: compact ? 10 : 12,
           justifyItems: 'center',
         }}
       >
         {Array.from({ length: total }, (_, i) => (
-          <Pebble key={i} size={34} filled={i < used} />
+          <Pebble key={i} size={pebSize} filled={i < used} />
         ))}
       </div>
     </div>
