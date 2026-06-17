@@ -13,8 +13,6 @@ async function freshDb() {
   return db;
 }
 
-type TestDb = Awaited<ReturnType<typeof freshDb>>;
-
 let seq = 0;
 const phone = () => {
   seq += 1;

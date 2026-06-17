@@ -86,3 +86,21 @@ test('GET /staff without auth returns 401', async () => {
   const res = await app.inject({ method: 'GET', url: '/staff' });
   assert.equal(res.statusCode, 401);
 });
+
+test('GET /admin/dashboard without auth returns 401', async () => {
+  const res = await app.inject({ method: 'GET', url: '/admin/dashboard' });
+  assert.equal(res.statusCode, 401);
+});
+
+test('GET /admin/reports/dormant without auth returns 401', async () => {
+  const res = await app.inject({ method: 'GET', url: '/admin/reports/dormant' });
+  assert.equal(res.statusCode, 401);
+});
+
+test('GET /customers/:id without auth returns 401', async () => {
+  const res = await app.inject({
+    method: 'GET',
+    url: '/customers/00000000-0000-0000-0000-000000000000',
+  });
+  assert.equal(res.statusCode, 401);
+});

@@ -1,4 +1,4 @@
-import { createCustomer, customers, db } from '@memesh/db';
+import { createCustomer, customerDetail, customers, db } from '@memesh/db';
 import { ilike, or } from 'drizzle-orm';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
@@ -40,6 +40,21 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.code(409).send({ error: 'phone_taken' });
     }
   });
+
+  // Full customer detail (cards + recent entries) for the staff card screen.
+  fastify.get(
+    '/customers/:id',
+    { preHandler: requireRoleHook(...STAFF) },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      if (!z.string().uuid().safeParse(id).success) {
+        return reply.code(400).send({ error: 'invalid_id' });
+      }
+      const detail = await customerDetail(db, id);
+      if (!detail) return reply.code(404).send({ error: 'not_found' });
+      return detail;
+    },
+  );
 
   // Search by name, phone, or customer number for the staff lookup screen.
   fastify.get('/customers', { preHandler: requireRoleHook(...STAFF) }, async (request, reply) => {

@@ -4,3 +4,4 @@ export * from './punch.js';
 export * from './cards.js';
 export * from './otp.js';
 export * from './accounts.js';
+export * from './reports.js';

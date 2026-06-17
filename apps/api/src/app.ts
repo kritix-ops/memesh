@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { env } from './config.js';
 import { authPlugin } from './plugins/auth.js';
 import { securityPlugin } from './plugins/security.js';
+import { adminRoutes } from './routes/admin.js';
 import { authRoutes } from './routes/auth.js';
 import { cardsRoutes } from './routes/cards.js';
 import { customerAuthRoutes } from './routes/customer-auth.js';
@@ -37,6 +38,7 @@ export const buildApp = async (): Promise<FastifyInstance> => {
   await fastify.register(cardsRoutes);
   await fastify.register(punchRoutes);
   await fastify.register(staffRoutes);
+  await fastify.register(adminRoutes);
 
   fastify.get('/health', async () => ({
     status: 'ok',
