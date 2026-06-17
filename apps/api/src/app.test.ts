@@ -66,3 +66,23 @@ test('GET /me/cards without a customer token returns 401', async () => {
   const res = await app.inject({ method: 'GET', url: '/me/cards' });
   assert.equal(res.statusCode, 401);
 });
+
+test('GET /me without a customer token returns 401', async () => {
+  const res = await app.inject({ method: 'GET', url: '/me' });
+  assert.equal(res.statusCode, 401);
+});
+
+test('PATCH /me without a customer token returns 401', async () => {
+  const res = await app.inject({ method: 'PATCH', url: '/me', payload: { firstName: 'X' } });
+  assert.equal(res.statusCode, 401);
+});
+
+test('POST /staff without auth returns 401', async () => {
+  const res = await app.inject({ method: 'POST', url: '/staff', payload: {} });
+  assert.equal(res.statusCode, 401);
+});
+
+test('GET /staff without auth returns 401', async () => {
+  const res = await app.inject({ method: 'GET', url: '/staff' });
+  assert.equal(res.statusCode, 401);
+});
