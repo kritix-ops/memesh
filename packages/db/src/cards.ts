@@ -3,7 +3,7 @@ import { generateSerial, signToken, type KeyResolver } from '@memesh/qr-engine';
 import { and, desc, eq, isNotNull, isNull, sql } from 'drizzle-orm';
 import type { PgDatabase } from 'drizzle-orm/pg-core';
 import { logStaffAction } from './actions';
-import { customers, punchCardEntries, punchCards, staff } from './schema/index';
+import { customers, punchCardEntries, punchCards, staff, type ChildRecord } from './schema/index';
 
 // Accept any PostgreSQL Drizzle database (node-postgres in prod, PGlite in tests).
 type AnyPgDatabase = PgDatabase<any, any, any>;
@@ -58,11 +58,23 @@ export interface CreateCustomerInput {
   email?: string;
   preferredChannel?: 'sms' | 'whatsapp' | 'email';
   registeredBy?: string; // staff id
+  /** How the customer found us. Matches the customer_source enum. */
+  source?: 'referral' | 'social' | 'walk_by' | 'website' | 'other';
+  /** Children (jsonb) — name + dob + optional notes. Marketing-valuable for a gymboree. */
+  children?: ChildRecord[];
+  /**
+   * If true, marketing_consent_at is set to `now`. If false or omitted, left
+   * null. This is the legal hook for any future marketing dispatch.
+   */
+  marketingConsent?: boolean;
+  /** Override `now` for tests. */
+  now?: Date;
 }
 
 /** Create a customer with an allocated L-NNNN customer number. */
 export const createCustomer = async (db: AnyPgDatabase, input: CreateCustomerInput) => {
   const customerNumber = await allocateCustomerNumber(db);
+  const now = input.now ?? new Date();
   const rows = await db
     .insert(customers)
     .values({
@@ -73,6 +85,9 @@ export const createCustomer = async (db: AnyPgDatabase, input: CreateCustomerInp
       email: input.email ?? null,
       preferredChannel: input.preferredChannel ?? 'sms',
       registeredBy: input.registeredBy ?? null,
+      source: input.source ?? null,
+      children: input.children ?? [],
+      marketingConsentAt: input.marketingConsent ? now : null,
     })
     .returning();
   const row = rows[0];

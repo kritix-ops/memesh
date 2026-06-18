@@ -6,7 +6,8 @@ import { apiRequest, type ApiResult } from '../api';
 
 export type PreferredChannel = 'sms' | 'whatsapp' | 'email';
 export type CustomerStatus = 'active' | 'frozen' | 'vip';
-export type CustomerSource = 'referral' | 'social' | 'walk_by' | 'website' | 'other' | null;
+export type CustomerSourceValue = 'referral' | 'social' | 'walk_by' | 'website' | 'other';
+export type CustomerSource = CustomerSourceValue | null;
 
 export interface ChildRecord {
   name: string;
@@ -83,14 +84,19 @@ export const searchCustomers = (
 export const getCustomerDetail = (id: string): Promise<ApiResult<CustomerDetailResponse>> =>
   apiRequest(`/customers/${id}`);
 
-// Mirrors createBodySchema in apps/api/src/routes/customers.ts. Email is optional;
-// preferredChannel defaults to 'sms' server-side when omitted.
+// Mirrors createBodySchema in apps/api/src/routes/customers.ts. Email is
+// optional; preferredChannel defaults to 'sms' server-side when omitted.
+// Marketing fields (source / children / marketingConsent) are all independently
+// optional — see Yanai feedback item 2.
 export interface CreateCustomerInput {
   firstName: string;
   lastName: string;
   phone: string;
   email?: string;
   preferredChannel?: PreferredChannel;
+  source?: CustomerSourceValue;
+  children?: ChildRecord[];
+  marketingConsent?: boolean;
 }
 
 export interface CreateCustomerResponse {

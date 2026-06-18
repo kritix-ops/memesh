@@ -11,12 +11,23 @@ const STAFF = ['cashier', 'manager', 'admin'] as const;
 // null when WP sync is not configured.
 const wpClient = getWpClient();
 
+const childSchema = z.object({
+  name: z.string().min(1).max(80),
+  dob: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  notes: z.string().max(500).optional(),
+});
+
 const createBodySchema = z.object({
   firstName: z.string().min(1).max(80),
   lastName: z.string().min(1).max(80),
   phone: z.string().min(3).max(32),
   email: z.string().email().max(255).optional(),
   preferredChannel: z.enum(['sms', 'whatsapp', 'email']).optional(),
+  // Optional marketing fields (Yanai feedback item 2). All independently
+  // optional; missing means "no preference / not collected".
+  source: z.enum(['referral', 'social', 'walk_by', 'website', 'other']).optional(),
+  children: z.array(childSchema).max(20).optional(),
+  marketingConsent: z.boolean().optional(),
 });
 
 export const customersRoutes: FastifyPluginAsync = async (fastify) => {
@@ -34,6 +45,17 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
         ...(parsed.data.email !== undefined && { email: parsed.data.email }),
         ...(parsed.data.preferredChannel !== undefined && {
           preferredChannel: parsed.data.preferredChannel,
+        }),
+        ...(parsed.data.source !== undefined && { source: parsed.data.source }),
+        ...(parsed.data.children !== undefined && {
+          children: parsed.data.children.map((c) =>
+            c.notes !== undefined
+              ? { name: c.name, dob: c.dob, notes: c.notes }
+              : { name: c.name, dob: c.dob },
+          ),
+        }),
+        ...(parsed.data.marketingConsent !== undefined && {
+          marketingConsent: parsed.data.marketingConsent,
         }),
         ...(request.user && { registeredBy: request.user.id }),
       });

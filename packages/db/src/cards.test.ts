@@ -49,6 +49,42 @@ test('createCustomer allocates sequential L-NNNN customer numbers', async () => 
   assert.notEqual(a.customerNumber, b.customerNumber);
 });
 
+test('createCustomer stores the optional marketing fields (source, children, consent)', async () => {
+  const db = await freshDb();
+  seq += 1;
+  const fixedNow = new Date('2026-06-18T12:00:00.000Z');
+  const customer = await createCustomer(db, {
+    firstName: 'Tamar',
+    lastName: 'Levi',
+    phone: `052-000-${String(seq).padStart(4, '0')}`,
+    source: 'social',
+    children: [
+      { name: 'Itamar', dob: '2021-04-12' },
+      { name: 'Yael', dob: '2023-09-01', notes: 'allergic to peanuts' },
+    ],
+    marketingConsent: true,
+    now: fixedNow,
+  });
+  assert.equal(customer.source, 'social');
+  assert.equal(customer.children.length, 2);
+  assert.equal(customer.children[0]?.name, 'Itamar');
+  assert.equal(customer.children[1]?.notes, 'allergic to peanuts');
+  assert.deepEqual(customer.marketingConsentAt, fixedNow);
+});
+
+test('createCustomer leaves marketing fields null when not provided', async () => {
+  const db = await freshDb();
+  seq += 1;
+  const customer = await createCustomer(db, {
+    firstName: 'Default',
+    lastName: 'Fields',
+    phone: `052-000-${String(seq).padStart(4, '0')}`,
+  });
+  assert.equal(customer.source, null);
+  assert.deepEqual(customer.children, []);
+  assert.equal(customer.marketingConsentAt, null);
+});
+
 test('createPunchCard mints a serial + signed QR and stores a 12-entry card', async () => {
   const db = await freshDb();
   const customer = await makeCustomer(db);

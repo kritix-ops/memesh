@@ -6,8 +6,10 @@ import {
   createCustomer,
   getCustomerDetail,
   searchCustomers,
+  type ChildRecord,
   type Customer,
   type CustomerDetailResponse,
+  type CustomerSourceValue,
   type PunchCard as ApiPunchCard,
 } from '../lib/api/customers';
 import { punchBySerial, punchByToken } from '../lib/api/punch';
@@ -205,9 +207,17 @@ export function PosApp() {
     lastName?: string;
     phone?: string;
     email?: string;
+    children?: string;
   }>({});
   const [newTopError, setNewTopError] = useState<string | null>(null);
   const [newSubmitting, setNewSubmitting] = useState(false);
+
+  // Optional marketing fields (Yanai feedback item 2). All hidden under an
+  // expandable section so the basic walk-in flow stays one-tap.
+  const [newExtrasOpen, setNewExtrasOpen] = useState(false);
+  const [newSource, setNewSource] = useState<CustomerSourceValue | ''>('');
+  const [newMarketingConsent, setNewMarketingConsent] = useState(false);
+  const [newChildren, setNewChildren] = useState<ChildRecord[]>([]);
 
   const resetNewCustomerForm = () => {
     setNewFirst('');
@@ -216,6 +226,10 @@ export function PosApp() {
     setNewEmail('');
     setNewFieldErrors({});
     setNewTopError(null);
+    setNewExtrasOpen(false);
+    setNewSource('');
+    setNewMarketingConsent(false);
+    setNewChildren([]);
   };
 
   // Sell flow state: response from POST /cards (real serial to show on done)
@@ -235,6 +249,23 @@ export function PosApp() {
     if (!trimmedLast) errors.lastName = 'שדה חובה';
     if (!trimmedPhone) errors.phone = 'שדה חובה';
     if (trimmedEmail && !/^\S+@\S+\.\S+$/.test(trimmedEmail)) errors.email = 'כתובת מייל לא תקינה';
+
+    // Trim + validate child rows (only those the cashier added). A row with
+    // a name MUST have a valid DOB; we don't allow half-filled rows to
+    // silently land in the DB.
+    const cleanChildren: ChildRecord[] = [];
+    const dobRegex = /^\d{4}-\d{2}-\d{2}$/;
+    for (const c of newChildren) {
+      const cname = c.name.trim();
+      const cdob = c.dob.trim();
+      if (!cname && !cdob) continue;
+      if (!cname || !dobRegex.test(cdob)) {
+        errors.children = 'כל ילד שנוסף חייב לכלול שם ותאריך לידה תקין (YYYY-MM-DD).';
+        break;
+      }
+      cleanChildren.push({ name: cname, dob: cdob });
+    }
+
     if (Object.keys(errors).length > 0) {
       setNewFieldErrors(errors);
       setNewTopError(null);
@@ -251,6 +282,9 @@ export function PosApp() {
       lastName: trimmedLast,
       phone: trimmedPhone,
       ...(trimmedEmail !== '' && { email: trimmedEmail }),
+      ...(newSource !== '' && { source: newSource }),
+      ...(cleanChildren.length > 0 && { children: cleanChildren }),
+      ...(newMarketingConsent && { marketingConsent: true }),
     });
     setNewSubmitting(false);
 
@@ -901,6 +935,20 @@ export function PosApp() {
                 autoComplete="email"
               />
             </div>
+
+            <NewCustomerExtras
+              open={newExtrasOpen}
+              onToggle={() => setNewExtrasOpen((v) => !v)}
+              source={newSource}
+              onSourceChange={setNewSource}
+              marketingConsent={newMarketingConsent}
+              onMarketingConsentChange={setNewMarketingConsent}
+              children={newChildren}
+              onChildrenChange={setNewChildren}
+              submitting={newSubmitting}
+              childrenError={newFieldErrors.children}
+            />
+
             {newTopError && (
               <div
                 role="alert"
@@ -1009,6 +1057,218 @@ export function PosApp() {
           </span>
         )}
       </label>
+    );
+  }
+
+  function NewCustomerExtras({
+    open,
+    onToggle,
+    source,
+    onSourceChange,
+    marketingConsent,
+    onMarketingConsentChange,
+    children: kids,
+    onChildrenChange,
+    submitting,
+    childrenError,
+  }: {
+    open: boolean;
+    onToggle: () => void;
+    source: CustomerSourceValue | '';
+    onSourceChange: (next: CustomerSourceValue | '') => void;
+    marketingConsent: boolean;
+    onMarketingConsentChange: (next: boolean) => void;
+    children: ChildRecord[];
+    onChildrenChange: (next: ChildRecord[]) => void;
+    submitting: boolean;
+    childrenError?: string | undefined;
+  }) {
+    const sourceOptions: { value: CustomerSourceValue | ''; label: string }[] = [
+      { value: '', label: 'לא צוין' },
+      { value: 'referral', label: 'חבר/ה' },
+      { value: 'social', label: 'רשתות חברתיות' },
+      { value: 'walk_by', label: 'עברתי ברחוב' },
+      { value: 'website', label: 'אתר אינטרנט' },
+      { value: 'other', label: 'אחר' },
+    ];
+
+    const updateChild = (i: number, patch: Partial<ChildRecord>) => {
+      onChildrenChange(kids.map((c, idx) => (idx === i ? { ...c, ...patch } : c)));
+    };
+    const removeChild = (i: number) => {
+      onChildrenChange(kids.filter((_, idx) => idx !== i));
+    };
+    const addChild = () => {
+      onChildrenChange([...kids, { name: '', dob: '' }]);
+    };
+
+    return (
+      <div style={{ marginTop: 16 }}>
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-expanded={open}
+          style={{
+            background: '#fff8f3',
+            border: '1px solid #ffe3d4',
+            color: '#a8643d',
+            borderRadius: 10,
+            padding: '10px 14px',
+            fontSize: 14,
+            fontWeight: 600,
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            width: '100%',
+            justifyContent: 'space-between',
+          }}
+        >
+          <span>פרטים נוספים (לא חובה)</span>
+          <span aria-hidden="true">{open ? '−' : '+'}</span>
+        </button>
+
+        {open && (
+          <div
+            style={{
+              border: '1px solid #f3efea',
+              borderRadius: 10,
+              padding: 14,
+              marginTop: 10,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 14,
+            }}
+          >
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <span style={{ fontSize: 13.5, color: MUTED }}>איך שמעת עלינו?</span>
+              <select
+                value={source}
+                onChange={(e) => onSourceChange(e.target.value as CustomerSourceValue | '')}
+                disabled={submitting}
+                style={{ ...inputStyle, paddingInlineEnd: 32 }}
+              >
+                {sourceOptions.map((o) => (
+                  <option key={o.value || 'none'} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <div>
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  marginBottom: 8,
+                }}
+              >
+                <span style={{ fontSize: 13.5, color: MUTED }}>ילדים</span>
+                <button
+                  type="button"
+                  onClick={addChild}
+                  disabled={submitting}
+                  style={{
+                    background: '#fff',
+                    border: '1.5px solid #e9e0d9',
+                    color: MUTED,
+                    borderRadius: 8,
+                    padding: '6px 12px',
+                    fontSize: 13,
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                  }}
+                >
+                  + הוסף ילד
+                </button>
+              </div>
+              {kids.length === 0 ? (
+                <div style={{ fontSize: 13, color: MUTED, fontStyle: 'italic' }}>
+                  לא נרשמו ילדים. הוספה מועילה לתזכורות יום-הולדת בהמשך.
+                </div>
+              ) : (
+                kids.map((c, i) => (
+                  <div
+                    key={i}
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: '1fr 140px auto',
+                      gap: 8,
+                      alignItems: 'center',
+                      marginTop: 8,
+                    }}
+                  >
+                    <input
+                      type="text"
+                      value={c.name}
+                      onChange={(e) => updateChild(i, { name: e.target.value })}
+                      placeholder="שם הילד/ה"
+                      disabled={submitting}
+                      style={inputStyle}
+                    />
+                    <input
+                      type="date"
+                      value={c.dob}
+                      onChange={(e) => updateChild(i, { dob: e.target.value })}
+                      disabled={submitting}
+                      style={inputStyle}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => removeChild(i)}
+                      disabled={submitting}
+                      aria-label={`הסר ילד ${i + 1}`}
+                      style={{
+                        border: '1.5px solid #e8a4a4',
+                        background: '#fff',
+                        color: '#c25a5a',
+                        borderRadius: 8,
+                        padding: '8px 10px',
+                        fontSize: 14,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))
+              )}
+              {childrenError && (
+                <div style={{ fontSize: 12.5, color: '#a23a3a', marginTop: 8 }} role="alert">
+                  {childrenError}
+                </div>
+              )}
+            </div>
+
+            <label
+              style={{
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: 10,
+                fontSize: 14,
+                color: INK,
+                cursor: 'pointer',
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={marketingConsent}
+                onChange={(e) => onMarketingConsentChange(e.target.checked)}
+                disabled={submitting}
+                style={{ marginTop: 3 }}
+              />
+              <span>
+                אני מסכים/ה לקבל הודעות על מבצעים ואירועים
+                <div style={{ fontSize: 12.5, color: MUTED, marginTop: 2 }}>
+                  לא נשלח שום הודעת שיווק ללא הסימון הזה.
+                </div>
+              </span>
+            </label>
+          </div>
+        )}
+      </div>
     );
   }
 
