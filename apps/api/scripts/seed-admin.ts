@@ -14,11 +14,20 @@ export interface SeedAdminInput {
   firstName?: string;
   lastName?: string;
   email?: string;
+  /**
+   * When true and a staff row with the given phone already exists, the
+   * password hash is overwritten (and the row is reactivated). Used for
+   * the "I forgot the admin password" recovery path during onboarding.
+   * Disabled by default so accidental re-runs never silently change
+   * credentials.
+   */
+  forceResetPassword?: boolean;
 }
 
 export type SeedAdminResult =
   | { kind: 'created'; id: string; phone: string }
-  | { kind: 'already_seeded'; id: string; phone: string };
+  | { kind: 'already_seeded'; id: string; phone: string }
+  | { kind: 'password_reset'; id: string; phone: string };
 
 /**
  * Create the first admin staff member, idempotently. Calling this twice with the
@@ -37,6 +46,19 @@ export async function seedAdmin(
   const existing = await db.select().from(staff).where(eq(staff.phone, input.phone)).limit(1);
   const found = existing[0];
   if (found) {
+    if (input.forceResetPassword) {
+      console.info('[seed admin] resetting password for existing row', {
+        phone: input.phone,
+        id: found.id,
+      });
+      const passwordHash = await hashPassword(input.password);
+      await db
+        .update(staff)
+        .set({ passwordHash, isActive: true, updatedAt: new Date() })
+        .where(eq(staff.id, found.id));
+      console.info('[seed admin] password reset done', { id: found.id, phone: found.phone });
+      return { kind: 'password_reset', id: found.id, phone: found.phone };
+    }
     console.info('[seed admin] already seeded, no-op', { phone: input.phone, id: found.id });
     return { kind: 'already_seeded', id: found.id, phone: found.phone };
   }
@@ -77,6 +99,8 @@ async function runCli(): Promise<void> {
   const firstName = process.env.SEED_ADMIN_FIRST_NAME;
   const lastName = process.env.SEED_ADMIN_LAST_NAME;
   const email = process.env.SEED_ADMIN_EMAIL;
+  const forceResetPassword =
+    process.env.SEED_ADMIN_FORCE_RESET === '1' || process.env.SEED_ADMIN_FORCE_RESET === 'true';
 
   if (!phone || !password) {
     console.error('[seed admin] SEED_ADMIN_PHONE and SEED_ADMIN_PASSWORD are required');
@@ -98,6 +122,7 @@ async function runCli(): Promise<void> {
     const result = await seedAdmin(db, {
       phone,
       password,
+      forceResetPassword,
       ...(firstName !== undefined && { firstName }),
       ...(lastName !== undefined && { lastName }),
       ...(email !== undefined && { email }),
