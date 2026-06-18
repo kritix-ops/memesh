@@ -38,3 +38,25 @@ export const listStaff = (): Promise<ApiResult<StaffListResponse>> => apiRequest
 export const createStaffMember = (
   input: CreateStaffInput,
 ): Promise<ApiResult<CreateStaffResponse>> => apiRequest('/staff', { method: 'POST', body: input });
+
+export interface UpdateStaffInput {
+  firstName?: string;
+  lastName?: string;
+  email?: string | null;
+  role?: StaffRole;
+  isActive?: boolean;
+}
+
+export interface UpdateStaffResponse {
+  staff: StaffMember;
+}
+
+/**
+ * Edit a staff member (admin only). Phone is intentionally not editable here
+ * (it is the login identity); password updates need their own dedicated flow.
+ */
+export const updateStaffMember = (
+  id: string,
+  patch: UpdateStaffInput,
+): Promise<ApiResult<UpdateStaffResponse>> =>
+  apiRequest(`/staff/${id}`, { method: 'PATCH', body: patch });

@@ -55,6 +55,37 @@ export const getStaffById = async (db: AnyPgDatabase, id: string) => {
   return rows[0];
 };
 
+export interface UpdateStaffInput {
+  firstName?: string | undefined;
+  lastName?: string | undefined;
+  email?: string | null | undefined;
+  role?: StaffRole | undefined;
+  isActive?: boolean | undefined;
+}
+
+/**
+ * Update a staff member's editable fields. Returns the updated public view
+ * or undefined if the id is not found. Password is intentionally NOT editable
+ * here — staff password resets need their own dedicated flow (admin sets a
+ * new hash and the user is notified out of band).
+ */
+export const updateStaff = async (
+  db: AnyPgDatabase,
+  id: string,
+  patch: UpdateStaffInput,
+  now: Date = new Date(),
+) => {
+  const set: Partial<typeof staff.$inferInsert> = { updatedAt: now };
+  if (patch.firstName !== undefined) set.firstName = patch.firstName;
+  if (patch.lastName !== undefined) set.lastName = patch.lastName;
+  if (patch.email !== undefined) set.email = patch.email;
+  if (patch.role !== undefined) set.role = patch.role;
+  if (patch.isActive !== undefined) set.isActive = patch.isActive;
+
+  const rows = await db.update(staff).set(set).where(eq(staff.id, id)).returning(staffView);
+  return rows[0];
+};
+
 export const getCustomerById = async (db: AnyPgDatabase, id: string) => {
   const rows = await db.select().from(customers).where(eq(customers.id, id)).limit(1);
   return rows[0];

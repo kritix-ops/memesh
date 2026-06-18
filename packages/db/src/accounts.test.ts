@@ -10,6 +10,7 @@ import {
   listStaff,
   setCustomerWpUserId,
   updateCustomerProfile,
+  updateStaff,
 } from './accounts';
 import { createCustomer } from './cards';
 
@@ -76,6 +77,55 @@ test('getStaffById returns the public view (no password hash) for a known id', a
 test('getStaffById returns undefined for an unknown id', async () => {
   const db = await freshDb();
   const missing = await getStaffById(db, '00000000-0000-0000-0000-000000000000');
+  assert.equal(missing, undefined);
+});
+
+test('updateStaff patches editable fields and returns the safe view', async () => {
+  const db = await freshDb();
+  const created = await createStaff(db, {
+    firstName: 'Old',
+    lastName: 'Name',
+    phone: phone(),
+    passwordHash: 'scrypt$1$2$3$x$y',
+    role: 'cashier',
+  });
+
+  const updated = await updateStaff(db, created.id, {
+    firstName: 'New',
+    lastName: 'Surname',
+    role: 'manager',
+    email: 'new@example.com',
+  });
+  assert.ok(updated);
+  assert.equal(updated.firstName, 'New');
+  assert.equal(updated.lastName, 'Surname');
+  assert.equal(updated.role, 'manager');
+  assert.equal(updated.email, 'new@example.com');
+  assert.equal('passwordHash' in updated, false);
+});
+
+test('updateStaff can flip isActive (deactivate / reactivate)', async () => {
+  const db = await freshDb();
+  const created = await createStaff(db, {
+    firstName: 'A',
+    lastName: 'B',
+    phone: phone(),
+    passwordHash: 'scrypt$1$2$3$x$y',
+  });
+  assert.equal(created.isActive, true);
+
+  const deactivated = await updateStaff(db, created.id, { isActive: false });
+  assert.equal(deactivated?.isActive, false);
+
+  const reactivated = await updateStaff(db, created.id, { isActive: true });
+  assert.equal(reactivated?.isActive, true);
+});
+
+test('updateStaff returns undefined for an unknown id', async () => {
+  const db = await freshDb();
+  const missing = await updateStaff(db, '00000000-0000-0000-0000-000000000000', {
+    firstName: 'X',
+  });
   assert.equal(missing, undefined);
 });
 

@@ -131,3 +131,12 @@ test('GET /cards/:id without auth returns 401', async () => {
   });
   assert.equal(res.statusCode, 401);
 });
+
+test('PATCH /staff/:id without auth returns 401', async () => {
+  const res = await app.inject({
+    method: 'PATCH',
+    url: '/staff/00000000-0000-0000-0000-000000000000',
+    payload: { firstName: 'X' },
+  });
+  assert.equal(res.statusCode, 401);
+});

@@ -26,9 +26,12 @@ import {
 import {
   createStaffMember,
   listStaff,
+  updateStaffMember,
   type CreateStaffInput,
   type StaffMember,
+  type UpdateStaffInput,
 } from '../lib/api/staff';
+import { useStaffSession } from '../lib/staff-session';
 import { fmtDate } from '../mock';
 import { useViewport } from '../useViewport';
 
@@ -1240,6 +1243,9 @@ function Staff() {
   const [members, setMembers] = useState<StaffMember[] | null>(null);
   const [listError, setListError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
+  const [editing, setEditing] = useState<StaffMember | null>(null);
+  const { state: sessionState } = useStaffSession();
+  const currentUserId = sessionState.status === 'signed-in' ? sessionState.user.id : null;
 
   const reload = async () => {
     const res = await listStaff();
@@ -1304,6 +1310,7 @@ function Staff() {
         )}
         {members?.map((m, i) => {
           const r = roleStyle(m.role);
+          const isSelf = m.id === currentUserId;
           return (
             <div
               key={m.id}
@@ -1313,6 +1320,7 @@ function Staff() {
                 gap: 12,
                 padding: '10px 0',
                 borderTop: i ? '1px solid #f3efea' : 'none',
+                opacity: m.isActive ? 1 : 0.55,
               }}
             >
               <div
@@ -1331,15 +1339,276 @@ function Staff() {
                 {initialsOf(m.firstName, m.lastName)}
               </div>
               <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 600 }}>
+                <div style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8 }}>
                   {m.firstName} {m.lastName}
+                  {isSelf && (
+                    <span style={{ fontSize: 11, color: MUTED, fontWeight: 400 }}>(אני)</span>
+                  )}
                 </div>
                 <div style={{ fontSize: 13, color: MUTED }}>{m.phone}</div>
               </div>
               <Badge text={r.label} bg={r.bg} color={r.color} />
+              {!m.isActive && <Badge text="מושעה" bg="#ececec" color="#9aa3a6" />}
+              <button
+                onClick={() => setEditing(m)}
+                style={{
+                  border: '1.5px solid #e9e0d9',
+                  background: '#fff',
+                  color: MUTED,
+                  borderRadius: 8,
+                  padding: '6px 12px',
+                  fontWeight: 600,
+                  fontSize: 13,
+                  cursor: 'pointer',
+                }}
+              >
+                ערוך
+              </button>
             </div>
           );
         })}
+      </div>
+      {editing && (
+        <EditStaffModal
+          member={editing}
+          isSelf={editing.id === currentUserId}
+          onClose={() => setEditing(null)}
+          onSaved={() => {
+            setEditing(null);
+            void reload();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function humanizeStaffUpdateError(code: string): string {
+  if (code === 'cannot_deactivate_self')
+    return 'לא ניתן להשעות את עצמך. בקשו ממנהל אחר לבצע את הפעולה.';
+  if (code === 'not_found') return 'איש הצוות לא נמצא. רעננו את הדף.';
+  if (code === 'invalid_body') return 'אחד השדות לא תקין.';
+  if (code === 'invalid_id') return 'מזהה איש צוות לא תקין.';
+  return 'תקלה זמנית. נסו שוב בעוד רגע.';
+}
+
+function EditStaffModal({
+  member,
+  isSelf,
+  onClose,
+  onSaved,
+}: {
+  member: StaffMember;
+  isSelf: boolean;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [firstName, setFirstName] = useState(member.firstName);
+  const [lastName, setLastName] = useState(member.lastName);
+  const [email, setEmail] = useState(member.email ?? '');
+  const [role, setRole] = useState<StaffRole>(member.role);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const buildPatch = (): UpdateStaffInput => {
+    const patch: UpdateStaffInput = {};
+    const tf = firstName.trim();
+    const tl = lastName.trim();
+    const te = email.trim();
+    if (tf && tf !== member.firstName) patch.firstName = tf;
+    if (tl && tl !== member.lastName) patch.lastName = tl;
+    if (role !== member.role) patch.role = role;
+    const targetEmail = te === '' ? null : te;
+    if (targetEmail !== (member.email ?? null)) patch.email = targetEmail;
+    return patch;
+  };
+
+  const submit = async (patch: UpdateStaffInput) => {
+    if (Object.keys(patch).length === 0) {
+      onClose();
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    console.info('[web admin staff] update', { id: member.id, fields: Object.keys(patch) });
+    const res = await updateStaffMember(member.id, patch);
+    setSubmitting(false);
+    if (!res.ok) {
+      console.warn('[web admin staff] update failed', { error: res.error });
+      setError(humanizeStaffUpdateError(res.error));
+      return;
+    }
+    onSaved();
+  };
+
+  const onSave = async (e: FormEvent) => {
+    e.preventDefault();
+    const tf = firstName.trim();
+    const tl = lastName.trim();
+    const te = email.trim();
+    if (!tf || !tl) {
+      setError('שם פרטי ושם משפחה הם שדות חובה.');
+      return;
+    }
+    if (te && !/^\S+@\S+\.\S+$/.test(te)) {
+      setError('כתובת מייל לא תקינה.');
+      return;
+    }
+    await submit(buildPatch());
+  };
+
+  const onToggleActive = async () => {
+    if (member.isActive && isSelf) {
+      setError('לא ניתן להשעות את עצמך.');
+      return;
+    }
+    await submit({ isActive: !member.isActive });
+  };
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(45,52,54,0.4)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 20,
+        zIndex: 50,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: '#fff',
+          borderRadius: 16,
+          boxShadow: SHADOW,
+          padding: 24,
+          width: 480,
+          maxWidth: '100%',
+        }}
+      >
+        <div style={{ fontWeight: 600, fontSize: 18, color: INK, marginBottom: 6 }}>
+          עריכת איש צוות
+        </div>
+        <div style={{ fontSize: 13, color: MUTED, marginBottom: 16 }}>
+          {member.phone} · ההצטרפות {fmtDate(member.createdAt.slice(0, 10))}
+        </div>
+        <form onSubmit={onSave}>
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))',
+              gap: 12,
+            }}
+          >
+            <FieldRow label="שם פרטי *">
+              <input
+                style={inputStyle}
+                value={firstName}
+                onChange={(e) => setFirstName(e.target.value)}
+                disabled={submitting}
+                autoComplete="given-name"
+              />
+            </FieldRow>
+            <FieldRow label="שם משפחה *">
+              <input
+                style={inputStyle}
+                value={lastName}
+                onChange={(e) => setLastName(e.target.value)}
+                disabled={submitting}
+                autoComplete="family-name"
+              />
+            </FieldRow>
+            <FieldRow label="תפקיד">
+              <select
+                value={role}
+                onChange={(e) => setRole(e.target.value as StaffRole)}
+                disabled={submitting || isSelf}
+                style={{ ...inputStyle, paddingInlineEnd: 32 }}
+                title={isSelf ? 'לא ניתן לשנות את תפקיד עצמך' : ''}
+              >
+                <option value="cashier">קופאי</option>
+                <option value="manager">מנהל משמרת</option>
+                <option value="admin">אדמין</option>
+              </select>
+            </FieldRow>
+            <FieldRow label="מייל">
+              <input
+                style={inputStyle}
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                type="email"
+                inputMode="email"
+                autoComplete="email"
+                disabled={submitting}
+              />
+            </FieldRow>
+          </div>
+
+          {error && (
+            <div
+              role="alert"
+              style={{
+                marginTop: 14,
+                padding: '10px 14px',
+                background: '#fbecec',
+                color: '#a23a3a',
+                borderRadius: 10,
+                fontSize: 14,
+              }}
+            >
+              {error}
+            </div>
+          )}
+
+          <div
+            style={{
+              display: 'flex',
+              gap: 10,
+              marginTop: 18,
+              flexWrap: 'wrap',
+              justifyContent: 'space-between',
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => void onToggleActive()}
+              disabled={submitting || (member.isActive && isSelf)}
+              style={{
+                border: member.isActive ? '1.5px solid #e8a4a4' : '1.5px solid #c4d898',
+                background: '#fff',
+                color: member.isActive ? '#c25a5a' : '#6f8f37',
+                borderRadius: 10,
+                padding: '10px 18px',
+                fontWeight: 600,
+                fontSize: 14,
+                cursor: submitting || (member.isActive && isSelf) ? 'not-allowed' : 'pointer',
+                opacity: submitting || (member.isActive && isSelf) ? 0.5 : 1,
+              }}
+            >
+              {member.isActive ? 'השעיית איש צוות' : 'הפעלת איש צוות'}
+            </button>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button type="button" style={ghostBtn} onClick={onClose} disabled={submitting}>
+                ביטול
+              </button>
+              <button
+                type="submit"
+                style={{
+                  ...primaryBtn,
+                  opacity: submitting ? 0.6 : 1,
+                  cursor: submitting ? 'default' : 'pointer',
+                }}
+                disabled={submitting}
+              >
+                {submitting ? 'שומר…' : 'שמירה'}
+              </button>
+            </div>
+          </div>
+        </form>
       </div>
     </div>
   );

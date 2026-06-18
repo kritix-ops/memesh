@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { after, beforeEach, test } from 'node:test';
-import { createStaffMember, listStaff } from './staff';
+import { createStaffMember, listStaff, updateStaffMember } from './staff';
 
 interface FetchCall {
   url: string;
@@ -109,5 +109,41 @@ test('createStaffMember surfaces 409 phone_taken on collision', async () => {
   if (!res.ok) {
     assert.equal(res.status, 409);
     assert.equal(res.error, 'phone_taken');
+  }
+});
+
+test('updateStaffMember PATCHes /staff/:id with the patch body', async () => {
+  stubFetch({
+    status: 200,
+    body: {
+      staff: {
+        id: 's1',
+        firstName: 'Idan',
+        lastName: 'Rosen',
+        phone: '054-200-0002',
+        email: 'idan@example.com',
+        role: 'admin',
+        isActive: true,
+        createdAt: '2026-06-18T10:00:00.000Z',
+      },
+    },
+  });
+  const res = await updateStaffMember('s1', { role: 'admin', email: 'idan@example.com' });
+  assert.equal(res.ok, true);
+  if (res.ok) {
+    assert.equal(res.data.staff.role, 'admin');
+  }
+  assert.equal(lastCall?.init.method, 'PATCH');
+  assert.ok(lastCall?.url.endsWith('/staff/s1'));
+  assert.equal(lastCall?.init.body, JSON.stringify({ role: 'admin', email: 'idan@example.com' }));
+});
+
+test('updateStaffMember surfaces 409 cannot_deactivate_self', async () => {
+  stubFetch({ status: 409, body: { error: 'cannot_deactivate_self' } });
+  const res = await updateStaffMember('s1', { isActive: false });
+  assert.equal(res.ok, false);
+  if (!res.ok) {
+    assert.equal(res.status, 409);
+    assert.equal(res.error, 'cannot_deactivate_self');
   }
 });
