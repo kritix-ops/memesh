@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { after, beforeEach, test } from 'node:test';
-import { listCardsForAdmin, sellCard } from './cards';
+import { cancelCardForAdmin, listCardsForAdmin, sellCard } from './cards';
 
 interface FetchCall {
   url: string;
@@ -102,4 +102,37 @@ test('listCardsForAdmin omits the query string when no options are passed', asyn
   stubFetch({ status: 200, body: { cards: [] } });
   await listCardsForAdmin();
   assert.ok(lastCall?.url.endsWith('/cards'));
+});
+
+test('cancelCardForAdmin POSTs /cards/:id/cancel with the reason', async () => {
+  stubFetch({
+    status: 200,
+    body: {
+      card: {
+        id: 'card-1',
+        serialNumber: 'M-20260618-0001',
+        isActive: false,
+        cancelledAt: '2026-06-18T10:00:00.000Z',
+        cancelReason: 'בקשת לקוח',
+      },
+    },
+  });
+  const res = await cancelCardForAdmin('card-1', 'בקשת לקוח');
+  assert.equal(res.ok, true);
+  if (res.ok) {
+    assert.equal(res.data.card.cancelReason, 'בקשת לקוח');
+  }
+  assert.equal(lastCall?.init.method, 'POST');
+  assert.ok(lastCall?.url.endsWith('/cards/card-1/cancel'));
+  assert.equal(lastCall?.init.body, JSON.stringify({ reason: 'בקשת לקוח' }));
+});
+
+test('cancelCardForAdmin surfaces a 404 (already cancelled or missing) cleanly', async () => {
+  stubFetch({ status: 404, body: { error: 'not_found' } });
+  const res = await cancelCardForAdmin('card-1', 'r');
+  assert.equal(res.ok, false);
+  if (!res.ok) {
+    assert.equal(res.status, 404);
+    assert.equal(res.error, 'not_found');
+  }
 });

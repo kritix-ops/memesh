@@ -59,3 +59,20 @@ export const listCardsForAdmin = (
   const qs = params.toString();
   return apiRequest(`/cards${qs ? `?${qs}` : ''}`);
 };
+
+export interface CancelCardResponse {
+  card: {
+    id: string;
+    serialNumber: string;
+    isActive: boolean;
+    cancelledAt: string;
+    cancelReason: string;
+  };
+}
+
+/** Cancel a card by id with a required reason. Manager + admin only. */
+export const cancelCardForAdmin = (
+  id: string,
+  reason: string,
+): Promise<ApiResult<CancelCardResponse>> =>
+  apiRequest(`/cards/${id}/cancel`, { method: 'POST', body: { reason } });

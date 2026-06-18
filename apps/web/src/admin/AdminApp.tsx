@@ -9,7 +9,12 @@ import {
   type StaffActionRow,
   type StaffActionType,
 } from '../lib/api/admin';
-import { listCardsForAdmin, type AdminCardRow, type CardListStatus } from '../lib/api/cards';
+import {
+  cancelCardForAdmin,
+  listCardsForAdmin,
+  type AdminCardRow,
+  type CardListStatus,
+} from '../lib/api/cards';
 import { searchCustomers, type Customer } from '../lib/api/customers';
 import {
   createStaffMember,
@@ -399,6 +404,15 @@ function Cards() {
   const [status, setStatus] = useState<CardListStatus>('active');
   const [rows, setRows] = useState<AdminCardRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [askCancel, setAskCancel] = useState<AdminCardRow | null>(null);
+  const [cancelling, setCancelling] = useState(false);
+  const [cancelError, setCancelError] = useState<string | null>(null);
+
+  const reload = async () => {
+    const res = await listCardsForAdmin({ status });
+    if (res.ok) setRows(res.data.cards);
+    else setError(res.error);
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -420,6 +434,28 @@ function Cards() {
     { k: 'expired', l: 'שפגו' },
     { k: 'cancelled', l: 'בוטלו' },
   ];
+
+  const showActions = status === 'active';
+  const head = showActions
+    ? ['מספר סידורי', 'לקוח', 'ניצול', 'תוקף', 'סטטוס', '']
+    : ['מספר סידורי', 'לקוח', 'ניצול', 'תוקף', 'סטטוס'];
+
+  const confirmCancel = async (reason: string) => {
+    if (!askCancel) return;
+    setCancelling(true);
+    setCancelError(null);
+    console.info('[web admin cancel] submit', { id: askCancel.id });
+    const res = await cancelCardForAdmin(askCancel.id, reason);
+    setCancelling(false);
+    if (!res.ok) {
+      console.warn('[web admin cancel] error', { status: res.status, error: res.error });
+      setCancelError(humanizeCancelError(res.error));
+      return;
+    }
+    console.info('[web admin cancel] success', { id: askCancel.id });
+    setAskCancel(null);
+    await reload();
+  };
 
   return (
     <div style={card}>
@@ -471,7 +507,7 @@ function Cards() {
         </div>
       )}
       {rows && rows.length > 0 && (
-        <Table head={['מספר סידורי', 'לקוח', 'ניצול', 'תוקף', 'סטטוס']}>
+        <Table head={head}>
           {rows.map((c) => {
             const badge = cardStatusBadge(c);
             const customerLabel =
@@ -508,6 +544,29 @@ function Cards() {
                 <Td>
                   <Badge text={badge.text} bg={badge.bg} color={badge.color} />
                 </Td>
+                {showActions && (
+                  <Td>
+                    <button
+                      onClick={() => {
+                        console.info('[web admin cancel] open', { id: c.id });
+                        setCancelError(null);
+                        setAskCancel(c);
+                      }}
+                      style={{
+                        border: '1.5px solid #e8a4a4',
+                        background: '#fff',
+                        color: '#c25a5a',
+                        borderRadius: 8,
+                        padding: '6px 12px',
+                        fontWeight: 600,
+                        fontSize: 13,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      ביטול
+                    </button>
+                  </Td>
+                )}
               </tr>
             );
           })}
@@ -518,6 +577,133 @@ function Cards() {
           מוצגות 100 השורות האחרונות בקטגוריה זו.
         </div>
       )}
+      {askCancel && (
+        <CancelCardModal
+          card={askCancel}
+          submitting={cancelling}
+          error={cancelError}
+          onClose={() => {
+            if (cancelling) return;
+            setAskCancel(null);
+            setCancelError(null);
+          }}
+          onConfirm={confirmCancel}
+        />
+      )}
+    </div>
+  );
+}
+
+function humanizeCancelError(code: string): string {
+  if (code === 'not_found') return 'הכרטיסייה לא נמצאה (ייתכן שכבר בוטלה). רעננו את הדף.';
+  if (code === 'invalid_body') return 'סיבת הביטול אינה תקינה.';
+  if (code === 'invalid_id') return 'מזהה כרטיסייה לא תקין.';
+  return 'תקלה זמנית. נסו שוב בעוד רגע.';
+}
+
+function CancelCardModal({
+  card,
+  submitting,
+  error,
+  onClose,
+  onConfirm,
+}: {
+  card: AdminCardRow;
+  submitting: boolean;
+  error: string | null;
+  onClose: () => void;
+  onConfirm: (reason: string) => void;
+}) {
+  const [reason, setReason] = useState('');
+  const trimmed = reason.trim();
+  const customerLabel =
+    card.customerFirstName || card.customerLastName
+      ? `${card.customerFirstName ?? ''} ${card.customerLastName ?? ''}`.trim()
+      : 'לקוח לא ידוע';
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(45,52,54,0.4)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 20,
+        zIndex: 50,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: '#fff',
+          borderRadius: 16,
+          boxShadow: SHADOW,
+          padding: 24,
+          width: 420,
+          maxWidth: '100%',
+        }}
+      >
+        <div style={{ fontWeight: 600, fontSize: 18, color: INK }}>ביטול כרטיסייה</div>
+        <div style={{ fontSize: 14, color: MUTED, marginTop: 6, marginBottom: 16 }}>
+          {card.serialNumber} · {customerLabel}
+        </div>
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <span style={{ fontSize: 13.5, color: MUTED }}>סיבת ביטול *</span>
+          <textarea
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            disabled={submitting}
+            rows={3}
+            maxLength={500}
+            placeholder="לדוגמה: בקשת לקוח, הונפקה בטעות, החזר כספי"
+            style={{
+              ...inputStyle,
+              resize: 'vertical',
+              minHeight: 72,
+              fontFamily: 'inherit',
+            }}
+          />
+        </label>
+        {error && (
+          <div
+            role="alert"
+            style={{
+              marginTop: 12,
+              padding: '10px 14px',
+              background: '#fbecec',
+              color: '#a23a3a',
+              borderRadius: 10,
+              fontSize: 14,
+            }}
+          >
+            {error}
+          </div>
+        )}
+        <div style={{ display: 'flex', gap: 10, marginTop: 18, justifyContent: 'flex-end' }}>
+          <button type="button" style={ghostBtn} onClick={onClose} disabled={submitting}>
+            ביטול
+          </button>
+          <button
+            type="button"
+            onClick={() => onConfirm(trimmed)}
+            disabled={submitting || trimmed.length === 0}
+            style={{
+              border: 'none',
+              background: '#c25a5a',
+              color: '#fff',
+              borderRadius: 10,
+              padding: '10px 18px',
+              fontWeight: 600,
+              cursor: submitting || trimmed.length === 0 ? 'not-allowed' : 'pointer',
+              opacity: submitting || trimmed.length === 0 ? 0.6 : 1,
+            }}
+          >
+            {submitting ? 'מבטל…' : 'אישור ביטול'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

@@ -192,10 +192,24 @@ export const listCards = async (db: AnyPgDatabase, input: ListCardsInput = {}) =
   return query.orderBy(desc(punchCards.createdAt)).limit(limit);
 };
 
-/** Cancel a card: deactivate it, record who/why, and log a staff action. */
+/**
+ * Cancel a card: deactivate it, record who/why, and log a staff action.
+ * Returns undefined if the card does not exist OR if it is already cancelled
+ * (we never overwrite an existing cancel audit row — the API surfaces this as
+ * a clean 404 on a second cancel attempt).
+ */
 export const cancelCard = async (db: AnyPgDatabase, input: CancelCardInput) => {
   const now = input.now ?? new Date();
   return db.transaction(async (tx) => {
+    // Guard: refuse to re-cancel an already-cancelled card.
+    const existing = await tx
+      .select({ id: punchCards.id, cancelledAt: punchCards.cancelledAt })
+      .from(punchCards)
+      .where(eq(punchCards.id, input.cardId))
+      .limit(1);
+    const found = existing[0];
+    if (!found || found.cancelledAt) return undefined;
+
     const rows = await tx
       .update(punchCards)
       .set({

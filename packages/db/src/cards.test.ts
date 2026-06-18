@@ -142,6 +142,23 @@ test('cancelCard deactivates a card, records the reason, and logs an action', as
   assert.ok(actions.some((a) => a.action === 'cancel_card'));
 });
 
+test('cancelCard refuses to re-cancel an already-cancelled card (no duplicate audit)', async () => {
+  const db = await freshDb();
+  const cust = await makeCustomer(db);
+  const card = await createPunchCard(db, resolver, { customerId: cust.id });
+
+  const first = await cancelCard(db, { cardId: card.id, reason: 'בקשת לקוח' });
+  assert.ok(first);
+
+  const second = await cancelCard(db, { cardId: card.id, reason: 'ניסיון נוסף' });
+  assert.equal(second, undefined);
+
+  // Only one cancel_card action was logged.
+  const actions = await listStaffActions(db);
+  const cancels = actions.filter((a) => a.action === 'cancel_card');
+  assert.equal(cancels.length, 1);
+});
+
 test('a cancelled card cannot be punched', async () => {
   const db = await freshDb();
   const cust = await makeCustomer(db);
