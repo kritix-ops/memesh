@@ -16,6 +16,13 @@ const envSchema = z.object({
   WP_BASE_URL: z.string().url().optional(),
   WP_SYNC_USER: z.string().optional(),
   WP_SYNC_APP_PASSWORD: z.string().optional(),
+  // SMS provider selection. 'console' is the safe default and logs each
+  // message to stdout. '019' requires SMS_019_TOKEN + SMS_019_SOURCE to
+  // actually send. See _plans/2026-06-18-sms-provider-selection.md.
+  SMS_PROVIDER: z.enum(['console', '019']).default('console'),
+  SMS_019_TOKEN: z.string().optional(),
+  SMS_019_SOURCE: z.string().max(11).optional(),
+  SMS_019_ENDPOINT: z.string().url().optional(),
 });
 
 export const env = envSchema.parse(process.env);

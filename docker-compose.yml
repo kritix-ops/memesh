@@ -85,6 +85,12 @@ services:
       WP_BASE_URL: ${WP_BASE_URL:-}
       WP_SYNC_USER: ${WP_SYNC_USER:-}
       WP_SYNC_APP_PASSWORD: ${WP_SYNC_APP_PASSWORD:-}
+      # SMS provider. Default 'console' logs OTPs to api stdout (safe). Set
+      # SMS_PROVIDER=019 with the SMS_019_* secrets to actually send.
+      SMS_PROVIDER: ${SMS_PROVIDER:-console}
+      SMS_019_TOKEN: ${SMS_019_TOKEN:-}
+      SMS_019_SOURCE: ${SMS_019_SOURCE:-}
+      SMS_019_ENDPOINT: ${SMS_019_ENDPOINT:-}
       # Read by the seed:admin script only (not by the running api).
       SEED_ADMIN_PHONE: ${SEED_ADMIN_PHONE:-}
       SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-}
