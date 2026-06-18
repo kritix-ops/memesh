@@ -1,0 +1,54 @@
+# Production-only overrides for the Memesh stack.
+#
+# Use together with the base file:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# The deploy script does this for you; see scripts/cloudways/deploy.sh.
+#
+# What this file changes:
+#   - adds the caddy reverse-proxy service (TLS + /api routing + SPA static).
+#   - removes the api host-port binding (caddy reaches it on the internal
+#     network; the api should not be reachable on the public internet).
+#
+# postgres + redis were never publicly bound in the base file, so nothing
+# extra needs to change for them in prod.
+
+name: memesh
+
+services:
+  api:
+    # Remove the host-port binding. Caddy talks to api over the internal
+    # docker network on api:3001; nothing should hit the api directly.
+    ports: !reset []
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - '80:80'
+      - '443:443'
+      - '443:443/udp'
+    environment:
+      DOMAIN: ${DOMAIN:?DOMAIN is required for the production Caddy proxy (e.g. memesh.co.il)}
+      LETSENCRYPT_EMAIL: ${LETSENCRYPT_EMAIL:?LETSENCRYPT_EMAIL is required so Let''s Encrypt can send renewal warnings}
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./apps/web/dist:/srv/web:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      - internal
+    healthcheck:
+      test:
+        ['CMD', 'wget', '--quiet', '--spider', '--server-response', 'http://localhost/api/health']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  caddy-data:
+  caddy-config:
