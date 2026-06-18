@@ -1,18 +1,18 @@
-import { type CSSProperties, type ReactNode, useEffect, useRef, useState } from 'react';
+import { type CSSProperties, useEffect, useRef, useState } from 'react';
 import { FauxQr, PunchCard, Sun } from '../brand';
 import {
-  avatar,
-  companionLabel,
-  fmtDate,
-  fullName,
-  initialCustomers,
-  initials,
-  type MockCustomer,
-  statusBadge,
-} from '../mock';
+  getCustomerDetail,
+  searchCustomers,
+  type Customer,
+  type CustomerDetailResponse,
+  type PunchCard as ApiPunchCard,
+} from '../lib/api/customers';
+import { punchBySerial } from '../lib/api/punch';
+import { useStaffSession } from '../lib/staff-session';
+import { companionLabel, fmtDate, fullName, initialCustomers, type MockCustomer } from '../mock';
+import { PunchConfirmModal } from './PunchConfirmModal';
 
 const ORANGE = '#ffa983';
-const GREEN = '#c4d898';
 const INK = '#2d3436';
 const MUTED = '#636e72';
 const SHADOW = '0 4px 20px rgba(0,0,0,0.08)';
@@ -56,36 +56,236 @@ const inputStyle: CSSProperties = {
   outline: 'none',
 };
 
+// Returns a time-of-day greeting in Hebrew. The cashier sees this on the POS
+// home; we drop the previously hardcoded name until /auth/me carries the staff
+// profile in a follow-up.
+function greetingFor(now: Date): string {
+  const h = now.getHours();
+  if (h >= 5 && h < 12) return 'בוקר טוב';
+  if (h >= 12 && h < 17) return 'צהריים טובים';
+  if (h >= 17 && h < 21) return 'ערב טוב';
+  return 'לילה טוב';
+}
+
+// "יום שלישי · 17 ביוני 2026" using Intl with the he-IL locale.
+function hebrewDate(now: Date): string {
+  const fmt = new Intl.DateTimeFormat('he-IL', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  });
+  const parts = fmt.formatToParts(now);
+  const weekday = parts.find((p) => p.type === 'weekday')?.value ?? '';
+  const day = parts.find((p) => p.type === 'day')?.value ?? '';
+  const month = parts.find((p) => p.type === 'month')?.value ?? '';
+  const year = parts.find((p) => p.type === 'year')?.value ?? '';
+  return `${weekday} · ${day} ${month} ${year}`;
+}
+
+// Helpers for the REAL Customer shape from /customers (firstName/lastName/etc).
+// MockCustomer's helpers in ../mock take a different shape (.first/.last) and
+// still serve the Scan/Sell mock flows; these only handle the live data.
+const AVATARS = [
+  { bg: '#fff4ee', color: '#ffa983' },
+  { bg: '#f3f7e8', color: '#8fae4f' },
+  { bg: '#fdeee6', color: '#d98b62' },
+  { bg: '#eef3e2', color: '#7fa043' },
+];
+const realFullName = (c: Pick<Customer, 'firstName' | 'lastName'>): string =>
+  `${c.firstName} ${c.lastName}`;
+const realInitials = (c: Pick<Customer, 'firstName' | 'lastName'>): string =>
+  (c.firstName[0] ?? '') + (c.lastName[0] ?? '');
+const realAvatar = (id: string) => {
+  const last = id[id.length - 1] ?? '0';
+  const i = (Number.parseInt(last, 16) || 0) % AVATARS.length;
+  return AVATARS[i] ?? AVATARS[0]!;
+};
+
+// Pick the card to show on a customer's detail screen: prefer the active one,
+// otherwise the most recent. cards arrive sorted by createdAt desc from the API.
+const pickActiveCard = (cards: ApiPunchCard[]): ApiPunchCard | undefined =>
+  cards.find((c) => c.isActive) ?? cards[0];
+
+const yyyyMmDd = (iso: string): string => iso.slice(0, 10);
+const hhMm = (iso: string): string => {
+  const d = new Date(iso);
+  const h = String(d.getHours()).padStart(2, '0');
+  const m = String(d.getMinutes()).padStart(2, '0');
+  return `${h}:${m}`;
+};
+
+const SEARCH_DEBOUNCE_MS = 250;
+
+// Server returns short reason codes from POST /punch (see apps/api/src/routes/punch.ts).
+// Map them to messages the cashier can act on.
+function humanizePunchError(code: string): string {
+  if (code === 'exhausted') return 'הכרטיסייה מנוצלת — אין כניסות נוספות.';
+  if (code === 'expired') return 'הכרטיסייה פגת תוקף.';
+  if (code === 'inactive') return 'הכרטיסייה אינה פעילה.';
+  if (code === 'not_found') return 'הכרטיסייה לא נמצאה. נסו שוב.';
+  if (code === 'invalid_signature') return 'קוד QR לא תקין. השתמשו במספר סידורי.';
+  if (code === 'invalid_body') return 'נתוני הניקוב לא תקינים.';
+  return 'שגיאה בניקוב. נסו שוב בעוד רגע.';
+}
+
 type Screen = 'home' | 'search' | 'customer' | 'new' | 'sell' | 'scan';
 type SellStep = 'choose' | 'confirm' | 'done';
 type ScanState = 'camera' | 'success' | 'done' | 'fail';
-type Toast = { msg: string; tone: 'ok' | 'green' } | null;
 
 const CARD_PRICE = 320;
 
 export function PosApp() {
+  const { state: sessionState } = useStaffSession();
+  // The session is guaranteed signed-in here (App.tsx gates this surface), but
+  // the discriminated union still needs narrowing for type safety.
+  const sessionUser = sessionState.status === 'signed-in' ? sessionState.user : null;
+
+  // Mock state kept for Scan/Sell/NewCustomer flows still on mock data. Search
+  // + Customer detail consume the LIVE state below instead.
   const [customers, setCustomers] = useState<MockCustomer[]>(initialCustomers);
   const [screen, setScreen] = useState<Screen>('home');
-  const [selectedId, setSelectedId] = useState<string>(initialCustomers[0]!.id);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [sellStep, setSellStep] = useState<SellStep>('choose');
   const [scanState, setScanState] = useState<ScanState>('camera');
   const [companions, setCompanions] = useState(1);
-  const [askCompanions, setAskCompanions] = useState(false);
-  const [toast, setToast] = useState<Toast>(null);
-  const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
-  useEffect(() => () => clearTimeout(toastTimer.current), []);
+  // Live search state (debounced + abortable). Empty query => no fetch.
+  const [searchResults, setSearchResults] = useState<Customer[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
 
-  const showToast = (msg: string, tone: 'ok' | 'green' = 'ok') => {
-    setToast({ msg, tone });
-    clearTimeout(toastTimer.current);
-    toastTimer.current = setTimeout(() => setToast(null), 2600);
+  // Live customer detail state. Fetched when selectedId changes.
+  const [detail, setDetail] = useState<CustomerDetailResponse | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
+
+  // Punch flow state. punchKey is generated once per modal open so a
+  // double-click or network retry replays on the server (no double punch).
+  // punchStatus holds an inline success or error message under the punch
+  // button; it auto-clears after a couple seconds.
+  const [askPunch, setAskPunch] = useState(false);
+  const [punching, setPunching] = useState(false);
+  const [punchKey, setPunchKey] = useState<string>('');
+  const [punchStatus, setPunchStatus] = useState<
+    { kind: 'success'; remaining: number } | { kind: 'error'; message: string } | null
+  >(null);
+  const punchStatusTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(punchStatusTimer.current), []);
+  const flashStatus = (next: NonNullable<typeof punchStatus>, ms = 2500) => {
+    setPunchStatus(next);
+    clearTimeout(punchStatusTimer.current);
+    punchStatusTimer.current = setTimeout(() => setPunchStatus(null), ms);
   };
 
-  const selected = customers.find((c) => c.id === selectedId) ?? customers[0]!;
-  const scanned = customers[0]!; // demo card for the scan flow
+  // Debounced search effect: 250ms after typing stops, fetch /customers?q=...
+  // and abort if the user types again before the fetch resolves.
+  useEffect(() => {
+    const q = query.trim();
+    if (!q) {
+      setSearchResults([]);
+      setSearchError(null);
+      setSearchLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      setSearchLoading(true);
+      setSearchError(null);
+      console.info('[web search] fire', { q });
+      const res = await searchCustomers(q, { signal: controller.signal });
+      if (controller.signal.aborted) {
+        console.info('[web search] aborted', { q });
+        return;
+      }
+      setSearchLoading(false);
+      if (res.ok) {
+        setSearchResults(res.data.results);
+      } else {
+        setSearchError(res.error);
+        setSearchResults([]);
+      }
+    }, SEARCH_DEBOUNCE_MS);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [query]);
 
+  // Customer detail effect: load the selected customer + cards + entries.
+  useEffect(() => {
+    if (!selectedId) {
+      setDetail(null);
+      setDetailError(null);
+      setDetailLoading(false);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      setDetailLoading(true);
+      setDetailError(null);
+      const res = await getCustomerDetail(selectedId);
+      if (cancelled) return;
+      setDetailLoading(false);
+      if (res.ok) {
+        setDetail(res.data);
+      } else {
+        setDetail(null);
+        setDetailError(res.error);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedId]);
+
+  // Open the companion-count modal. A fresh UUID lives for this intent only.
+  const openPunch = () => {
+    setPunchKey(crypto.randomUUID());
+    setAskPunch(true);
+    setPunchStatus(null);
+    console.info('[web punch] open');
+  };
+
+  // The actual call. Closes the modal, posts to the API, refetches detail on
+  // success, surfaces a Hebrew error otherwise.
+  const confirmPunch = async (companionsArg: number) => {
+    if (!detail) return;
+    const active = pickActiveCard(detail.cards);
+    if (!active) return;
+    setPunching(true);
+    console.info('[web punch] submit', { companions: companionsArg });
+    const res = await punchBySerial(active.serialNumber, {
+      companions: companionsArg,
+      idempotencyKey: punchKey,
+    });
+    setPunching(false);
+    setAskPunch(false);
+    if (res.ok) {
+      console.info('[web punch] success', {
+        remaining: res.data.remaining,
+        replay: res.data.replay,
+      });
+      flashStatus({ kind: 'success', remaining: res.data.remaining });
+      // Refetch detail so the pebbles + history list reflect the new state.
+      if (selectedId) {
+        const refreshed = await getCustomerDetail(selectedId);
+        if (refreshed.ok) setDetail(refreshed.data);
+      }
+    } else {
+      console.warn('[web punch] error', { status: res.status, error: res.error });
+      flashStatus({ kind: 'error', message: humanizePunchError(res.error) }, 4000);
+    }
+  };
+
+  // Demo customer used by the Scan flow (still on mock data). The real Scan
+  // wiring lands in a follow-up chunk together with POST /punch.
+  const scanned = customers[0]!;
+
+  // Mock punch used only by Scan/Customer-overlay flows still on mock data.
+  // The real Customer detail screen below disables its punch button until
+  // POST /punch is wired.
   const punch = (id: string) => {
     setCustomers((prev) =>
       prev.map((c) => (c.id === id && c.used < c.total ? { ...c, used: c.used + 1 } : c)),
@@ -97,12 +297,6 @@ export function PosApp() {
     setScreen('customer');
   };
 
-  const matches = customers.filter((c) => {
-    const q = query.trim();
-    if (!q) return true;
-    return fullName(c).includes(q) || c.phone.includes(q) || c.id.includes(q);
-  });
-
   return (
     <>
       <main style={{ maxWidth: 920, margin: '0 auto', padding: '24px 20px 64px' }}>
@@ -113,7 +307,6 @@ export function PosApp() {
         {screen === 'sell' && <Sell />}
         {screen === 'scan' && <Scan />}
       </main>
-      {toast && <ToastView toast={toast} />}
     </>
   );
 
@@ -170,8 +363,11 @@ export function PosApp() {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
         <div>
-          <div style={{ fontSize: 24, fontWeight: 600 }}>בוקר טוב, מליה</div>
-          <div style={{ color: MUTED, marginTop: 4 }}>יום שלישי · 17 ביוני 2026</div>
+          <div style={{ fontSize: 24, fontWeight: 600 }}>
+            {greetingFor(new Date())}
+            {sessionUser ? `, ${sessionUser.firstName}` : ''}
+          </div>
+          <div style={{ color: MUTED, marginTop: 4 }}>{hebrewDate(new Date())}</div>
         </div>
         <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
           <Stat label="כניסות היום" value="38" />
@@ -248,6 +444,8 @@ export function PosApp() {
   }
 
   function Search() {
+    const q = query.trim();
+    const showEmpty = q.length > 0 && !searchLoading && !searchError && searchResults.length === 0;
     return (
       <div>
         <BackBar label="חזרה" to="home" />
@@ -259,9 +457,14 @@ export function PosApp() {
           style={inputStyle}
         />
         <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {matches.map((c) => {
-            const a = avatar(c);
-            const b = statusBadge(c.status);
+          {searchLoading && <div style={{ ...card, textAlign: 'center', color: MUTED }}>מחפש…</div>}
+          {searchError && (
+            <div style={{ ...card, textAlign: 'center', color: '#a23a3a' }}>
+              שגיאה בחיפוש. נסו שוב בעוד רגע.
+            </div>
+          )}
+          {searchResults.map((c) => {
+            const a = realAvatar(c.id);
             return (
               <button
                 key={c.id}
@@ -290,29 +493,23 @@ export function PosApp() {
                     fontWeight: 600,
                   }}
                 >
-                  {initials(c)}
+                  {realInitials(c)}
                 </div>
                 <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 600 }}>{fullName(c)}</div>
+                  <div style={{ fontWeight: 600 }}>{realFullName(c)}</div>
                   <div style={{ fontSize: 13, color: MUTED }}>
-                    {c.phone} · {c.id}
+                    {c.phone} · {c.customerNumber}
                   </div>
                 </div>
-                <span
-                  style={{
-                    fontSize: 12.5,
-                    background: b.bg,
-                    color: b.color,
-                    borderRadius: 8,
-                    padding: '4px 10px',
-                  }}
-                >
-                  {b.text}
-                </span>
               </button>
             );
           })}
-          {query.trim() && matches.length === 0 && (
+          {searchResults.length === 20 && (
+            <div style={{ ...card, textAlign: 'center', color: MUTED, fontSize: 13 }}>
+              מוצגים 20 הראשונים. המשיכו לסנן לחיפוש מדויק יותר.
+            </div>
+          )}
+          {showEmpty && (
             <div style={{ ...card, textAlign: 'center', color: MUTED }}>
               לא נמצאו לקוחות שמתאימים לחיפוש
             </div>
@@ -323,9 +520,27 @@ export function PosApp() {
   }
 
   function Customer() {
-    const c = selected;
-    const a = avatar(c);
-    const remaining = c.total - c.used;
+    if (detailLoading) {
+      return (
+        <div>
+          <BackBar label="חזרה לחיפוש" to="search" />
+          <div style={{ ...card, textAlign: 'center', color: MUTED }}>טוען פרטי לקוח…</div>
+        </div>
+      );
+    }
+    if (detailError || !detail) {
+      return (
+        <div>
+          <BackBar label="חזרה לחיפוש" to="search" />
+          <div style={{ ...card, textAlign: 'center', color: '#a23a3a' }}>
+            לא הצלחנו לטעון את פרטי הלקוח. חזרו לחיפוש ונסו שוב.
+          </div>
+        </div>
+      );
+    }
+    const { customer: cust, cards, entries } = detail;
+    const a = realAvatar(cust.id);
+    const activeCard = pickActiveCard(cards);
     return (
       <div>
         <BackBar label="חזרה לחיפוש" to="search" />
@@ -344,69 +559,96 @@ export function PosApp() {
               fontSize: 18,
             }}
           >
-            {initials(c)}
+            {realInitials(cust)}
           </div>
           <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 20, fontWeight: 600 }}>{fullName(c)}</div>
+            <div style={{ fontSize: 20, fontWeight: 600 }}>{realFullName(cust)}</div>
             <div style={{ fontSize: 14, color: MUTED }}>
-              {c.phone} · {c.id}
+              {cust.phone} · {cust.customerNumber}
             </div>
           </div>
         </div>
 
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit,minmax(260px,1fr))',
-            gap: 16,
-          }}
-        >
+        {activeCard ? (
           <div
             style={{
-              ...card,
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              gap: 18,
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit,minmax(260px,1fr))',
+              gap: 16,
             }}
           >
-            <PunchCard used={c.used} total={c.total} />
-            <button
-              onClick={() => {
-                setCompanions(1);
-                setAskCompanions(true);
-              }}
-              disabled={remaining <= 0}
+            <div
               style={{
-                ...primaryBtn,
-                width: '100%',
-                opacity: remaining <= 0 ? 0.5 : 1,
-                cursor: remaining <= 0 ? 'default' : 'pointer',
+                ...card,
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                gap: 14,
               }}
             >
-              ניקוב כניסה
-            </button>
+              <PunchCard used={activeCard.usedEntries} total={activeCard.totalEntries} />
+              <button
+                onClick={openPunch}
+                disabled={!activeCard.isActive || activeCard.usedEntries >= activeCard.totalEntries}
+                style={{
+                  ...primaryBtn,
+                  width: '100%',
+                  opacity:
+                    !activeCard.isActive || activeCard.usedEntries >= activeCard.totalEntries
+                      ? 0.5
+                      : 1,
+                  cursor:
+                    !activeCard.isActive || activeCard.usedEntries >= activeCard.totalEntries
+                      ? 'not-allowed'
+                      : 'pointer',
+                }}
+              >
+                ניקוב כניסה
+              </button>
+              {punchStatus?.kind === 'success' && (
+                <div
+                  role="status"
+                  style={{ fontSize: 13, color: '#6f8f37', fontWeight: 600, textAlign: 'center' }}
+                >
+                  ✓ נוצב · נותרו {punchStatus.remaining}
+                </div>
+              )}
+              {punchStatus?.kind === 'error' && (
+                <div role="alert" style={{ fontSize: 13, color: '#a23a3a', textAlign: 'center' }}>
+                  {punchStatus.message}
+                </div>
+              )}
+            </div>
+            <div
+              style={{
+                ...card,
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                gap: 10,
+              }}
+            >
+              <FauxQr seed={activeCard.serialNumber} size={140} />
+              <div style={{ fontSize: 13, color: MUTED }}>{activeCard.serialNumber}</div>
+              <div style={{ fontSize: 13, color: MUTED }}>
+                תוקף עד {fmtDate(yyyyMmDd(activeCard.expiresAt))}
+              </div>
+            </div>
           </div>
-          <div
-            style={{
-              ...card,
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              gap: 10,
-            }}
-          >
-            <FauxQr seed={c.serial} size={140} />
-            <div style={{ fontSize: 13, color: MUTED }}>קוד הכרטיסייה</div>
-            <div style={{ fontSize: 13, color: MUTED }}>תוקף עד {fmtDate(c.expiry)}</div>
+        ) : (
+          <div style={{ ...card, textAlign: 'center', color: MUTED }}>
+            ללקוח אין כרטיסייה פעילה. ניתן למכור כרטיסייה חדשה (זרימת מכירה תחובר בעדכון הבא).
           </div>
-        </div>
+        )}
 
         <div style={{ ...card, marginTop: 16 }}>
           <div style={{ fontWeight: 600, marginBottom: 10 }}>היסטוריית כניסות</div>
-          {c.history.map((h, i) => (
+          {entries.length === 0 && (
+            <div style={{ color: MUTED, fontSize: 14 }}>אין כניסות עדיין.</div>
+          )}
+          {entries.map((h, i) => (
             <div
-              key={i}
+              key={h.id}
               style={{
                 display: 'flex',
                 justifyContent: 'space-between',
@@ -416,55 +658,45 @@ export function PosApp() {
               }}
             >
               <span>
-                {fmtDate(h.date)} · {h.time}
+                {fmtDate(yyyyMmDd(h.punchedAt))} · {hhMm(h.punchedAt)}
               </span>
-              <span style={{ color: MUTED }}>{companionLabel(h.comp)}</span>
+              <span style={{ color: MUTED }}>{companionLabel(h.companionCount)}</span>
             </div>
           ))}
         </div>
 
         <div style={{ ...card, marginTop: 16 }}>
           <div style={{ fontWeight: 600, marginBottom: 8 }}>ילדים</div>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            {c.children.map((k) => (
-              <span
-                key={k.name}
-                style={{
-                  background: '#f3f7e8',
-                  color: '#6f8f37',
-                  borderRadius: 10,
-                  padding: '6px 12px',
-                  fontSize: 13.5,
-                }}
-              >
-                {k.name}
-              </span>
-            ))}
-          </div>
+          {cust.children.length === 0 ? (
+            <div style={{ fontSize: 14, color: MUTED }}>לא נרשמו ילדים.</div>
+          ) : (
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {cust.children.map((k) => (
+                <span
+                  key={k.name}
+                  style={{
+                    background: '#f3f7e8',
+                    color: '#6f8f37',
+                    borderRadius: 10,
+                    padding: '6px 12px',
+                    fontSize: 13.5,
+                  }}
+                >
+                  {k.name}
+                </span>
+              ))}
+            </div>
+          )}
           <div style={{ fontWeight: 600, margin: '14px 0 6px' }}>הערת צוות פנימית</div>
-          <div style={{ fontSize: 14, color: MUTED }}>{c.note || 'אין הערות.'}</div>
+          <div style={{ fontSize: 14, color: MUTED }}>{cust.internalNotes || 'אין הערות.'}</div>
         </div>
 
-        {askCompanions && (
-          <Overlay onClose={() => setAskCompanions(false)}>
-            <div style={{ fontSize: 18, fontWeight: 600, textAlign: 'center' }}>כמה מלווים?</div>
-            <CompanionStepper />
-            <div style={{ display: 'flex', gap: 10, marginTop: 18 }}>
-              <button style={{ ...ghostBtn, flex: 1 }} onClick={() => setAskCompanions(false)}>
-                ביטול
-              </button>
-              <button
-                style={{ ...primaryBtn, flex: 1 }}
-                onClick={() => {
-                  punch(c.id);
-                  setAskCompanions(false);
-                  showToast('ניקוב כניסה בוצע', 'green');
-                }}
-              >
-                נקב כניסה
-              </button>
-            </div>
-          </Overlay>
+        {askPunch && activeCard && (
+          <PunchConfirmModal
+            onClose={() => setAskPunch(false)}
+            onConfirm={confirmPunch}
+            submitting={punching}
+          />
         )}
       </div>
     );
@@ -745,55 +977,6 @@ export function PosApp() {
             </button>
           </div>
         )}
-      </div>
-    );
-  }
-
-  function Overlay({ children, onClose }: { children: ReactNode; onClose: () => void }) {
-    return (
-      <div
-        onClick={onClose}
-        style={{
-          position: 'fixed',
-          inset: 0,
-          background: 'rgba(45,52,54,0.4)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          padding: 20,
-          zIndex: 50,
-        }}
-      >
-        <div
-          onClick={(e) => e.stopPropagation()}
-          style={{ ...card, width: 360, maxWidth: '100%', animation: 'memesh-rise 0.25s ease' }}
-        >
-          {children}
-        </div>
-      </div>
-    );
-  }
-
-  function ToastView({ toast: t }: { toast: NonNullable<Toast> }) {
-    const bg = t.tone === 'green' ? GREEN : INK;
-    const color = t.tone === 'green' ? '#3d4a1f' : '#fff';
-    return (
-      <div
-        style={{
-          position: 'fixed',
-          bottom: 24,
-          left: '50%',
-          transform: 'translateX(-50%)',
-          background: bg,
-          color,
-          padding: '12px 22px',
-          borderRadius: 12,
-          boxShadow: SHADOW,
-          animation: 'memesh-toast 0.25s ease',
-          zIndex: 60,
-        }}
-      >
-        {t.msg}
       </div>
     );
   }

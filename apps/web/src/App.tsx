@@ -1,8 +1,10 @@
-import { useState } from 'react';
+import { useState, type CSSProperties } from 'react';
 import { AdminApp } from './admin/AdminApp';
-import { Logo } from './brand';
+import { Logo, Sun } from './brand';
 import { CustomerApp } from './customer/CustomerApp';
+import { StaffSessionProvider, useStaffSession } from './lib/staff-session';
 import { PosApp } from './pos/PosApp';
+import { StaffLoginForm } from './pos/StaffLoginForm';
 
 type Surface = 'staff' | 'customer' | 'admin';
 
@@ -13,7 +15,19 @@ const TABS: { key: Surface; label: string }[] = [
 ];
 
 export function App() {
+  return (
+    <StaffSessionProvider>
+      <AppShell />
+    </StaffSessionProvider>
+  );
+}
+
+function AppShell() {
   const [surface, setSurface] = useState<Surface>('staff');
+  const { state, signOut } = useStaffSession();
+  const requiresStaffAuth = surface === 'staff' || surface === 'admin';
+  const signedIn = state.status === 'signed-in';
+
   return (
     <div dir="rtl" style={{ minHeight: '100%', background: '#f9f9f9', color: '#2d3436' }}>
       <header
@@ -65,10 +79,55 @@ export function App() {
             );
           })}
         </div>
+        {requiresStaffAuth && signedIn ? (
+          <button onClick={signOut} style={headerActionStyle} aria-label="התנתק">
+            התנתק
+          </button>
+        ) : (
+          <div style={{ width: 0 }} />
+        )}
       </header>
-      {surface === 'staff' && <PosApp />}
-      {surface === 'customer' && <CustomerApp />}
-      {surface === 'admin' && <AdminApp />}
+      <SurfaceBody surface={surface} />
     </div>
   );
 }
+
+function SurfaceBody({ surface }: { surface: Surface }) {
+  const { state } = useStaffSession();
+  if (surface === 'customer') return <CustomerApp />;
+
+  if (state.status === 'loading') return <LoadingShell />;
+  if (state.status === 'signed-out') return <StaffLoginForm />;
+  if (surface === 'staff') return <PosApp />;
+  return <AdminApp />;
+}
+
+function LoadingShell() {
+  return (
+    <main
+      style={{
+        maxWidth: 920,
+        margin: '0 auto',
+        padding: '96px 20px',
+        textAlign: 'center',
+        color: '#636e72',
+      }}
+    >
+      <div style={{ display: 'flex', justifyContent: 'center' }}>
+        <Sun size={48} />
+      </div>
+      <div style={{ marginTop: 16, fontSize: 15 }}>טוען…</div>
+    </main>
+  );
+}
+
+const headerActionStyle: CSSProperties = {
+  border: '1.5px solid #e9e0d9',
+  background: '#fff',
+  color: '#636e72',
+  borderRadius: 9,
+  padding: '8px 14px',
+  fontWeight: 600,
+  fontSize: 14,
+  cursor: 'pointer',
+};

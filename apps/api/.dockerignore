@@ -1,0 +1,21 @@
+# This file is read by `docker build apps/api/...` and limits what is copied
+# into the build context, but Compose builds with the ROOT as the context (so
+# the workspace tree is available to `pnpm install`). The root `.dockerignore`
+# is the load-bearing one for Compose; this file is here so a future
+# `docker build -f apps/api/Dockerfile apps/api/` does not pull junk.
+
+node_modules
+.git
+.env
+.env.*
+!.env.example
+dist
+build
+.turbo
+.cache
+coverage
+*.log
+.DS_Store
+Thumbs.db
+.vscode
+.idea

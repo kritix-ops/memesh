@@ -6,3 +6,4 @@ export * from './otp.js';
 export * from './accounts.js';
 export * from './reports.js';
 export * from './actions.js';
+export * from './migrations-path.js';

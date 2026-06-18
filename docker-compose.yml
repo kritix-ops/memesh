@@ -1,0 +1,106 @@
+# Memesh Phase 1 deployment stack. Brings up the API, a self-managed Postgres,
+# and a Redis cache on a single host. Used both locally (the same `up -d` works
+# on a developer laptop) and on the production server. Environment-specific
+# secrets live in `.env` (gitignored) — see `.env.example` for the shape.
+#
+# Run:
+#   cp .env.example .env && $EDITOR .env       # fill in the four required secrets
+#   docker compose up -d                       # boots all three services
+#   docker compose run --rm api pnpm seed:admin  # runs migrations + creates the first admin
+#   docker compose logs -f api                 # tail the API
+#
+# See _plans/2026-06-18-api-deployment-kit.md for the design rationale.
+
+name: memesh
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-memesh}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required (see .env.example)}
+      POSTGRES_DB: ${POSTGRES_DB:-memesh}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - internal
+    # No `ports:` mapping — Postgres is only reachable on the internal Docker
+    # network. To psql from the host during development, override locally with
+    # `docker-compose.override.yml` adding `ports: ["127.0.0.1:5432:5432"]`.
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # Defense-in-depth: even on the internal network, require auth. The api
+    # reads REDIS_PASSWORD from env and includes it in its connection string.
+    command:
+      [
+        'redis-server',
+        '--requirepass',
+        '${REDIS_PASSWORD:?REDIS_PASSWORD is required (see .env.example)}',
+        '--save',
+        '',
+        '--appendonly',
+        'no',
+      ]
+    networks:
+      - internal
+    healthcheck:
+      test: ['CMD', 'redis-cli', '-a', '$$REDIS_PASSWORD', 'ping']
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      PORT: 3001
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-memesh}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-memesh}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      SERVER_SECRET_KEY: ${SERVER_SECRET_KEY:?SERVER_SECRET_KEY is required (32+ chars, see .env.example)}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required (32+ chars, see .env.example)}
+      JWT_ISSUER: ${JWT_ISSUER:-memesh}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-memesh-api}
+      JWT_CUSTOMER_AUDIENCE: ${JWT_CUSTOMER_AUDIENCE:-memesh-customer}
+      QR_KEY_ID: ${QR_KEY_ID:-1}
+      # Optional WP one-way sync — disabled when unset.
+      WP_BASE_URL: ${WP_BASE_URL:-}
+      WP_SYNC_USER: ${WP_SYNC_USER:-}
+      WP_SYNC_APP_PASSWORD: ${WP_SYNC_APP_PASSWORD:-}
+      # Read by the seed:admin script only (not by the running api).
+      SEED_ADMIN_PHONE: ${SEED_ADMIN_PHONE:-}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-}
+      SEED_ADMIN_FIRST_NAME: ${SEED_ADMIN_FIRST_NAME:-}
+      SEED_ADMIN_LAST_NAME: ${SEED_ADMIN_LAST_NAME:-}
+      SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-}
+    ports:
+      # Bind to loopback on the host. In production, a reverse proxy (Cloudways
+      # router, Caddy, Nginx) terminates TLS and forwards to 127.0.0.1:3001.
+      - '127.0.0.1:${API_HOST_PORT:-3001}:3001'
+    networks:
+      - internal
+
+volumes:
+  postgres-data:
+
+networks:
+  internal:
+    driver: bridge

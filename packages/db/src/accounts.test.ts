@@ -6,6 +6,7 @@ import { migrate } from 'drizzle-orm/pglite/migrator';
 import {
   createStaff,
   getCustomerById,
+  getStaffById,
   listStaff,
   setCustomerWpUserId,
   updateCustomerProfile,
@@ -51,6 +52,31 @@ test('listStaff returns members without password hashes', async () => {
   const all = await listStaff(db);
   assert.equal(all.length, 1);
   assert.equal('passwordHash' in (all[0] ?? {}), false);
+});
+
+test('getStaffById returns the public view (no password hash) for a known id', async () => {
+  const db = await freshDb();
+  const created = await createStaff(db, {
+    firstName: 'Lior',
+    lastName: 'Avraham',
+    phone: phone(),
+    passwordHash: 'scrypt$1$2$3$abc$def',
+    role: 'manager',
+  });
+  const found = await getStaffById(db, created.id);
+  assert.ok(found);
+  assert.equal(found.id, created.id);
+  assert.equal(found.firstName, 'Lior');
+  assert.equal(found.lastName, 'Avraham');
+  assert.equal(found.role, 'manager');
+  assert.equal(found.isActive, true);
+  assert.equal('passwordHash' in found, false);
+});
+
+test('getStaffById returns undefined for an unknown id', async () => {
+  const db = await freshDb();
+  const missing = await getStaffById(db, '00000000-0000-0000-0000-000000000000');
+  assert.equal(missing, undefined);
 });
 
 test('updateCustomerProfile edits allowed fields and leaves phone unchanged', async () => {

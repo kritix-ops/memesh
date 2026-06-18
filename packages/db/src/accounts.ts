@@ -45,6 +45,16 @@ export const createStaff = async (db: AnyPgDatabase, input: CreateStaffInput) =>
 
 export const listStaff = async (db: AnyPgDatabase) => db.select(staffView).from(staff);
 
+/**
+ * Fetch the public profile for a single staff member by id. Returns undefined
+ * if the row is missing. The password hash is never selected; this is the
+ * shape /auth/me returns to a logged-in client.
+ */
+export const getStaffById = async (db: AnyPgDatabase, id: string) => {
+  const rows = await db.select(staffView).from(staff).where(eq(staff.id, id)).limit(1);
+  return rows[0];
+};
+
 export const getCustomerById = async (db: AnyPgDatabase, id: string) => {
   const rows = await db.select().from(customers).where(eq(customers.id, id)).limit(1);
   return rows[0];

@@ -5,6 +5,7 @@ import {
   STAFF_ROLES,
   verifyRefreshToken,
 } from '@memesh/auth';
+import { db, getStaffById } from '@memesh/db';
 import type { FastifyPluginAsync, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { authConfig } from '../auth.js';
@@ -33,6 +34,12 @@ const refreshBodySchema = z
 
 const setAuthCookies = (reply: FastifyReply, accessToken: string, refreshToken: string): void => {
   const isProd = env.NODE_ENV === 'production';
+  // Both cookies use path '/'. The previous scoping of refresh_token to
+  // '/auth/refresh' broke under any /api/* proxy (Vite dev proxy or the
+  // production reverse proxy) because the browser stores the cookie at the
+  // path the server sent, while the actual refresh request is /api/auth/refresh
+  // — paths mismatch, cookie not sent. The cookies are HttpOnly + sameSite=lax
+  // (+ Secure in prod), so path scoping never gated a real attack.
   reply.setCookie('access_token', accessToken, {
     httpOnly: true,
     secure: isProd,
@@ -44,7 +51,7 @@ const setAuthCookies = (reply: FastifyReply, accessToken: string, refreshToken: 
     httpOnly: true,
     secure: isProd,
     sameSite: 'lax',
-    path: '/auth/refresh',
+    path: '/',
     maxAge: REFRESH_MAX_AGE_SEC,
   });
 };
@@ -118,13 +125,33 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
     return { accessToken, refreshToken };
   });
 
-  fastify.get('/auth/me', { preHandler: requireAuthHook }, async (request) => {
-    return { user: request.user };
+  fastify.get('/auth/me', { preHandler: requireAuthHook }, async (request, reply) => {
+    // requireAuthHook guarantees request.user is non-null.
+    const tokenUser = request.user!;
+    const row = await getStaffById(db, tokenUser.id);
+    if (!row || !row.isActive) {
+      // Token is valid but the staff row is gone or deactivated. The client
+      // treats this as signed-out (same as a missing/invalid token).
+      request.log.info(
+        { sub: tokenUser.id },
+        '[auth me] staff row missing or inactive, signing out',
+      );
+      return reply.code(401).send({ error: 'unauthorized' });
+    }
+    return {
+      user: {
+        id: row.id,
+        role: row.role,
+        firstName: row.firstName,
+        lastName: row.lastName,
+        email: row.email,
+      },
+    };
   });
 
   fastify.post('/auth/logout', async (_request, reply) => {
     reply.clearCookie('access_token', { path: '/' });
-    reply.clearCookie('refresh_token', { path: '/auth/refresh' });
+    reply.clearCookie('refresh_token', { path: '/' });
     return { ok: true };
   });
 };

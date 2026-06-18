@@ -1,0 +1,139 @@
+// Typed HTTP client for the Memesh API. Returns a discriminated union — the
+// same shape as `@memesh/auth`'s AuthVerifyResult — so callers branch on `ok`
+// instead of wrapping every call in try/catch. Network failures (rare, usually
+// a programming bug) still throw.
+//
+// Base URL resolution: `VITE_API_URL` if set, otherwise `/api`. The `/api`
+// default works in two topologies without configuration:
+//   1. Dev: Vite proxies `/api/*` → http://localhost:3001/*
+//   2. Prod single-origin Cloudways: reverse proxy forwards `/api/*` → api
+// In a split topology (Vercel + Cloudways), set `VITE_API_URL=https://api.memesh.co.il`.
+//
+// Auto-refresh: on a 401 from any non-auth path, the client transparently
+// POSTs to /auth/refresh and retries the original request once. Parallel 401s
+// share a single in-flight refresh promise. If refresh fails, the optional
+// `onSessionExpired` callback fires so the session provider can drop to
+// signed-out without each component having to detect it.
+
+// Vite replaces `import.meta.env.VITE_API_URL` at compile time. In a Node
+// (test) context `import.meta.env` is undefined, so optional chaining keeps
+// the module loadable for unit tests.
+const VITE_ENV = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env;
+const RAW_BASE = VITE_ENV?.['VITE_API_URL'] ?? '/api';
+const BASE_URL = RAW_BASE.replace(/\/$/, '');
+
+// Paths that must never trigger an auto-refresh:
+//   - /auth/refresh itself would infinite-loop
+//   - /auth/login: a 401 means "wrong credentials" and should surface to the user
+//   - /auth/logout: a 401 just means "you were already signed out"; refresh adds nothing
+const SKIP_AUTO_REFRESH = new Set(['/auth/refresh', '/auth/login', '/auth/logout']);
+
+export type ApiResult<T> = { ok: true; data: T } | { ok: false; status: number; error: string };
+
+export type ApiMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE';
+
+export interface ApiRequestInit {
+  method?: ApiMethod;
+  body?: unknown;
+  /** Optional AbortSignal so callers can cancel in-flight requests (e.g. debounced search). */
+  signal?: AbortSignal;
+}
+
+// ---------------------------------------------------------------------------
+// Refresh + session-expired plumbing
+// ---------------------------------------------------------------------------
+
+let refreshInflight: Promise<boolean> | null = null;
+let onSessionExpired: (() => void) | null = null;
+
+/**
+ * Register a callback invoked once when /auth/refresh fails after a 401. The
+ * `StaffSessionProvider` sets this on mount so the session state drops to
+ * `signed-out` automatically. Set to `null` to unregister.
+ */
+export function setOnSessionExpired(fn: (() => void) | null): void {
+  onSessionExpired = fn;
+}
+
+async function tryRefresh(): Promise<boolean> {
+  if (refreshInflight) return refreshInflight;
+  refreshInflight = (async () => {
+    try {
+      const res = await fetch(`${BASE_URL}/auth/refresh`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  })();
+  try {
+    return await refreshInflight;
+  } finally {
+    refreshInflight = null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Request
+// ---------------------------------------------------------------------------
+
+/**
+ * Perform an authenticated request against the Memesh API. Cookies are always
+ * included (the session is HttpOnly cookies set by the API on /auth/login).
+ */
+export async function apiRequest<T>(
+  path: string,
+  init: ApiRequestInit = {},
+  _retried = false,
+): Promise<ApiResult<T>> {
+  const method = init.method ?? 'GET';
+  const headers: Record<string, string> = {};
+  const fetchInit: RequestInit = { method, headers, credentials: 'include' };
+  if (init.body !== undefined) {
+    headers['Content-Type'] = 'application/json';
+    fetchInit.body = JSON.stringify(init.body);
+  }
+  if (init.signal) {
+    fetchInit.signal = init.signal;
+  }
+
+  const url = `${BASE_URL}${path}`;
+  const response = await fetch(url, fetchInit);
+
+  if (response.ok) {
+    // 204 No Content (no body); cast as T and let the caller's narrow type win.
+    const data =
+      response.status === 204 ? (undefined as unknown as T) : ((await response.json()) as T);
+    console.info('[web api]', method, path, response.status);
+    return { ok: true, data };
+  }
+
+  // Auto-refresh-on-401: at most one retry, skipping the auth paths themselves.
+  if (response.status === 401 && !_retried && !SKIP_AUTO_REFRESH.has(path)) {
+    console.info('[web api] 401, attempting refresh', { path });
+    const refreshed = await tryRefresh();
+    if (refreshed) {
+      console.info('[web api] retrying after 401 refresh', { path });
+      return apiRequest<T>(path, init, true);
+    }
+    console.warn('[web api] session expired', { path });
+    onSessionExpired?.();
+  }
+
+  // Try to read a structured error body; fall back to a generic `http_NNN`.
+  let errorCode: string | undefined;
+  try {
+    const errorBody = (await response.json()) as { error?: string };
+    errorCode = errorBody.error;
+  } catch {
+    // Non-JSON error response.
+  }
+  const error = errorCode ?? `http_${response.status}`;
+  console.warn('[web api]', method, path, response.status, error);
+  return { ok: false, status: response.status, error };
+}
+
+/** Exposed for tests and the dev console; do not depend on this in components. */
+export const __BASE_URL_FOR_TESTS = BASE_URL;
