@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import { after, beforeEach, test } from 'node:test';
-import { __BASE_URL_FOR_TESTS, apiRequest, setOnSessionExpired } from './api';
+import {
+  __BASE_URL_FOR_TESTS,
+  apiRequest,
+  setOnCustomerSessionExpired,
+  setOnSessionExpired,
+} from './api';
 
 interface FetchCall {
   url: string;
@@ -36,11 +41,13 @@ beforeEach(() => {
   calls = [];
   responseQueue = [];
   setOnSessionExpired(null);
+  setOnCustomerSessionExpired(null);
 });
 
 after(() => {
   globalThis.fetch = originalFetch;
   setOnSessionExpired(null);
+  setOnCustomerSessionExpired(null);
 });
 
 // ---------------------------------------------------------------------------
@@ -158,4 +165,41 @@ test('apiRequest on 401 does NOT auto-refresh /auth/refresh itself (no infinite 
   assert.equal(res.ok, false);
   // Only one call — no recursive refresh.
   assert.equal(calls.length, 1);
+});
+
+test('apiRequest with audience:customer does NOT auto-refresh on 401', async () => {
+  let customerExpired = 0;
+  let staffExpired = 0;
+  setOnCustomerSessionExpired(() => {
+    customerExpired += 1;
+  });
+  setOnSessionExpired(() => {
+    staffExpired += 1;
+  });
+  stubFetch({ status: 401, body: { error: 'unauthorized' } });
+  const res = await apiRequest('/me', { audience: 'customer' });
+  assert.equal(res.ok, false);
+  if (!res.ok) {
+    assert.equal(res.status, 401);
+  }
+  // Only the original call — no refresh attempt.
+  assert.equal(calls.length, 1);
+  assert.equal(customerExpired, 1);
+  assert.equal(staffExpired, 0);
+});
+
+test('apiRequest with audience:customer fires customer callback only', async () => {
+  let customerExpired = 0;
+  let staffExpired = 0;
+  setOnCustomerSessionExpired(() => {
+    customerExpired += 1;
+  });
+  setOnSessionExpired(() => {
+    staffExpired += 1;
+  });
+  stubFetch({ status: 200, body: { profile: { id: 'c1', firstName: 'Noa' } } });
+  await apiRequest('/me', { audience: 'customer' });
+  // A 200 fires nothing.
+  assert.equal(customerExpired, 0);
+  assert.equal(staffExpired, 0);
 });

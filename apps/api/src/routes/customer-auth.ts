@@ -67,4 +67,13 @@ export const customerAuthRoutes: FastifyPluginAsync = async (fastify) => {
       return { ok: true, token };
     },
   );
+
+  // Logout. Clears the customer session cookie. Safe to call when not signed
+  // in (idempotent). The HttpOnly cookie can only be cleared by the server,
+  // so this endpoint exists specifically to let the customer truly sign out
+  // before the 7-day cookie expires.
+  fastify.post('/auth/customer/logout', async (_request, reply) => {
+    reply.clearCookie('customer_token', { path: '/' });
+    return { ok: true };
+  });
 };

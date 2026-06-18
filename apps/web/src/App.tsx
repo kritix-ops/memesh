@@ -2,6 +2,7 @@ import { useState, type CSSProperties } from 'react';
 import { AdminApp } from './admin/AdminApp';
 import { Logo, Sun } from './brand';
 import { CustomerApp } from './customer/CustomerApp';
+import { CustomerSessionProvider } from './lib/customer-session';
 import { StaffSessionProvider, useStaffSession } from './lib/staff-session';
 import { PosApp } from './pos/PosApp';
 import { StaffLoginForm } from './pos/StaffLoginForm';
@@ -17,7 +18,9 @@ const TABS: { key: Surface; label: string }[] = [
 export function App() {
   return (
     <StaffSessionProvider>
-      <AppShell />
+      <CustomerSessionProvider>
+        <AppShell />
+      </CustomerSessionProvider>
     </StaffSessionProvider>
   );
 }

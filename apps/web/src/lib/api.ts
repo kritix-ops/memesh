@@ -32,11 +32,22 @@ export type ApiResult<T> = { ok: true; data: T } | { ok: false; status: number; 
 
 export type ApiMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE';
 
+/**
+ * 'staff' (default): a 401 attempts /auth/refresh and retries once. If refresh
+ * also fails, `onSessionExpired` fires.
+ * 'customer': no auto-refresh (there is no customer refresh endpoint; a 401
+ * means the 7-day cookie expired or was never set). `onCustomerSessionExpired`
+ * fires so the customer provider can drop to signed-out.
+ */
+export type ApiAudience = 'staff' | 'customer';
+
 export interface ApiRequestInit {
   method?: ApiMethod;
   body?: unknown;
   /** Optional AbortSignal so callers can cancel in-flight requests (e.g. debounced search). */
   signal?: AbortSignal;
+  /** Which session a 401 belongs to. Defaults to 'staff'. */
+  audience?: ApiAudience;
 }
 
 // ---------------------------------------------------------------------------
@@ -45,14 +56,24 @@ export interface ApiRequestInit {
 
 let refreshInflight: Promise<boolean> | null = null;
 let onSessionExpired: (() => void) | null = null;
+let onCustomerSessionExpired: (() => void) | null = null;
 
 /**
- * Register a callback invoked once when /auth/refresh fails after a 401. The
- * `StaffSessionProvider` sets this on mount so the session state drops to
+ * Register a callback invoked once when /auth/refresh fails after a staff 401.
+ * The `StaffSessionProvider` sets this on mount so the session state drops to
  * `signed-out` automatically. Set to `null` to unregister.
  */
 export function setOnSessionExpired(fn: (() => void) | null): void {
   onSessionExpired = fn;
+}
+
+/**
+ * Register a callback invoked on a 401 from any audience:'customer' call. The
+ * `CustomerSessionProvider` sets this so the customer state drops to
+ * `signed-out` automatically. Set to `null` to unregister.
+ */
+export function setOnCustomerSessionExpired(fn: (() => void) | null): void {
+  onCustomerSessionExpired = fn;
 }
 
 async function tryRefresh(): Promise<boolean> {
@@ -110,16 +131,25 @@ export async function apiRequest<T>(
     return { ok: true, data };
   }
 
-  // Auto-refresh-on-401: at most one retry, skipping the auth paths themselves.
-  if (response.status === 401 && !_retried && !SKIP_AUTO_REFRESH.has(path)) {
-    console.info('[web api] 401, attempting refresh', { path });
-    const refreshed = await tryRefresh();
-    if (refreshed) {
-      console.info('[web api] retrying after 401 refresh', { path });
-      return apiRequest<T>(path, init, true);
+  // 401 handling depends on the call's audience:
+  //   - 'customer': no auto-refresh (no customer refresh endpoint). Fire the
+  //     customer-session-expired callback so the provider drops to signed-out.
+  //   - 'staff' (default): at most one auto-refresh + retry, skipping the
+  //     staff-auth paths themselves; fire onSessionExpired if refresh fails.
+  if (response.status === 401 && !_retried) {
+    if (init.audience === 'customer') {
+      console.info('[web api] customer 401', { path });
+      onCustomerSessionExpired?.();
+    } else if (!SKIP_AUTO_REFRESH.has(path)) {
+      console.info('[web api] 401, attempting refresh', { path });
+      const refreshed = await tryRefresh();
+      if (refreshed) {
+        console.info('[web api] retrying after 401 refresh', { path });
+        return apiRequest<T>(path, init, true);
+      }
+      console.warn('[web api] session expired', { path });
+      onSessionExpired?.();
     }
-    console.warn('[web api] session expired', { path });
-    onSessionExpired?.();
   }
 
   // Try to read a structured error body; fall back to a generic `http_NNN`.
