@@ -1,3 +1,4 @@
+import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
@@ -28,6 +29,16 @@ export const buildApp = async (): Promise<FastifyInstance> => {
     origin: env.NODE_ENV === 'development' ? true : false,
     credentials: true,
   });
+
+  // Register @fastify/cookie at the root level so reply.setCookie and
+  // request.cookies are available across every route, regardless of which
+  // sub-plugin registers a child later. Was previously nested inside
+  // authPlugin, which worked in dev (tsx loads a single Fastify instance) but
+  // broke under esbuild bundling for Vercel — the fastify-plugin "skip
+  // encapsulation" marker symbol got duplicated across module copies and the
+  // decoration stopped propagating, so reply.setCookie was undefined inside
+  // /auth/login.
+  await fastify.register(cookie);
 
   await fastify.register(securityPlugin);
   await fastify.register(authPlugin);

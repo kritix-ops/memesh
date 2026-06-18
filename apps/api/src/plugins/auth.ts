@@ -1,4 +1,3 @@
-import cookie from '@fastify/cookie';
 import { isAuthSuccess, verifyAccessToken } from '@memesh/auth';
 import type { StaffRole } from '@memesh/auth';
 import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
@@ -26,8 +25,8 @@ const extractToken = (req: FastifyRequest): string | undefined => {
 };
 
 export const authPlugin: FastifyPluginAsync = async (fastify) => {
-  await fastify.register(cookie);
-
+  // @fastify/cookie is registered at the root in app.ts so reply.setCookie
+  // is available everywhere; we only attach request decorators here.
   fastify.decorateRequest('user', null);
   fastify.decorateRequest('customer', null);
 
