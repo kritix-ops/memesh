@@ -1,9 +1,12 @@
-import { buildApp } from '@memesh/api/app';
 import type { FastifyInstance } from 'fastify';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+// The bundle is built by scripts/build-api-bundle.mjs as part of the build
+// step. It contains the entire Fastify app with all workspace deps inlined,
+// so the Vercel serverless runtime can execute it without trying (and
+// failing) to resolve `.ts` source files through workspace symlinks.
+// @ts-expect-error - generated at build time
+import { buildApp } from '../lib/api-bundle.mjs';
 
-// Cache the Fastify instance across warm invocations of this serverless
-// function. Cold starts pay the build cost once; subsequent requests reuse it.
 let appPromise: Promise<FastifyInstance> | null = null;
 
 const getApp = (): Promise<FastifyInstance> => {
@@ -17,9 +20,9 @@ const getApp = (): Promise<FastifyInstance> => {
   return appPromise;
 };
 
-// Vercel routes /api/* to this catch-all function. The Fastify app inside
-// registers routes WITHOUT the /api prefix (so /api/auth/login is /auth/login
-// inside Fastify), matching the dev-time Vite proxy behavior in vite.config.ts.
+// Vercel routes /api/* to this catch-all. Fastify registers routes WITHOUT the
+// /api prefix (matching the dev-time Vite proxy in vite.config.ts), so we
+// strip the prefix from req.url before handing the request to Fastify.
 export default async function handler(
   req: IncomingMessage,
   res: ServerResponse,
