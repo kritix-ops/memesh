@@ -75,6 +75,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@memesh/api':
+        specifier: workspace:*
+        version: link:../api
       '@yudiel/react-qr-scanner':
         specifier: ^2.3.0
         version: 2.6.0(@types/emscripten@1.41.5)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)

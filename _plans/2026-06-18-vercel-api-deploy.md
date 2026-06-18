@@ -1,82 +1,100 @@
-# Vercel API deploy (replaces Cloudways path)
+# Vercel API deploy (single existing `memesh` project)
 
-Goal: make login work on `memesh-opal.vercel.app`. The Vercel deploy is web-only; `/api/*` 404s, so the login UI shows "Login failed."
+Goal: make login work on `memesh-opal.vercel.app`. The Vercel project deploys the web app only; `/api/*` 404s, so the login UI shows "Login failed."
 
 ## Decision
 
-Deploy `apps/api` as a SEPARATE Vercel project. Add a rewrite in `apps/web/vercel.json` so `memesh-opal.vercel.app/api/*` proxies to the API project. Same origin from the browser's perspective → no CORS, no cookie issues.
-
-Why not co-host in the existing project: would require wrapping Fastify as a function file inside `apps/web/api/`, cross-package imports, monorepo bundling risk. Two-project approach is the standard Vercel monorepo pattern and avoids all of that.
-
-Why not Cloudways/Cloudflare Tunnel: still valid, but the user is already deployed on Vercel and the Vercel-native path is faster to ship today. Cloudways co-location with WordPress is no longer a deployment requirement — the API calls WP over HTTPS just fine from any cloud.
+Add the Fastify API as a **serverless function inside the existing `memesh` Vercel project**, at `apps/web/api/[...slug].ts`. Vercel auto-detects `api/` folder files as functions and routes `/api/*` to them. Same domain → no CORS, no cookie issues, no second Vercel project to manage.
 
 ## Architecture
 
 ```
-                Browser
-                   │
-                   ▼
-         memesh-opal.vercel.app
-         (Vite SPA, existing project)
-                   │
-                   │  /api/auth/login → rewrite
-                   ▼
-         memesh-api.vercel.app
-         (Fastify, new project — same repo, root=apps/api)
-                   │
-                   ▼
-              Neon (Postgres)
+                 Browser
+                    │
+                    ▼
+          memesh-opal.vercel.app   (existing "memesh" project)
+            ├── /            → Vite SPA (apps/web/dist)
+            └── /api/*       → apps/web/api/[...slug].ts (Vercel Function)
+                                  └── wraps Fastify via buildApp()
+                                          │
+                                          ▼
+                                       Neon (Postgres)
 
-   memesh.co.il (WordPress on Cloudways) ←─── HTTPS sync from API
+   memesh.co.il (WordPress on Cloudways)  ← HTTPS sync from API
 ```
 
-## Vercel auto-detects Fastify
+## How the function bridges Vite SPA + Fastify
 
-Verified via Context7: Vercel docs say Fastify deploys with zero config when entry file is at `src/server.ts` (or `src/app.ts` / `src/index.ts` / root variants). `apps/api/src/server.ts` already matches.
+- `apps/web/api/[...slug].ts` is a Vercel catch-all function. Any request to `/api/*` is routed to it.
+- The handler lazily builds the Fastify app once per cold start (cached at module scope for warm invocations).
+- It strips the `/api` prefix from `req.url` (matching the Vite dev proxy behavior in `apps/web/vite.config.ts`), then emits the request to Fastify's underlying http server.
+- `apps/api` exports `buildApp` via `package.json#exports["./app"]`, imported as `@memesh/api/app`.
+- `apps/web` declares `@memesh/api` as a workspace dependency so the symlink resolves.
 
-## Required env vars on the new API project
+## Why not a separate API project
+
+- Cookies must be set on the same domain the browser is talking to. With a same-project deploy, cookies work without any cross-origin gymnastics.
+- One project to manage env vars on, one URL to monitor, one Vercel free-tier deployment quota.
+- No rewrite needed in `vercel.json` (Vercel auto-routes `/api/*` to the `api/` folder).
+
+## Why not Cloudways anymore
+
+Vercel hosts the web; making it host the API too means the whole app stack is on one platform with one deploy pipeline. Cloudways stays for WordPress only. The API talks to WP over HTTPS — no co-location requirement.
+
+## Required env vars on the existing `memesh` Vercel project
+
+Set in Project Settings → Environment Variables (Production scope):
 
 | Var | Value | Source |
 |---|---|---|
 | `NODE_ENV` | `production` | literal |
-| `DATABASE_URL` | Neon pooled URL | copy from existing project, or attach Neon integration |
-| `SERVER_SECRET_KEY` | 32+ char random | generate fresh |
-| `JWT_SECRET` | 32+ char random, different from above | generate fresh |
+| `DATABASE_URL` | Neon pooled URL | already present (via Vercel-Neon integration) — verify |
+| `SERVER_SECRET_KEY` | 32+ char random hex | generate fresh, never reuse |
+| `JWT_SECRET` | 32+ char random hex (different from above) | generate fresh, never reuse |
 | `LOG_LEVEL` | `info` | literal |
 | `QR_KEY_ID` | `1` | literal |
 | `JWT_ISSUER` | `memesh` | literal |
 | `JWT_AUDIENCE` | `memesh-api` | literal |
 | `JWT_CUSTOMER_AUDIENCE` | `memesh-customer` | literal |
-| `SMS_PROVIDER` | `console` | literal (real SMS comes later) |
-| `WP_BASE_URL` | `https://memesh.co.il/wp-json/wp/v2` | from .env |
-| `WP_SYNC_USER` | from .env | copy |
-| `WP_SYNC_APP_PASSWORD` | from .env | copy |
+| `SMS_PROVIDER` | `console` | literal (real 019 SMS comes later) |
+| `WP_BASE_URL` | `https://memesh.co.il/wp-json/wp/v2` | from local .env |
+| `WP_SYNC_USER` | (from local .env) | copy |
+| `WP_SYNC_APP_PASSWORD` | (from local .env) | copy |
+
+Generate secrets:
+```powershell
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
 
 ## Steps
 
-1. **User**: vercel.com → Add New → Project → import same GitHub repo (`kritix-ops/memesh`).
-2. **User**: Configure project:
-   - Name: `memesh-api` (this becomes the URL: `memesh-api.vercel.app`)
-   - Root Directory: `apps/api`
-   - Framework Preset: auto-detect (should pick Fastify)
-   - Install Command: leave default (Vercel handles pnpm workspace)
-3. **User**: add env vars from the table above BEFORE first deploy (otherwise the Fastify boot fails the Zod env parse and the deploy errors out).
-4. **User**: deploy. Note the assigned URL.
-5. **Me**: if Vercel assigned a different URL than `memesh-api.vercel.app`, update the rewrite in `apps/web/vercel.json`.
-6. **User**: ensure admin row exists in Neon. Run `pnpm --filter=@memesh/api seed:admin` locally (env vars in root `.env`). If output says `created` or `already_seeded`, admin is good.
-7. **User**: push (or trigger redeploy of memesh-opal.vercel.app) so the new rewrite takes effect.
-8. **Verify**: `curl https://memesh-opal.vercel.app/api/health` should return JSON `{status: "ok", ...}`.
-9. **Log in** at `memesh-opal.vercel.app/admin` with the seeded phone + password.
+1. **Me (done)**:
+   - `apps/api/package.json`: add `exports` field exposing `./app`.
+   - `apps/web/package.json`: add `@memesh/api` as workspace dep.
+   - `apps/web/api/[...slug].ts`: new Fastify-wrapping catch-all function.
+   - `apps/web/vercel.json`: remove the rewrite that pointed to a non-existent `memesh-api.vercel.app`.
+   - `pnpm install` + Vite build verified clean.
+   - Commit and push.
+2. **User**: add the env vars above in the `memesh` Vercel project. Save.
+3. **Auto**: Vercel redeploys on the new git push, picks up the new function.
+4. **User**: confirm admin row exists in Neon — run `pnpm --filter=@memesh/api seed:admin` locally; expect `created` or `already_seeded`.
+5. **Verify**: open `https://memesh-opal.vercel.app/api/health` — should return `{"status":"ok","env":"production","timestamp":"..."}`. If 404, function didn't deploy. If 500, env vars missing/invalid (check Vercel function logs).
+6. **Log in** at `https://memesh-opal.vercel.app/admin` with the seeded phone (dashes exactly as in `.env`) and password.
 
-## Open items
+## Cold start expectations
 
-- Cookie domain: API sets cookies for path `/`. Because the browser sees same-origin (Vercel rewrite), cookies should attach. Verify in browser devtools after first login.
-- DATABASE_URL: Neon's serverless connection pooler is what the existing setup uses — fine on Vercel Functions (no per-invocation pool exhaustion).
-- Cold starts: ~1-2s on free tier. Fluid Compute on the project reduces this; enable in project settings.
-- No Cloudflare Tunnel work needed anymore unless we want to put the API on Cloudways later.
+First request to the function after a deploy: 1-3 seconds (Fastify init + db pool warm-up + module load). Subsequent requests within the same warm container: <100ms. Enable Fluid Compute in project settings for better warm-start density.
 
-## What this kills
+## Things this supersedes
 
-- `_plans/2026-06-18-cloudways-deployment-kit.md` (Docker on Cloudways): not needed; Vercel handles deploy.
-- Cloudflare Tunnel research and the planned `scripts/cloudways-native/`: not needed.
-- The Docker Compose files (`docker-compose.yml`, `Dockerfile`) remain in the repo as documentation / future option but are unused.
+- `_plans/2026-06-18-cloudways-deployment-kit.md` (Docker on Cloudways): unused.
+- Cloudflare Tunnel from cloudways: unused for API deploy. (Cloudflare may still be used cosmetically to put `app.memesh.co.il` in front of this Vercel project — see "Custom domain" below.)
+- The Docker Compose files in repo root: kept as reference but not in active use.
+
+## Custom domain (optional, separate track)
+
+To serve at `app.memesh.co.il` instead of `memesh-opal.vercel.app`:
+- Cloudflare zone for `app.memesh.co.il` (NS-delegated from livedns.co.il)
+- CNAME `@` → `cname.vercel-dns.com` (proxy OFF for SSL issuance)
+- Vercel project Settings → Domains → add `app.memesh.co.il`
+- Vercel auto-issues Let's Encrypt cert
