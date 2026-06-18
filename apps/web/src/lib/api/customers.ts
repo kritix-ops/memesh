@@ -37,7 +37,7 @@ export interface Customer {
 export interface PunchCard {
   id: string;
   customerId: string;
-  wcOrderId: number | null;
+  wcOrderId: string | null;
   serialNumber: string;
   qrToken: string;
   keyId: string;
@@ -45,7 +45,10 @@ export interface PunchCard {
   usedEntries: number;
   isActive: boolean;
   expiresAt: string;
-  source: string | null;
+  source: 'pos' | 'online' | 'manual';
+  cancelledAt: string | null;
+  cancelledBy: string | null;
+  cancelReason: string | null;
   createdAt: string;
   updatedAt: string;
 }

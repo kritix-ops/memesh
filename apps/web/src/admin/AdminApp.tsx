@@ -17,7 +17,12 @@ import {
   type CardDetailResponse,
   type CardListStatus,
 } from '../lib/api/cards';
-import { searchCustomers, type Customer } from '../lib/api/customers';
+import {
+  getCustomerDetail,
+  searchCustomers,
+  type Customer,
+  type CustomerDetailResponse,
+} from '../lib/api/customers';
 import {
   createStaffMember,
   listStaff,
@@ -318,6 +323,7 @@ function Customers() {
   const [results, setResults] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [detailFor, setDetailFor] = useState<string | null>(null);
 
   useEffect(() => {
     const q = query.trim();
@@ -385,7 +391,14 @@ function Customers() {
       {results.length > 0 && (
         <Table head={['שם', 'מספר לקוח', 'טלפון', 'דוא"ל']}>
           {results.map((c) => (
-            <tr key={c.id} style={{ borderTop: '1px solid #f3efea' }}>
+            <tr
+              key={c.id}
+              onClick={() => {
+                console.info('[web admin customer-detail] open', { id: c.id });
+                setDetailFor(c.id);
+              }}
+              style={{ borderTop: '1px solid #f3efea', cursor: 'pointer' }}
+            >
               <Td>{`${c.firstName} ${c.lastName}`}</Td>
               <Td muted>{c.customerNumber}</Td>
               <Td muted>{c.phone}</Td>
@@ -393,6 +406,9 @@ function Customers() {
             </tr>
           ))}
         </Table>
+      )}
+      {detailFor && (
+        <CustomerDetailModal customerId={detailFor} onClose={() => setDetailFor(null)} />
       )}
     </div>
   );
@@ -963,6 +979,259 @@ function DetailField({ label, children }: { label: string; children: ReactNode }
   );
 }
 
+function CustomerDetailModal({ customerId, onClose }: { customerId: string; onClose: () => void }) {
+  const [detail, setDetail] = useState<CustomerDetailResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    setDetail(null);
+    (async () => {
+      const res = await getCustomerDetail(customerId);
+      if (cancelled) return;
+      setLoading(false);
+      if (res.ok) setDetail(res.data);
+      else setError(res.error);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [customerId]);
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(45,52,54,0.4)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 20,
+        zIndex: 50,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: '#fff',
+          borderRadius: 16,
+          boxShadow: SHADOW,
+          padding: 24,
+          width: 600,
+          maxWidth: '100%',
+          maxHeight: '85vh',
+          overflowY: 'auto',
+        }}
+      >
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            marginBottom: 14,
+          }}
+        >
+          <div style={{ fontWeight: 600, fontSize: 18, color: INK }}>פרטי לקוח</div>
+          <button
+            onClick={onClose}
+            style={{
+              border: 'none',
+              background: 'transparent',
+              color: MUTED,
+              cursor: 'pointer',
+              fontSize: 22,
+              lineHeight: 1,
+              padding: '4px 8px',
+            }}
+            aria-label="סגירה"
+          >
+            ×
+          </button>
+        </div>
+        {loading && <div style={{ color: MUTED, fontSize: 14 }}>טוען…</div>}
+        {error && (
+          <div style={{ color: '#a23a3a', fontSize: 14 }}>
+            לא ניתן לטעון את הלקוח. סגרו ונסו שוב.
+          </div>
+        )}
+        {detail && <CustomerDetailBody detail={detail} />}
+      </div>
+    </div>
+  );
+}
+
+function CustomerDetailBody({ detail }: { detail: CustomerDetailResponse }) {
+  const { customer, cards, entries } = detail;
+  const activeCard = cards.find((c) => c.isActive) ?? cards[0];
+  return (
+    <>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 12,
+          flexWrap: 'wrap',
+          marginBottom: 14,
+        }}
+      >
+        <div
+          style={{
+            width: 44,
+            height: 44,
+            borderRadius: 12,
+            background: '#fff4ee',
+            color: '#c97a52',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontWeight: 600,
+          }}
+        >
+          {initialsOf(customer.firstName, customer.lastName)}
+        </div>
+        <div style={{ flex: 1, minWidth: 200 }}>
+          <div style={{ fontSize: 16, fontWeight: 600 }}>
+            {customer.firstName} {customer.lastName}
+          </div>
+          <div style={{ fontSize: 13, color: MUTED, marginTop: 2 }}>
+            {customer.customerNumber} · {customer.phone}
+            {customer.email ? ` · ${customer.email}` : ''}
+          </div>
+        </div>
+        {customer.marketingConsentAt && <Badge text="הסכמה לדיוור" bg="#f0f5e3" color="#6f8f37" />}
+      </div>
+
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit,minmax(160px,1fr))',
+          gap: 12,
+          marginBottom: 16,
+        }}
+      >
+        <DetailField label="ערוץ עדיף">{channelLabel(customer.preferredChannel)}</DetailField>
+        {customer.source && (
+          <DetailField label="איך שמע עלינו">{sourceLabel(customer.source)}</DetailField>
+        )}
+        <DetailField label="נרשם בתאריך">{fmtDate(customer.createdAt.slice(0, 10))}</DetailField>
+        {customer.status !== 'active' && <DetailField label="סטטוס">{customer.status}</DetailField>}
+      </div>
+
+      {customer.children.length > 0 && (
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ fontWeight: 600, marginBottom: 8 }}>ילדים</div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {customer.children.map((k) => (
+              <span
+                key={k.name}
+                style={{
+                  background: '#f3f7e8',
+                  color: '#6f8f37',
+                  borderRadius: 10,
+                  padding: '6px 12px',
+                  fontSize: 13.5,
+                }}
+              >
+                {k.name}
+                {k.dob ? ` · ${fmtDate(k.dob)}` : ''}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {customer.internalNotes && (
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ fontWeight: 600, marginBottom: 6 }}>הערת צוות פנימית</div>
+          <div style={{ fontSize: 14, color: MUTED }}>{customer.internalNotes}</div>
+        </div>
+      )}
+
+      <div style={{ fontWeight: 600, marginBottom: 8 }}>כרטיסיות ({cards.length})</div>
+      {cards.length === 0 ? (
+        <div style={{ color: MUTED, fontSize: 14, marginBottom: 16 }}>אין כרטיסיות.</div>
+      ) : (
+        cards.map((c, i) => {
+          const status = c.cancelledAt
+            ? { text: 'בוטלה', bg: '#fbecec', color: '#c25a5a' }
+            : c.isActive
+              ? { text: 'פעילה', bg: '#f0f5e3', color: '#6f8f37' }
+              : { text: 'לא פעילה', bg: '#ececec', color: '#9aa3a6' };
+          return (
+            <div
+              key={c.id}
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                gap: 12,
+                padding: '8px 0',
+                borderTop: i ? '1px solid #f3efea' : 'none',
+              }}
+            >
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 600 }}>{c.serialNumber}</div>
+                <div style={{ fontSize: 12.5, color: MUTED, marginTop: 2 }}>
+                  {c.usedEntries} / {c.totalEntries} כניסות · תוקף עד{' '}
+                  {fmtDate(c.expiresAt.slice(0, 10))}
+                </div>
+              </div>
+              <Badge text={status.text} bg={status.bg} color={status.color} />
+            </div>
+          );
+        })
+      )}
+
+      <div style={{ fontWeight: 600, margin: '16px 0 8px' }}>
+        כניסות אחרונות ({Math.min(entries.length, 10)} מתוך {entries.length})
+      </div>
+      {entries.length === 0 ? (
+        <div style={{ color: MUTED, fontSize: 14 }}>אין כניסות עדיין.</div>
+      ) : (
+        entries.slice(0, 10).map((e, i) => (
+          <div
+            key={e.id}
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              padding: '6px 0',
+              borderTop: i ? '1px solid #f3efea' : 'none',
+              fontSize: 13.5,
+            }}
+          >
+            <span>{fmtDateTime(e.punchedAt)}</span>
+            <span style={{ color: MUTED }}>
+              {e.companionCount === 1 ? 'מלווה אחד' : `${e.companionCount} מלווים`}
+            </span>
+          </div>
+        ))
+      )}
+      {activeCard && cards.length > 0 && entries.length === 0 && null}
+    </>
+  );
+}
+
+function channelLabel(c: string): string {
+  if (c === 'sms') return 'SMS';
+  if (c === 'whatsapp') return 'וואטסאפ';
+  if (c === 'email') return 'מייל';
+  return c;
+}
+
+function sourceLabel(s: string): string {
+  if (s === 'referral') return 'חבר/ה';
+  if (s === 'social') return 'רשתות חברתיות';
+  if (s === 'walk_by') return 'עברתי ברחוב';
+  if (s === 'website') return 'אתר אינטרנט';
+  if (s === 'other') return 'אחר';
+  return s;
+}
+
 // ---------------------------------------------------------------------------
 // Staff (real list + create form)
 // ---------------------------------------------------------------------------
@@ -1291,6 +1560,7 @@ function Reports() {
   const [dormantError, setDormantError] = useState<string | null>(null);
   const [actions, setActions] = useState<StaffActionRow[] | null>(null);
   const [actionsError, setActionsError] = useState<string | null>(null);
+  const [detailFor, setDetailFor] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -1323,12 +1593,17 @@ function Reports() {
         {dormant?.map((c, i) => (
           <div
             key={c.id}
+            onClick={() => {
+              console.info('[web admin customer-detail] open from dormant', { id: c.id });
+              setDetailFor(c.id);
+            }}
             style={{
               display: 'flex',
               alignItems: 'center',
               gap: 12,
               padding: '10px 0',
               borderTop: i ? '1px solid #f3efea' : 'none',
+              cursor: 'pointer',
             }}
           >
             <div
@@ -1365,6 +1640,10 @@ function Reports() {
         <div style={{ fontWeight: 600, marginBottom: 12 }}>יומן פעולות (50 אחרונות)</div>
         <ActionList rows={actions} error={actionsError} limit={50} emptyText="אין פעולות עדיין." />
       </div>
+
+      {detailFor && (
+        <CustomerDetailModal customerId={detailFor} onClose={() => setDetailFor(null)} />
+      )}
     </div>
   );
 }
