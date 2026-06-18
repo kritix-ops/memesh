@@ -8,7 +8,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "test": "node --test --import tsx src/lib/api.test.ts src/lib/api/customers.test.ts src/lib/api/punch.test.ts src/lib/api/cards.test.ts src/lib/api/customer-auth.test.ts src/lib/api/me.test.ts"
+    "test": "node --test --import tsx src/lib/api.test.ts src/lib/api/customers.test.ts src/lib/api/punch.test.ts src/lib/api/cards.test.ts src/lib/api/customer-auth.test.ts src/lib/api/me.test.ts src/lib/api/admin.test.ts src/lib/api/staff.test.ts"
   },
   "dependencies": {
     "react": "^19.0.0",

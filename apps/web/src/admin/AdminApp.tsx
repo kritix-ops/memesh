@@ -1,9 +1,25 @@
-import { type CSSProperties, type ReactNode, useState } from 'react';
-import { avatar, fmtDate, fullName, initialCustomers, initials, statusBadge } from '../mock';
+import { type CSSProperties, type FormEvent, type ReactNode, useEffect, useState } from 'react';
+import { type StaffRole } from '../lib/api/auth';
+import {
+  getDashboardStats,
+  getDormantCustomers,
+  listStaffActions,
+  type DashboardStats,
+  type DormantCustomer,
+  type StaffActionRow,
+  type StaffActionType,
+} from '../lib/api/admin';
+import { searchCustomers, type Customer } from '../lib/api/customers';
+import {
+  createStaffMember,
+  listStaff,
+  type CreateStaffInput,
+  type StaffMember,
+} from '../lib/api/staff';
+import { fmtDate } from '../mock';
 import { useViewport } from '../useViewport';
 
 const ORANGE = '#ffa983';
-const GREEN = '#c4d898';
 const INK = '#2d3436';
 const MUTED = '#636e72';
 const SHADOW = '0 4px 20px rgba(0,0,0,0.08)';
@@ -13,6 +29,34 @@ const card: CSSProperties = {
   borderRadius: 16,
   boxShadow: SHADOW,
   padding: 20,
+};
+const inputStyle: CSSProperties = {
+  width: '100%',
+  fontSize: 15,
+  padding: '11px 14px',
+  border: '1.5px solid #e9e0d9',
+  borderRadius: 10,
+  background: '#fff',
+  outline: 'none',
+  boxSizing: 'border-box',
+};
+const primaryBtn: CSSProperties = {
+  border: 'none',
+  background: ORANGE,
+  color: '#fff',
+  borderRadius: 10,
+  padding: '10px 18px',
+  fontWeight: 600,
+  cursor: 'pointer',
+};
+const ghostBtn: CSSProperties = {
+  border: '1.5px solid #e9e0d9',
+  background: '#fff',
+  color: MUTED,
+  borderRadius: 10,
+  padding: '10px 18px',
+  fontWeight: 600,
+  cursor: 'pointer',
 };
 
 type View = 'dashboard' | 'customers' | 'cards' | 'staff' | 'reports';
@@ -24,62 +68,47 @@ const NAV: { key: View; label: string }[] = [
   { key: 'reports', label: 'דוחות' },
 ];
 
-const STATS = [
-  { label: 'כניסות היום', value: '38', delta: '+12% מאתמול', num: ORANGE },
-  { label: 'כניסות השבוע', value: '214', delta: '+6% משבוע שעבר', num: INK },
-  { label: 'כניסות החודש', value: '892', delta: 'יעד: 950', num: INK },
-  { label: 'כרטיסיות שנמכרו', value: '46', delta: 'החודש', num: INK },
-  { label: 'עומדות לפוג תוקף', value: '7', delta: '30 ימים קרובים', num: '#c97a52' },
-  { label: 'לקוחות חדשים', value: '9', delta: 'השבוע', num: INK },
-];
-
-const WEEK = [
-  { d: 'א', v: 28 },
-  { d: 'ב', v: 34 },
-  { d: 'ג', v: 38 },
-  { d: 'ד', v: 22 },
-  { d: 'ה', v: 41 },
-  { d: 'ו', v: 46 },
-  { d: 'ש', v: 5 },
-];
-
-const REVENUE = [
-  { m: 'ינו', a: 9 },
-  { m: 'פבר', a: 11 },
-  { m: 'מרץ', a: 10 },
-  { m: 'אפר', a: 13 },
-  { m: 'מאי', a: 12 },
-  { m: 'יוני', a: 15 },
-];
-
-const STAFF = [
-  { name: 'מליה ברק', role: 'מנהלת המשחקייה', badge: 'אדמין', tone: 'admin' },
-  { name: 'עידן רוזן', role: 'אחראי משמרת', badge: 'מנהל משמרת', tone: 'manager' },
-  { name: 'שני דהן', role: 'קופאית', badge: 'קופאי', tone: 'cashier' },
-  { name: 'אלמוג כץ', role: 'קופאי', badge: 'קופאי', tone: 'cashier' },
-] as const;
-
-const ACTION_LOG = [
-  { who: 'שני דהן', action: 'ניקבה כניסה · נועה כהן', when: 'היום 16:32', dot: ORANGE },
-  { who: 'עידן רוזן', action: 'מכר כרטיסייה · תמר פרידמן', when: 'היום 14:05', dot: GREEN },
-  { who: 'שני דהן', action: 'ניקבה כניסה · רותם שגב', when: 'היום 11:20', dot: ORANGE },
-  { who: 'מליה ברק', action: 'ביטלה כרטיסייה · יוסי מזרחי', when: 'אתמול 18:40', dot: '#c25a5a' },
-  { who: 'אלמוג כץ', action: 'פתח לקוח חדש · מיכל אברהם', when: 'אתמול 10:15', dot: GREEN },
-  { who: 'עידן רוזן', action: 'ניקב כניסה · דניאל לוי', when: 'אתמול 09:50', dot: ORANGE },
-];
-
-const roleStyle = (tone: string): { bg: string; color: string } => {
-  if (tone === 'admin') return { bg: '#fff4ee', color: '#c97a52' };
-  if (tone === 'manager') return { bg: '#f0f5e3', color: '#6f8f37' };
-  return { bg: '#f1f2f2', color: MUTED };
+const roleStyle = (role: StaffRole): { bg: string; color: string; label: string } => {
+  if (role === 'admin') return { bg: '#fff4ee', color: '#c97a52', label: 'אדמין' };
+  if (role === 'manager') return { bg: '#f0f5e3', color: '#6f8f37', label: 'מנהל משמרת' };
+  return { bg: '#f1f2f2', color: MUTED, label: 'קופאי' };
 };
 
-type CardFilter = 'active' | 'expired' | 'cancelled';
+const actionLabel = (type: StaffActionType): string => {
+  if (type === 'punch') return 'ניקוב כניסה';
+  if (type === 'sell_card') return 'מכירת כרטיסייה';
+  if (type === 'cancel_card') return 'ביטול כרטיסייה';
+  if (type === 'register_customer') return 'רישום לקוח';
+  if (type === 'create_staff') return 'הוספת איש צוות';
+  return 'פעולה';
+};
+
+const actionDotColor = (type: StaffActionType): string => {
+  if (type === 'sell_card') return '#6f8f37';
+  if (type === 'cancel_card') return '#c25a5a';
+  if (type === 'punch') return ORANGE;
+  return MUTED;
+};
+
+const fmtRelative = (iso: string, now = new Date()): string => {
+  const t = new Date(iso).getTime();
+  const diff = now.getTime() - t;
+  const m = Math.floor(diff / 60000);
+  if (m < 1) return 'לפני רגע';
+  if (m < 60) return `לפני ${m} דקות`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `לפני ${h} שעות`;
+  const d = Math.floor(h / 24);
+  if (d < 7) return `לפני ${d} ימים`;
+  return fmtDate(iso.slice(0, 10));
+};
+
+const fmtIsoDay = (iso: string | null): string => (iso ? fmtDate(iso.slice(0, 10)) : 'אף פעם');
+
+const initialsOf = (first: string, last: string): string => (first[0] ?? '') + (last[0] ?? '');
 
 export function AdminApp() {
   const [view, setView] = useState<View>('dashboard');
-  const [query, setQuery] = useState('');
-  const [cardFilter, setCardFilter] = useState<CardFilter>('active');
   const { width } = useViewport();
   const stacked = width < 1000;
 
@@ -164,8 +193,8 @@ export function AdminApp() {
 
       <div style={{ flex: 1, minWidth: 0 }}>
         {view === 'dashboard' && <Dashboard />}
-        {view === 'customers' && <Customers query={query} setQuery={setQuery} />}
-        {view === 'cards' && <Cards filter={cardFilter} setFilter={setCardFilter} />}
+        {view === 'customers' && <Customers />}
+        {view === 'cards' && <Cards />}
         {view === 'staff' && <Staff />}
         {view === 'reports' && <Reports />}
       </div>
@@ -173,126 +202,142 @@ export function AdminApp() {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Dashboard
+// ---------------------------------------------------------------------------
+
 function Dashboard() {
-  const wmax = Math.max(...WEEK.map((w) => w.v));
-  const newcomers = [initialCustomers[4]!, initialCustomers[5]!, initialCustomers[2]!];
+  const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [statsError, setStatsError] = useState<string | null>(null);
+  const [actions, setActions] = useState<StaffActionRow[] | null>(null);
+  const [actionsError, setActionsError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const [s, a] = await Promise.all([getDashboardStats(), listStaffActions()]);
+      if (cancelled) return;
+      if (s.ok) setStats(s.data.stats);
+      else setStatsError(s.error);
+      if (a.ok) setActions(a.data.actions);
+      else setActionsError(a.error);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
-      <div
-        style={{
-          ...card,
-          background: '#fff4ee',
-          boxShadow: 'none',
-          border: '1px solid #ffe3d4',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: 12,
-        }}
-      >
-        <div>
-          <div style={{ fontWeight: 600 }}>7 כרטיסיות עומדות לפוג תוקף ב-30 הימים הקרובים</div>
-          <div style={{ color: MUTED, fontSize: 13.5, marginTop: 2 }}>
-            כדאי לשלוח תזכורת ללקוחות לחידוש
+      {stats && stats.expiringIn30d > 0 && (
+        <div
+          style={{
+            ...card,
+            background: '#fff4ee',
+            boxShadow: 'none',
+            border: '1px solid #ffe3d4',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 12,
+          }}
+        >
+          <div>
+            <div style={{ fontWeight: 600 }}>
+              {stats.expiringIn30d} כרטיסיות עומדות לפוג תוקף ב-30 הימים הקרובים
+            </div>
+            <div style={{ color: MUTED, fontSize: 13.5, marginTop: 2 }}>
+              כדאי לשלוח תזכורת ללקוחות לחידוש
+            </div>
           </div>
+          <span style={{ fontSize: 28, fontWeight: 600, color: '#c97a52' }}>
+            {stats.expiringIn30d}
+          </span>
         </div>
-        <span style={{ fontSize: 28, fontWeight: 600, color: '#c97a52' }}>7</span>
-      </div>
+      )}
 
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit,minmax(170px,1fr))',
-          gap: 14,
-        }}
-      >
-        {STATS.map((s) => (
-          <div key={s.label} style={card}>
-            <div style={{ fontSize: 30, fontWeight: 600, color: s.num }}>{s.value}</div>
-            <div style={{ fontSize: 13.5, marginTop: 2 }}>{s.label}</div>
-            <div style={{ fontSize: 12.5, color: MUTED, marginTop: 4 }}>{s.delta}</div>
-          </div>
-        ))}
-      </div>
+      <StatsGrid stats={stats} error={statsError} />
 
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit,minmax(280px,1fr))',
-          gap: 16,
-        }}
-      >
-        <div style={card}>
-          <div style={{ fontWeight: 600, marginBottom: 14 }}>כניסות לפי יום · השבוע</div>
-          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10, height: 130 }}>
-            {WEEK.map((b) => (
-              <div
-                key={b.d}
-                style={{
-                  flex: 1,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  gap: 6,
-                }}
-              >
-                <div
-                  style={{
-                    width: '100%',
-                    height: `${Math.round((b.v / wmax) * 100)}%`,
-                    background: b.v === wmax ? ORANGE : GREEN,
-                    borderRadius: 8,
-                    minHeight: 6,
-                  }}
-                />
-                <span style={{ fontSize: 12.5, color: MUTED }}>{b.d}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-        <div style={card}>
-          <div style={{ fontWeight: 600, marginBottom: 12 }}>לקוחות חדשים השבוע</div>
-          {newcomers.map((c) => {
-            const a = avatar(c);
-            return (
-              <div
-                key={c.id}
-                style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 0' }}
-              >
-                <div
-                  style={{
-                    width: 38,
-                    height: 38,
-                    borderRadius: 11,
-                    background: a.bg,
-                    color: a.color,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontWeight: 600,
-                  }}
-                >
-                  {initials(c)}
-                </div>
-                <div style={{ flex: 1 }}>{fullName(c)}</div>
-                <span style={{ fontSize: 12.5, color: MUTED }}>
-                  {fmtDate(c.history[c.history.length - 1]?.date ?? c.expiry)}
-                </span>
-              </div>
-            );
-          })}
-        </div>
+      <div style={card}>
+        <div style={{ fontWeight: 600, marginBottom: 12 }}>פעולות אחרונות</div>
+        <ActionList rows={actions} error={actionsError} limit={5} emptyText="אין פעולות עדיין." />
       </div>
     </div>
   );
 }
 
-function Customers({ query, setQuery }: { query: string; setQuery: (v: string) => void }) {
-  const rows = initialCustomers.filter((c) => {
+function StatsGrid({ stats, error }: { stats: DashboardStats | null; error: string | null }) {
+  if (error) {
+    return <div style={{ ...card, color: '#a23a3a' }}>לא ניתן לטעון את הנתונים. רעננו את הדף.</div>;
+  }
+  if (!stats) {
+    return <div style={{ ...card, color: MUTED, textAlign: 'center' }}>טוען נתונים…</div>;
+  }
+  const cells: { label: string; value: number; tone: string }[] = [
+    { label: 'כניסות ב-24 שעות האחרונות', value: stats.entriesLast24h, tone: ORANGE },
+    { label: 'כניסות ב-7 הימים האחרונים', value: stats.entriesLast7d, tone: INK },
+    { label: 'כניסות ב-30 הימים האחרונים', value: stats.entriesLast30d, tone: INK },
+    { label: 'כרטיסיות שנמכרו ב-30 הימים', value: stats.cardsSoldLast30d, tone: INK },
+    { label: 'עומדות לפוג תוקף (30 ימים)', value: stats.expiringIn30d, tone: '#c97a52' },
+    { label: 'לקוחות חדשים השבוע', value: stats.newCustomersLast7d, tone: INK },
+  ];
+  return (
+    <div
+      style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit,minmax(170px,1fr))',
+        gap: 14,
+      }}
+    >
+      {cells.map((c) => (
+        <div key={c.label} style={card}>
+          <div style={{ fontSize: 30, fontWeight: 600, color: c.tone }}>{c.value}</div>
+          <div style={{ fontSize: 13.5, marginTop: 4 }}>{c.label}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Customers (real search)
+// ---------------------------------------------------------------------------
+
+const SEARCH_DEBOUNCE_MS = 250;
+
+function Customers() {
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState<Customer[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
     const q = query.trim();
-    if (!q) return true;
-    return fullName(c).includes(q) || c.phone.includes(q) || c.id.includes(q);
-  });
+    if (!q) {
+      setResults([]);
+      setError(null);
+      setLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      setLoading(true);
+      setError(null);
+      const res = await searchCustomers(q, { signal: controller.signal });
+      if (controller.signal.aborted) return;
+      setLoading(false);
+      if (res.ok) setResults(res.data.results);
+      else {
+        setError(res.error);
+        setResults([]);
+      }
+    }, SEARCH_DEBOUNCE_MS);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [query]);
+
   return (
     <div style={card}>
       <div
@@ -309,50 +354,47 @@ function Customers({ query, setQuery }: { query: string; setQuery: (v: string) =
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="חיפוש…"
-          style={{
-            fontSize: 15,
-            padding: '9px 14px',
-            border: '1.5px solid #e9e0d9',
-            borderRadius: 10,
-            outline: 'none',
-            minWidth: 200,
-          }}
+          placeholder="חיפוש לפי שם, טלפון או מספר לקוח…"
+          style={{ ...inputStyle, minWidth: 240, maxWidth: 360 }}
         />
       </div>
-      <Table head={['שם', 'מספר לקוח', 'כרטיסייה', 'סטטוס']}>
-        {rows.map((c) => {
-          const b = statusBadge(c.status);
-          return (
+      {query.trim() === '' && (
+        <div style={{ color: MUTED, fontSize: 14, padding: '8px 0' }}>
+          הזינו טקסט לחיפוש לצפייה ברשימה.
+        </div>
+      )}
+      {loading && <div style={{ color: MUTED, fontSize: 14, padding: '8px 0' }}>מחפש…</div>}
+      {error && (
+        <div style={{ color: '#a23a3a', fontSize: 14, padding: '8px 0' }}>
+          שגיאה בחיפוש. נסו שוב.
+        </div>
+      )}
+      {!loading && !error && query.trim() !== '' && results.length === 0 && (
+        <div style={{ color: MUTED, fontSize: 14, padding: '8px 0' }}>
+          לא נמצאו לקוחות שמתאימים לחיפוש.
+        </div>
+      )}
+      {results.length > 0 && (
+        <Table head={['שם', 'מספר לקוח', 'טלפון', 'דוא"ל']}>
+          {results.map((c) => (
             <tr key={c.id} style={{ borderTop: '1px solid #f3efea' }}>
-              <Td>{fullName(c)}</Td>
-              <Td muted>{c.id}</Td>
-              <Td muted>
-                {c.total - c.used} / {c.total}
-              </Td>
-              <Td>
-                <Badge text={b.text} bg={b.bg} color={b.color} />
-              </Td>
+              <Td>{`${c.firstName} ${c.lastName}`}</Td>
+              <Td muted>{c.customerNumber}</Td>
+              <Td muted>{c.phone}</Td>
+              <Td muted>{c.email ?? '—'}</Td>
             </tr>
-          );
-        })}
-      </Table>
+          ))}
+        </Table>
+      )}
     </div>
   );
 }
 
-function Cards({ filter, setFilter }: { filter: CardFilter; setFilter: (f: CardFilter) => void }) {
-  const filters: { k: CardFilter; l: string }[] = [
-    { k: 'active', l: 'פעילות' },
-    { k: 'expired', l: 'שפגו' },
-    { k: 'cancelled', l: 'בוטלו' },
-  ];
-  const rows =
-    filter === 'cancelled'
-      ? []
-      : initialCustomers.filter((c) =>
-          filter === 'expired' ? c.status === 'expired' : c.status !== 'expired',
-        );
+// ---------------------------------------------------------------------------
+// Cards (mock — backend list endpoint deferred)
+// ---------------------------------------------------------------------------
+
+function Cards() {
   return (
     <div style={card}>
       <div
@@ -365,79 +407,48 @@ function Cards({ filter, setFilter }: { filter: CardFilter; setFilter: (f: CardF
           flexWrap: 'wrap',
         }}
       >
-        <div style={{ display: 'flex', gap: 8 }}>
-          {filters.map((f) => {
-            const on = filter === f.k;
-            return (
-              <button
-                key={f.k}
-                onClick={() => setFilter(f.k)}
-                style={{
-                  border: `1.5px solid ${on ? ORANGE : '#e9e0d9'}`,
-                  background: on ? '#fff4ee' : '#fff',
-                  color: on ? '#c97a52' : MUTED,
-                  borderRadius: 10,
-                  padding: '8px 16px',
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                }}
-              >
-                {f.l}
-              </button>
-            );
-          })}
-        </div>
-        <button
-          style={{
-            border: 'none',
-            background: ORANGE,
-            color: '#fff',
-            borderRadius: 10,
-            padding: '9px 18px',
-            fontWeight: 600,
-            cursor: 'pointer',
-          }}
-        >
-          יצירת כרטיסייה ידנית
-        </button>
+        <div style={{ fontSize: 18, fontWeight: 600 }}>ניהול כרטיסיות</div>
+        <Badge text="תצוגה זמנית" bg="#fff4ee" color="#c97a52" />
       </div>
-      {rows.length === 0 ? (
-        <div style={{ textAlign: 'center', color: MUTED, padding: '24px 0' }}>
-          אין כרטיסיות בקטגוריה זו
-        </div>
-      ) : (
-        <Table head={['מספר סידורי', 'לקוח', 'ניצול', 'תוקף', 'סטטוס']}>
-          {rows.map((c) => {
-            const b = statusBadge(c.status);
-            return (
-              <tr key={c.id} style={{ borderTop: '1px solid #f3efea' }}>
-                <Td muted>{c.serial}</Td>
-                <Td>{fullName(c)}</Td>
-                <Td muted>
-                  {c.used} / {c.total}
-                </Td>
-                <Td muted>{fmtDate(c.expiry)}</Td>
-                <Td>
-                  <Badge text={b.text} bg={b.bg} color={b.color} />
-                </Td>
-              </tr>
-            );
-          })}
-        </Table>
-      )}
+      <div style={{ color: MUTED, fontSize: 14, lineHeight: 1.6 }}>
+        רשימת הכרטיסיות המרוכזת תופעל בעדכון הבא (חיבור ל-endpoint ייעודי). בינתיים, ניתן לצפות
+        בכרטיסיית לקוח דרך עמדת הצוות: חיפוש לקוח → כרטיס לקוח. ביטול כרטיסייה זמין מכרטיס הלקוח
+        (יחובר בעדכון הבא יחד עם הצגת רשימה זו).
+      </div>
     </div>
   );
 }
 
+// ---------------------------------------------------------------------------
+// Staff (real list + create form)
+// ---------------------------------------------------------------------------
+
 function Staff() {
+  const [members, setMembers] = useState<StaffMember[] | null>(null);
+  const [listError, setListError] = useState<string | null>(null);
+  const [showForm, setShowForm] = useState(false);
+
+  const reload = async () => {
+    const res = await listStaff();
+    if (res.ok) setMembers(res.data.staff);
+    else setListError(res.error);
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const res = await listStaff();
+      if (cancelled) return;
+      if (res.ok) setMembers(res.data.staff);
+      else setListError(res.error);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   return (
-    <div
-      style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit,minmax(300px,1fr))',
-        gap: 16,
-      }}
-    >
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div style={card}>
         <div
           style={{
@@ -447,26 +458,42 @@ function Staff() {
             marginBottom: 12,
           }}
         >
-          <div style={{ fontWeight: 600 }}>צוות</div>
+          <div style={{ fontWeight: 600, fontSize: 18 }}>צוות</div>
           <button
-            style={{
-              border: 'none',
-              background: ORANGE,
-              color: '#fff',
-              borderRadius: 10,
-              padding: '8px 16px',
-              fontWeight: 600,
-              cursor: 'pointer',
-            }}
+            style={primaryBtn}
+            onClick={() => setShowForm((s) => !s)}
+            aria-expanded={showForm}
           >
-            הוספת איש צוות
+            {showForm ? 'סגירה' : 'הוספת איש צוות'}
           </button>
         </div>
-        {STAFF.map((m, i) => {
-          const r = roleStyle(m.tone);
+        {showForm && (
+          <CreateStaffForm
+            onCreated={() => {
+              setShowForm(false);
+              void reload();
+            }}
+            onCancel={() => setShowForm(false)}
+          />
+        )}
+        {listError && (
+          <div style={{ color: '#a23a3a', fontSize: 14, padding: '8px 0' }}>
+            לא ניתן לטעון את רשימת הצוות. רעננו את הדף.
+          </div>
+        )}
+        {!listError && !members && (
+          <div style={{ color: MUTED, fontSize: 14, padding: '8px 0' }}>טוען…</div>
+        )}
+        {members && members.length === 0 && (
+          <div style={{ color: MUTED, fontSize: 14, padding: '8px 0' }}>
+            עדיין לא הוגדרו אנשי צוות.
+          </div>
+        )}
+        {members?.map((m, i) => {
+          const r = roleStyle(m.role);
           return (
             <div
-              key={m.name}
+              key={m.id}
               style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -488,22 +515,350 @@ function Staff() {
                   fontWeight: 600,
                 }}
               >
-                {(m.name[0] ?? '') + (m.name.split(' ')[1]?.[0] ?? '')}
+                {initialsOf(m.firstName, m.lastName)}
               </div>
               <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 600 }}>{m.name}</div>
-                <div style={{ fontSize: 13, color: MUTED }}>{m.role}</div>
+                <div style={{ fontWeight: 600 }}>
+                  {m.firstName} {m.lastName}
+                </div>
+                <div style={{ fontSize: 13, color: MUTED }}>{m.phone}</div>
               </div>
-              <Badge text={m.badge} bg={r.bg} color={r.color} />
+              <Badge text={r.label} bg={r.bg} color={r.color} />
             </div>
           );
         })}
       </div>
+    </div>
+  );
+}
+
+function CreateStaffForm({ onCreated, onCancel }: { onCreated: () => void; onCancel: () => void }) {
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [password, setPassword] = useState('');
+  const [role, setRole] = useState<StaffRole>('cashier');
+  const [email, setEmail] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState<{
+    firstName?: string;
+    lastName?: string;
+    phone?: string;
+    password?: string;
+    email?: string;
+  }>({});
+  const [topError, setTopError] = useState<string | null>(null);
+
+  const onSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    const errors: typeof fieldErrors = {};
+    const tFirst = firstName.trim();
+    const tLast = lastName.trim();
+    const tPhone = phone.trim();
+    const tEmail = email.trim();
+    if (!tFirst) errors.firstName = 'שדה חובה';
+    if (!tLast) errors.lastName = 'שדה חובה';
+    if (!tPhone) errors.phone = 'שדה חובה';
+    if (password.length < 6) errors.password = 'לפחות 6 תווים';
+    if (tEmail && !/^\S+@\S+\.\S+$/.test(tEmail)) errors.email = 'כתובת מייל לא תקינה';
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors);
+      setTopError(null);
+      return;
+    }
+    setSubmitting(true);
+    setFieldErrors({});
+    setTopError(null);
+    const input: CreateStaffInput = {
+      firstName: tFirst,
+      lastName: tLast,
+      phone: tPhone,
+      password,
+      role,
+      ...(tEmail !== '' && { email: tEmail }),
+    };
+    const res = await createStaffMember(input);
+    setSubmitting(false);
+    if (!res.ok) {
+      if (res.error === 'phone_taken') {
+        setFieldErrors({ phone: 'מספר הטלפון כבר רשום במערכת' });
+      } else if (res.error === 'invalid_body') {
+        setTopError('אחד השדות לא תקין. בדקו ונסו שוב.');
+      } else {
+        setTopError('לא ניתן להוסיף איש צוות כרגע. נסו שוב.');
+      }
+      return;
+    }
+    setFirstName('');
+    setLastName('');
+    setPhone('');
+    setPassword('');
+    setEmail('');
+    setRole('cashier');
+    onCreated();
+  };
+
+  return (
+    <form
+      onSubmit={onSubmit}
+      style={{
+        background: '#fff8f3',
+        border: '1px solid #ffe3d4',
+        borderRadius: 12,
+        padding: 16,
+        marginBottom: 14,
+      }}
+    >
+      <div style={{ fontWeight: 600, marginBottom: 10 }}>איש צוות חדש</div>
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))',
+          gap: 12,
+        }}
+      >
+        <FieldRow label="שם פרטי *" error={fieldErrors.firstName}>
+          <input
+            style={errored(inputStyle, fieldErrors.firstName)}
+            value={firstName}
+            onChange={(e) => setFirstName(e.target.value)}
+            autoComplete="given-name"
+            disabled={submitting}
+          />
+        </FieldRow>
+        <FieldRow label="שם משפחה *" error={fieldErrors.lastName}>
+          <input
+            style={errored(inputStyle, fieldErrors.lastName)}
+            value={lastName}
+            onChange={(e) => setLastName(e.target.value)}
+            autoComplete="family-name"
+            disabled={submitting}
+          />
+        </FieldRow>
+        <FieldRow label="טלפון *" error={fieldErrors.phone}>
+          <input
+            style={errored(inputStyle, fieldErrors.phone)}
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+            type="tel"
+            inputMode="tel"
+            autoComplete="tel"
+            placeholder="050-000-0000"
+            disabled={submitting}
+          />
+        </FieldRow>
+        <FieldRow label="סיסמה *" error={fieldErrors.password}>
+          <input
+            style={errored(inputStyle, fieldErrors.password)}
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            type="password"
+            autoComplete="new-password"
+            disabled={submitting}
+          />
+        </FieldRow>
+        <FieldRow label="תפקיד">
+          <select
+            value={role}
+            onChange={(e) => setRole(e.target.value as StaffRole)}
+            disabled={submitting}
+            style={{ ...inputStyle, paddingInlineEnd: 32 }}
+          >
+            <option value="cashier">קופאי</option>
+            <option value="manager">מנהל משמרת</option>
+            <option value="admin">אדמין</option>
+          </select>
+        </FieldRow>
+        <FieldRow label="מייל" error={fieldErrors.email}>
+          <input
+            style={errored(inputStyle, fieldErrors.email)}
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            type="email"
+            inputMode="email"
+            autoComplete="email"
+            disabled={submitting}
+          />
+        </FieldRow>
+      </div>
+      {topError && (
+        <div
+          role="alert"
+          style={{
+            marginTop: 12,
+            padding: '10px 14px',
+            background: '#fbecec',
+            color: '#a23a3a',
+            borderRadius: 10,
+            fontSize: 14,
+          }}
+        >
+          {topError}
+        </div>
+      )}
+      <div style={{ display: 'flex', gap: 10, marginTop: 16, justifyContent: 'flex-end' }}>
+        <button type="button" style={ghostBtn} onClick={onCancel} disabled={submitting}>
+          ביטול
+        </button>
+        <button
+          type="submit"
+          style={{
+            ...primaryBtn,
+            opacity: submitting ? 0.6 : 1,
+            cursor: submitting ? 'default' : 'pointer',
+          }}
+          disabled={submitting}
+        >
+          {submitting ? 'שומר…' : 'הוספה'}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function errored(base: CSSProperties, error?: string): CSSProperties {
+  return error ? { ...base, borderColor: '#e8a4a4' } : base;
+}
+
+function FieldRow({
+  label,
+  error,
+  children,
+}: {
+  label: string;
+  error?: string | undefined;
+  children: ReactNode;
+}) {
+  return (
+    <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <span style={{ fontSize: 13, color: MUTED }}>{label}</span>
+      {children}
+      {error && <span style={{ fontSize: 12.5, color: '#a23a3a' }}>{error}</span>}
+    </label>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Reports (dormant + full action log)
+// ---------------------------------------------------------------------------
+
+function Reports() {
+  const [dormant, setDormant] = useState<DormantCustomer[] | null>(null);
+  const [dormantError, setDormantError] = useState<string | null>(null);
+  const [actions, setActions] = useState<StaffActionRow[] | null>(null);
+  const [actionsError, setActionsError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const [d, a] = await Promise.all([getDormantCustomers(), listStaffActions()]);
+      if (cancelled) return;
+      if (d.ok) setDormant(d.data.customers);
+      else setDormantError(d.error);
+      if (a.ok) setActions(a.data.actions);
+      else setActionsError(a.error);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div style={card}>
-        <div style={{ fontWeight: 600, marginBottom: 12 }}>יומן פעולות</div>
-        {ACTION_LOG.map((l, i) => (
+        <div style={{ fontWeight: 600, marginBottom: 12 }}>לקוחות שלא ביקרו 30+ ימים</div>
+        {dormantError && (
+          <div style={{ color: '#a23a3a', fontSize: 14 }}>לא ניתן לטעון את הדוח. רעננו את הדף.</div>
+        )}
+        {!dormantError && !dormant && <div style={{ color: MUTED, fontSize: 14 }}>טוען…</div>}
+        {dormant && dormant.length === 0 && (
+          <div style={{ color: MUTED, fontSize: 14 }}>
+            אין לקוחות רדומים כרגע — כולם פעילים בחודש האחרון.
+          </div>
+        )}
+        {dormant?.map((c, i) => (
           <div
-            key={i}
+            key={c.id}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 12,
+              padding: '10px 0',
+              borderTop: i ? '1px solid #f3efea' : 'none',
+            }}
+          >
+            <div
+              style={{
+                width: 38,
+                height: 38,
+                borderRadius: 11,
+                background: '#f3f7e8',
+                color: '#6f8f37',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontWeight: 600,
+              }}
+            >
+              {initialsOf(c.firstName, c.lastName)}
+            </div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 600 }}>
+                {c.firstName} {c.lastName}
+              </div>
+              <div style={{ fontSize: 13, color: MUTED }}>
+                {c.customerNumber} · {c.phone}
+              </div>
+            </div>
+            <span style={{ fontSize: 12.5, color: MUTED }}>
+              ביקור אחרון: {fmtIsoDay(c.lastVisit)}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      <div style={card}>
+        <div style={{ fontWeight: 600, marginBottom: 12 }}>יומן פעולות (50 אחרונות)</div>
+        <ActionList rows={actions} error={actionsError} limit={50} emptyText="אין פעולות עדיין." />
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Shared: action list, table primitives
+// ---------------------------------------------------------------------------
+
+function ActionList({
+  rows,
+  error,
+  limit,
+  emptyText,
+}: {
+  rows: StaffActionRow[] | null;
+  error: string | null;
+  limit: number;
+  emptyText: string;
+}) {
+  if (error) {
+    return <div style={{ color: '#a23a3a', fontSize: 14 }}>לא ניתן לטעון את היומן.</div>;
+  }
+  if (!rows) {
+    return <div style={{ color: MUTED, fontSize: 14 }}>טוען…</div>;
+  }
+  if (rows.length === 0) {
+    return <div style={{ color: MUTED, fontSize: 14 }}>{emptyText}</div>;
+  }
+  return (
+    <>
+      {rows.slice(0, limit).map((r, i) => {
+        const who =
+          r.staffFirstName || r.staffLastName
+            ? `${r.staffFirstName ?? ''} ${r.staffLastName ?? ''}`.trim()
+            : 'מערכת';
+        return (
+          <div
+            key={r.id}
             style={{
               display: 'flex',
               gap: 10,
@@ -516,100 +871,22 @@ function Staff() {
                 width: 8,
                 height: 8,
                 borderRadius: 4,
-                background: l.dot,
+                background: actionDotColor(r.action),
                 marginTop: 7,
                 flexShrink: 0,
               }}
             />
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 14 }}>
-                <strong style={{ fontWeight: 600 }}>{l.who}</strong> · {l.action}
+                <strong style={{ fontWeight: 600 }}>{who}</strong> · {actionLabel(r.action)}
+                {r.summary ? ` · ${r.summary}` : ''}
               </div>
-              <div style={{ fontSize: 12.5, color: MUTED }}>{l.when}</div>
+              <div style={{ fontSize: 12.5, color: MUTED }}>{fmtRelative(r.createdAt)}</div>
             </div>
           </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function Reports() {
-  const rmax = Math.max(...REVENUE.map((r) => r.a));
-  const dormant = [initialCustomers[3]!, initialCustomers[1]!];
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div style={card}>
-        <div style={{ fontWeight: 600, marginBottom: 14 }}>הכנסות לפי חודש</div>
-        <div style={{ display: 'flex', alignItems: 'flex-end', gap: 14, height: 150 }}>
-          {REVENUE.map((b) => (
-            <div
-              key={b.m}
-              style={{
-                flex: 1,
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                gap: 6,
-              }}
-            >
-              <span style={{ fontSize: 12, color: MUTED }}>₪{(b.a * 1000).toLocaleString()}</span>
-              <div
-                style={{
-                  width: '100%',
-                  height: `${Math.round((b.a / rmax) * 100)}%`,
-                  background: b.a === rmax ? ORANGE : GREEN,
-                  borderRadius: 8,
-                  minHeight: 6,
-                }}
-              />
-              <span style={{ fontSize: 12.5, color: MUTED }}>{b.m}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-      <div style={card}>
-        <div style={{ fontWeight: 600, marginBottom: 6 }}>ניצול כרטיסיות</div>
-        <div style={{ color: MUTED, fontSize: 14 }}>
-          ממוצע 7.5 כניסות נוצלו לפני פקיעה (מתוך 12)
-        </div>
-      </div>
-      <div style={card}>
-        <div style={{ fontWeight: 600, marginBottom: 12 }}>לקוחות שלא ביקרו 30+ ימים</div>
-        {dormant.map((c) => {
-          const a = avatar(c);
-          return (
-            <div
-              key={c.id}
-              style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '9px 0' }}
-            >
-              <div
-                style={{
-                  width: 38,
-                  height: 38,
-                  borderRadius: 11,
-                  background: a.bg,
-                  color: a.color,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontWeight: 600,
-                }}
-              >
-                {initials(c)}
-              </div>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 600 }}>{fullName(c)}</div>
-                <div style={{ fontSize: 13, color: MUTED }}>{c.total - c.used} כניסות נותרו</div>
-              </div>
-              <span style={{ fontSize: 12.5, color: MUTED }}>
-                ביקור אחרון {fmtDate(c.history[c.history.length - 1]?.date ?? c.expiry)}
-              </span>
-            </div>
-          );
-        })}
-      </div>
-    </div>
+        );
+      })}
+    </>
   );
 }
 
