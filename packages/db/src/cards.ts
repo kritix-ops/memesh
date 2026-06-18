@@ -3,7 +3,7 @@ import { generateSerial, signToken, type KeyResolver } from '@memesh/qr-engine';
 import { and, desc, eq, isNotNull, isNull, sql } from 'drizzle-orm';
 import type { PgDatabase } from 'drizzle-orm/pg-core';
 import { logStaffAction } from './actions';
-import { customers, punchCards } from './schema/index';
+import { customers, punchCardEntries, punchCards, staff } from './schema/index';
 
 // Accept any PostgreSQL Drizzle database (node-postgres in prod, PGlite in tests).
 type AnyPgDatabase = PgDatabase<any, any, any>;
@@ -137,6 +137,62 @@ export interface CancelCardInput {
   reason: string;
   now?: Date;
 }
+
+/**
+ * Detail for a single card: card row + owning customer (public fields) + the
+ * full entry history with the punching staff's name joined in. Used by the
+ * admin "drill into a card" view.
+ */
+export const cardDetail = async (db: AnyPgDatabase, cardId: string) => {
+  const cardRows = await db
+    .select({
+      id: punchCards.id,
+      customerId: punchCards.customerId,
+      serialNumber: punchCards.serialNumber,
+      keyId: punchCards.keyId,
+      totalEntries: punchCards.totalEntries,
+      usedEntries: punchCards.usedEntries,
+      isActive: punchCards.isActive,
+      expiresAt: punchCards.expiresAt,
+      source: punchCards.source,
+      wcOrderId: punchCards.wcOrderId,
+      cancelledAt: punchCards.cancelledAt,
+      cancelledBy: punchCards.cancelledBy,
+      cancelReason: punchCards.cancelReason,
+      createdAt: punchCards.createdAt,
+      updatedAt: punchCards.updatedAt,
+      customerNumber: customers.customerNumber,
+      customerFirstName: customers.firstName,
+      customerLastName: customers.lastName,
+      customerPhone: customers.phone,
+      customerEmail: customers.email,
+    })
+    .from(punchCards)
+    .leftJoin(customers, eq(customers.id, punchCards.customerId))
+    .where(eq(punchCards.id, cardId))
+    .limit(1);
+
+  const card = cardRows[0];
+  if (!card) return undefined;
+
+  const entries = await db
+    .select({
+      id: punchCardEntries.id,
+      punchedAt: punchCardEntries.punchedAt,
+      method: punchCardEntries.method,
+      companionCount: punchCardEntries.companionCount,
+      notes: punchCardEntries.notes,
+      punchedBy: punchCardEntries.punchedBy,
+      staffFirstName: staff.firstName,
+      staffLastName: staff.lastName,
+    })
+    .from(punchCardEntries)
+    .leftJoin(staff, eq(staff.id, punchCardEntries.punchedBy))
+    .where(eq(punchCardEntries.punchCardId, cardId))
+    .orderBy(desc(punchCardEntries.punchedAt));
+
+  return { card, entries };
+};
 
 export type CardListStatus = 'active' | 'expired' | 'cancelled';
 

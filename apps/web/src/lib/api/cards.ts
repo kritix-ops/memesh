@@ -60,6 +60,52 @@ export const listCardsForAdmin = (
   return apiRequest(`/cards${qs ? `?${qs}` : ''}`);
 };
 
+// Detail for the admin "drill into a card" modal. Mirrors the shape returned
+// by GET /cards/:id on the API (joined customer + full entry history).
+
+export interface CardDetailCard {
+  id: string;
+  customerId: string;
+  serialNumber: string;
+  keyId: string;
+  totalEntries: number;
+  usedEntries: number;
+  isActive: boolean;
+  expiresAt: string;
+  source: 'pos' | 'online' | 'manual';
+  wcOrderId: string | null;
+  cancelledAt: string | null;
+  cancelledBy: string | null;
+  cancelReason: string | null;
+  createdAt: string;
+  updatedAt: string;
+  customerNumber: string | null;
+  customerFirstName: string | null;
+  customerLastName: string | null;
+  customerPhone: string | null;
+  customerEmail: string | null;
+}
+
+export interface CardDetailEntry {
+  id: string;
+  punchedAt: string;
+  method: string;
+  companionCount: number;
+  notes: string | null;
+  punchedBy: string | null;
+  staffFirstName: string | null;
+  staffLastName: string | null;
+}
+
+export interface CardDetailResponse {
+  card: CardDetailCard;
+  entries: CardDetailEntry[];
+}
+
+/** Fetch one card with its customer + full entry history. Admin/manager only. */
+export const getCardDetail = (id: string): Promise<ApiResult<CardDetailResponse>> =>
+  apiRequest(`/cards/${id}`);
+
 export interface CancelCardResponse {
   card: {
     id: string;

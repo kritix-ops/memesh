@@ -11,8 +11,10 @@ import {
 } from '../lib/api/admin';
 import {
   cancelCardForAdmin,
+  getCardDetail,
   listCardsForAdmin,
   type AdminCardRow,
+  type CardDetailResponse,
   type CardListStatus,
 } from '../lib/api/cards';
 import { searchCustomers, type Customer } from '../lib/api/customers';
@@ -407,6 +409,32 @@ function Cards() {
   const [askCancel, setAskCancel] = useState<AdminCardRow | null>(null);
   const [cancelling, setCancelling] = useState(false);
   const [cancelError, setCancelError] = useState<string | null>(null);
+  const [detailFor, setDetailFor] = useState<string | null>(null);
+  const [detail, setDetail] = useState<CardDetailResponse | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!detailFor) {
+      setDetail(null);
+      setDetailError(null);
+      setDetailLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setDetailLoading(true);
+    setDetailError(null);
+    (async () => {
+      const res = await getCardDetail(detailFor);
+      if (cancelled) return;
+      setDetailLoading(false);
+      if (res.ok) setDetail(res.data);
+      else setDetailError(res.error);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [detailFor]);
 
   const reload = async () => {
     const res = await listCardsForAdmin({ status });
@@ -515,7 +543,14 @@ function Cards() {
                 ? `${c.customerFirstName ?? ''} ${c.customerLastName ?? ''}`.trim()
                 : 'לא ידוע';
             return (
-              <tr key={c.id} style={{ borderTop: '1px solid #f3efea' }}>
+              <tr
+                key={c.id}
+                onClick={() => {
+                  console.info('[web admin card-detail] open', { id: c.id });
+                  setDetailFor(c.id);
+                }}
+                style={{ borderTop: '1px solid #f3efea', cursor: 'pointer' }}
+              >
                 <Td muted>{c.serialNumber}</Td>
                 <Td>
                   <div>{customerLabel}</div>
@@ -547,7 +582,8 @@ function Cards() {
                 {showActions && (
                   <Td>
                     <button
-                      onClick={() => {
+                      onClick={(e) => {
+                        e.stopPropagation();
                         console.info('[web admin cancel] open', { id: c.id });
                         setCancelError(null);
                         setAskCancel(c);
@@ -588,6 +624,14 @@ function Cards() {
             setCancelError(null);
           }}
           onConfirm={confirmCancel}
+        />
+      )}
+      {detailFor && (
+        <CardDetailModal
+          loading={detailLoading}
+          error={detailError}
+          detail={detail}
+          onClose={() => setDetailFor(null)}
         />
       )}
     </div>
@@ -712,6 +756,211 @@ function cardStatusBadge(c: AdminCardRow): { text: string; bg: string; color: st
   if (c.cancelledAt) return { text: 'בוטלה', bg: '#fbecec', color: '#c25a5a' };
   if (!c.isActive) return { text: 'לא פעילה', bg: '#ececec', color: '#9aa3a6' };
   return { text: 'פעילה', bg: '#f0f5e3', color: '#6f8f37' };
+}
+
+function methodLabel(method: string): string {
+  if (method === 'qr_scan') return 'סריקת QR';
+  if (method === 'serial') return 'מספר סידורי';
+  return method;
+}
+
+function fmtDateTime(iso: string): string {
+  const d = new Date(iso);
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  return `${fmtDate(iso.slice(0, 10))} · ${hh}:${mm}`;
+}
+
+function CardDetailModal({
+  loading,
+  error,
+  detail,
+  onClose,
+}: {
+  loading: boolean;
+  error: string | null;
+  detail: CardDetailResponse | null;
+  onClose: () => void;
+}) {
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(45,52,54,0.4)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 20,
+        zIndex: 50,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: '#fff',
+          borderRadius: 16,
+          boxShadow: SHADOW,
+          padding: 24,
+          width: 560,
+          maxWidth: '100%',
+          maxHeight: '85vh',
+          overflowY: 'auto',
+        }}
+      >
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            marginBottom: 14,
+          }}
+        >
+          <div style={{ fontWeight: 600, fontSize: 18, color: INK }}>פרטי כרטיסייה</div>
+          <button
+            onClick={onClose}
+            style={{
+              border: 'none',
+              background: 'transparent',
+              color: MUTED,
+              cursor: 'pointer',
+              fontSize: 22,
+              lineHeight: 1,
+              padding: '4px 8px',
+            }}
+            aria-label="סגירה"
+          >
+            ×
+          </button>
+        </div>
+
+        {loading && <div style={{ color: MUTED, fontSize: 14, padding: '8px 0' }}>טוען…</div>}
+        {error && (
+          <div style={{ color: '#a23a3a', fontSize: 14, padding: '8px 0' }}>
+            לא ניתן לטעון את פרטי הכרטיסייה. סגרו וננסו שוב.
+          </div>
+        )}
+        {detail && <CardDetailBody detail={detail} />}
+      </div>
+    </div>
+  );
+}
+
+function CardDetailBody({ detail }: { detail: CardDetailResponse }) {
+  const { card, entries } = detail;
+  const customerLabel =
+    card.customerFirstName || card.customerLastName
+      ? `${card.customerFirstName ?? ''} ${card.customerLastName ?? ''}`.trim()
+      : 'לקוח לא ידוע';
+  const badge = cardStatusBadge({
+    cancelledAt: card.cancelledAt,
+    isActive: card.isActive,
+  } as AdminCardRow);
+  return (
+    <>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 12,
+          flexWrap: 'wrap',
+          marginBottom: 14,
+        }}
+      >
+        <div>
+          <div style={{ fontWeight: 600, fontSize: 16 }}>{card.serialNumber}</div>
+          <div style={{ fontSize: 13, color: MUTED, marginTop: 2 }}>
+            {customerLabel}
+            {card.customerNumber ? ` · ${card.customerNumber}` : ''}
+            {card.customerPhone ? ` · ${card.customerPhone}` : ''}
+          </div>
+        </div>
+        <Badge text={badge.text} bg={badge.bg} color={badge.color} />
+      </div>
+
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))',
+          gap: 12,
+          marginBottom: 16,
+        }}
+      >
+        <DetailField label="ניצול">
+          {card.usedEntries} / {card.totalEntries}
+        </DetailField>
+        <DetailField label="הונפקה">{fmtDate(card.createdAt.slice(0, 10))}</DetailField>
+        <DetailField label="תוקף עד">{fmtDate(card.expiresAt.slice(0, 10))}</DetailField>
+        <DetailField label="מקור">{card.source}</DetailField>
+        {card.customerEmail && <DetailField label='דוא"ל'>{card.customerEmail}</DetailField>}
+        {card.wcOrderId && <DetailField label="מזהה הזמנה (וקומרס)">{card.wcOrderId}</DetailField>}
+      </div>
+
+      {card.cancelledAt && (
+        <div
+          style={{
+            background: '#fbecec',
+            border: '1px solid #f3d6d6',
+            borderRadius: 10,
+            padding: 12,
+            marginBottom: 16,
+          }}
+        >
+          <div style={{ fontWeight: 600, color: '#c25a5a', fontSize: 14 }}>הכרטיסייה בוטלה</div>
+          <div style={{ fontSize: 13, color: '#a23a3a', marginTop: 4 }}>
+            {fmtDateTime(card.cancelledAt)}
+            {card.cancelReason ? ` · ${card.cancelReason}` : ''}
+          </div>
+        </div>
+      )}
+
+      <div style={{ fontWeight: 600, marginBottom: 10 }}>היסטוריית כניסות ({entries.length})</div>
+      {entries.length === 0 ? (
+        <div style={{ color: MUTED, fontSize: 14 }}>אין כניסות עדיין.</div>
+      ) : (
+        entries.map((e, i) => {
+          const who =
+            e.staffFirstName || e.staffLastName
+              ? `${e.staffFirstName ?? ''} ${e.staffLastName ?? ''}`.trim()
+              : 'לא ידוע';
+          return (
+            <div
+              key={e.id}
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                gap: 12,
+                padding: '8px 0',
+                borderTop: i ? '1px solid #f3efea' : 'none',
+                fontSize: 14,
+              }}
+            >
+              <div>
+                <div>{fmtDateTime(e.punchedAt)}</div>
+                <div style={{ fontSize: 12.5, color: MUTED, marginTop: 2 }}>
+                  {methodLabel(e.method)} · {who}
+                </div>
+              </div>
+              <div style={{ color: MUTED, whiteSpace: 'nowrap' }}>
+                {e.companionCount === 1 ? 'מלווה אחד' : `${e.companionCount} מלווים`}
+              </div>
+            </div>
+          );
+        })
+      )}
+    </>
+  );
+}
+
+function DetailField({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div>
+      <div style={{ fontSize: 12, color: MUTED, marginBottom: 2 }}>{label}</div>
+      <div style={{ fontSize: 14, color: INK }}>{children}</div>
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------

@@ -8,6 +8,7 @@ import { listStaffActions } from './actions';
 import {
   allocateCustomerNumber,
   cancelCard,
+  cardDetail,
   createCustomer,
   createPunchCard,
   listCards,
@@ -213,6 +214,32 @@ test('listCards without a status returns all rows joined with customer info', as
   assert.equal(all.length, 2);
   assert.equal(all[0]?.customerLastName, 'Cohen');
   assert.ok(all[0]?.customerNumber?.startsWith('L-'));
+});
+
+test('cardDetail returns the card joined with the customer + entries (newest first)', async () => {
+  const db = await freshDb();
+  const cust = await makeCustomer(db);
+  const card = await createPunchCard(db, resolver, { customerId: cust.id });
+
+  // Punch twice so there are two entries.
+  await punchCard(db, { punchCardId: card.id, method: 'qr_scan', companionCount: 2 });
+  await punchCard(db, { punchCardId: card.id, method: 'serial', companionCount: 1 });
+
+  const detail = await cardDetail(db, card.id);
+  assert.ok(detail);
+  assert.equal(detail.card.id, card.id);
+  assert.equal(detail.card.customerFirstName, 'Noa');
+  assert.equal(detail.card.customerLastName, 'Cohen');
+  assert.equal(detail.entries.length, 2);
+  // Ordered newest-first: the serial-method punch was second.
+  assert.equal(detail.entries[0]?.method, 'serial');
+  assert.equal(detail.entries[1]?.method, 'qr_scan');
+});
+
+test('cardDetail returns undefined for an unknown card id', async () => {
+  const db = await freshDb();
+  const missing = await cardDetail(db, '00000000-0000-0000-0000-000000000000');
+  assert.equal(missing, undefined);
 });
 
 test('listCards respects the limit option', async () => {

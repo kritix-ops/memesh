@@ -1,4 +1,4 @@
-import { cancelCard, createPunchCard, db, listCards } from '@memesh/db';
+import { cancelCard, cardDetail, createPunchCard, db, listCards } from '@memesh/db';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { requireRoleHook } from '../lib/auth-guards.js';
@@ -46,6 +46,22 @@ export const cardsRoutes: FastifyPluginAsync = async (fastify) => {
       if (!parsed.success) return reply.code(400).send({ error: 'invalid_query' });
       const cards = await listCards(db, parsed.data);
       return { cards };
+    },
+  );
+
+  // Card detail for the admin drill-down view: card + customer + full entry
+  // history with the punching staff's name. admin or manager only.
+  fastify.get(
+    '/cards/:id',
+    { preHandler: requireRoleHook('admin', 'manager') },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      if (!z.string().uuid().safeParse(id).success) {
+        return reply.code(400).send({ error: 'invalid_id' });
+      }
+      const detail = await cardDetail(db, id);
+      if (!detail) return reply.code(404).send({ error: 'not_found' });
+      return detail;
     },
   );
 
