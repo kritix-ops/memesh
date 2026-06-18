@@ -82,3 +82,23 @@ export const searchCustomers = (
 /** Fetch a single customer with their punch cards and recent entries. */
 export const getCustomerDetail = (id: string): Promise<ApiResult<CustomerDetailResponse>> =>
   apiRequest(`/customers/${id}`);
+
+// Mirrors createBodySchema in apps/api/src/routes/customers.ts. Email is optional;
+// preferredChannel defaults to 'sms' server-side when omitted.
+export interface CreateCustomerInput {
+  firstName: string;
+  lastName: string;
+  phone: string;
+  email?: string;
+  preferredChannel?: PreferredChannel;
+}
+
+export interface CreateCustomerResponse {
+  customer: Customer;
+}
+
+/** Register a new customer (allocates the L-NNNN customer number). */
+export const createCustomer = (
+  input: CreateCustomerInput,
+): Promise<ApiResult<CreateCustomerResponse>> =>
+  apiRequest('/customers', { method: 'POST', body: input });

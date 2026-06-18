@@ -1,6 +1,8 @@
 import { type CSSProperties, useEffect, useRef, useState } from 'react';
 import { FauxQr, PunchCard, Sun } from '../brand';
+import { sellCard, type SellCardResponse } from '../lib/api/cards';
 import {
+  createCustomer,
   getCustomerDetail,
   searchCustomers,
   type Customer,
@@ -129,6 +131,11 @@ function humanizePunchError(code: string): string {
   return 'שגיאה בניקוב. נסו שוב בעוד רגע.';
 }
 
+function humanizeSellError(code: string): string {
+  if (code === 'invalid_body') return 'נתונים לא תקינים. בדקו ונסו שוב.';
+  return 'שגיאה במכירת הכרטיסייה. נסו שוב.';
+}
+
 type Screen = 'home' | 'search' | 'customer' | 'new' | 'sell' | 'scan';
 type SellStep = 'choose' | 'confirm' | 'done';
 type ScanState = 'camera' | 'success' | 'done' | 'fail';
@@ -177,6 +184,122 @@ export function PosApp() {
     setPunchStatus(next);
     clearTimeout(punchStatusTimer.current);
     punchStatusTimer.current = setTimeout(() => setPunchStatus(null), ms);
+  };
+
+  // New-customer form state. fieldErrors tracks per-field validation messages
+  // shown inline below each input; topError is for non-field-specific failures.
+  const [newFirst, setNewFirst] = useState('');
+  const [newLast, setNewLast] = useState('');
+  const [newPhone, setNewPhone] = useState('');
+  const [newEmail, setNewEmail] = useState('');
+  const [newFieldErrors, setNewFieldErrors] = useState<{
+    firstName?: string;
+    lastName?: string;
+    phone?: string;
+    email?: string;
+  }>({});
+  const [newTopError, setNewTopError] = useState<string | null>(null);
+  const [newSubmitting, setNewSubmitting] = useState(false);
+
+  const resetNewCustomerForm = () => {
+    setNewFirst('');
+    setNewLast('');
+    setNewPhone('');
+    setNewEmail('');
+    setNewFieldErrors({});
+    setNewTopError(null);
+  };
+
+  // Sell flow state: response from POST /cards (real serial to show on done)
+  // and an error to surface on the confirm step.
+  const [sellResponse, setSellResponse] = useState<SellCardResponse | null>(null);
+  const [sellError, setSellError] = useState<string | null>(null);
+  const [sellSubmitting, setSellSubmitting] = useState(false);
+
+  const submitNewCustomer = async () => {
+    const trimmedFirst = newFirst.trim();
+    const trimmedLast = newLast.trim();
+    const trimmedPhone = newPhone.trim();
+    const trimmedEmail = newEmail.trim();
+
+    const errors: typeof newFieldErrors = {};
+    if (!trimmedFirst) errors.firstName = 'שדה חובה';
+    if (!trimmedLast) errors.lastName = 'שדה חובה';
+    if (!trimmedPhone) errors.phone = 'שדה חובה';
+    if (trimmedEmail && !/^\S+@\S+\.\S+$/.test(trimmedEmail)) errors.email = 'כתובת מייל לא תקינה';
+    if (Object.keys(errors).length > 0) {
+      setNewFieldErrors(errors);
+      setNewTopError(null);
+      return;
+    }
+
+    setNewSubmitting(true);
+    setNewFieldErrors({});
+    setNewTopError(null);
+    const maskedPhone = `${trimmedPhone.slice(0, 3)}***`;
+    console.info('[web newcustomer] submit', { phone: maskedPhone });
+    const res = await createCustomer({
+      firstName: trimmedFirst,
+      lastName: trimmedLast,
+      phone: trimmedPhone,
+      ...(trimmedEmail !== '' && { email: trimmedEmail }),
+    });
+    setNewSubmitting(false);
+
+    if (!res.ok) {
+      console.warn('[web newcustomer] error', { status: res.status, error: res.error });
+      if (res.error === 'phone_taken') {
+        setNewFieldErrors({ phone: 'מספר הטלפון כבר רשום במערכת' });
+      } else if (res.error === 'invalid_body') {
+        setNewTopError('אחד השדות לא תקין. בדקו ונסו שוב.');
+      } else {
+        setNewTopError('לא ניתן לרשום את הלקוח כרגע. נסו שוב בעוד רגע.');
+      }
+      return;
+    }
+
+    console.info('[web newcustomer] success', {
+      id: res.data.customer.id,
+      customerNumber: res.data.customer.customerNumber,
+    });
+    setSelectedId(res.data.customer.id);
+    resetNewCustomerForm();
+    setSellResponse(null);
+    setSellError(null);
+    setSellStep('choose');
+    setScreen('sell');
+  };
+
+  const submitSell = async () => {
+    if (!selectedId) {
+      setSellError('בחרו לקוח לפני המכירה.');
+      return;
+    }
+    setSellSubmitting(true);
+    setSellError(null);
+    console.info('[web sell] submit', { customerId: selectedId });
+    const res = await sellCard({ customerId: selectedId });
+    setSellSubmitting(false);
+    if (!res.ok) {
+      console.warn('[web sell] error', { status: res.status, error: res.error });
+      setSellError(humanizeSellError(res.error));
+      return;
+    }
+    console.info('[web sell] success', {
+      cardId: res.data.card.id,
+      serial: res.data.card.serialNumber,
+    });
+    setSellResponse(res.data);
+    setSellStep('done');
+  };
+
+  // Affordance from the Customer detail screen ("no active card" branch): sell
+  // a new card to the customer we are already looking at.
+  const sellNewForSelectedCustomer = () => {
+    setSellResponse(null);
+    setSellError(null);
+    setSellStep('choose');
+    setScreen('sell');
   };
 
   // Debounced search effect: 250ms after typing stops, fetch /customers?q=...
@@ -310,10 +433,13 @@ export function PosApp() {
     </>
   );
 
-  function BackBar({ label, to }: { label: string; to: Screen }) {
+  function BackBar({ label, to, onBack }: { label: string; to: Screen; onBack?: () => void }) {
     return (
       <button
-        onClick={() => setScreen(to)}
+        onClick={() => {
+          if (onBack) onBack();
+          setScreen(to);
+        }}
         style={{
           border: 'none',
           background: 'transparent',
@@ -636,8 +762,24 @@ export function PosApp() {
             </div>
           </div>
         ) : (
-          <div style={{ ...card, textAlign: 'center', color: MUTED }}>
-            ללקוח אין כרטיסייה פעילה. ניתן למכור כרטיסייה חדשה (זרימת מכירה תחובר בעדכון הבא).
+          <div
+            style={{
+              ...card,
+              textAlign: 'center',
+              color: MUTED,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 14,
+              alignItems: 'center',
+            }}
+          >
+            <div>ללקוח אין כרטיסייה פעילה.</div>
+            <button
+              style={{ ...primaryBtn, padding: '12px 24px' }}
+              onClick={sellNewForSelectedCustomer}
+            >
+              מכירת כרטיסייה חדשה
+            </button>
           </div>
         )}
 
@@ -750,43 +892,176 @@ export function PosApp() {
   function NewCustomer() {
     return (
       <div>
-        <BackBar label="חזרה" to="home" />
+        <BackBar
+          label="חזרה"
+          to="home"
+          onBack={() => {
+            resetNewCustomerForm();
+          }}
+        />
         <div style={{ ...card }}>
           <div style={{ fontSize: 20, fontWeight: 600, marginBottom: 4 }}>לקוח חדש</div>
           <div style={{ color: MUTED, fontSize: 14, marginBottom: 18 }}>
             פרטי הלקוח יישמרו וניתן יהיה למכור כרטיסייה מיד
           </div>
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))',
-              gap: 14,
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              void submitNewCustomer();
             }}
           >
-            <Field label="שם פרטי *" />
-            <Field label="שם משפחה *" />
-            <Field label="טלפון *" />
-            <Field label="מייל" />
-          </div>
-          <button
-            style={{ ...primaryBtn, width: '100%', marginTop: 20 }}
-            onClick={() => {
-              setSellStep('choose');
-              setScreen('sell');
-            }}
-          >
-            שמור ומכור כרטיסייה
-          </button>
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))',
+                gap: 14,
+              }}
+            >
+              <NewCustomerField
+                label="שם פרטי"
+                required
+                value={newFirst}
+                onChange={setNewFirst}
+                error={newFieldErrors.firstName}
+                autoComplete="given-name"
+              />
+              <NewCustomerField
+                label="שם משפחה"
+                required
+                value={newLast}
+                onChange={setNewLast}
+                error={newFieldErrors.lastName}
+                autoComplete="family-name"
+              />
+              <NewCustomerField
+                label="טלפון"
+                required
+                value={newPhone}
+                onChange={setNewPhone}
+                error={newFieldErrors.phone}
+                type="tel"
+                inputMode="tel"
+                autoComplete="tel"
+                placeholder="050-000-0000"
+              />
+              <NewCustomerField
+                label="מייל"
+                badge="מומלץ"
+                value={newEmail}
+                onChange={setNewEmail}
+                error={newFieldErrors.email}
+                type="email"
+                inputMode="email"
+                autoComplete="email"
+              />
+            </div>
+            {newTopError && (
+              <div
+                role="alert"
+                style={{
+                  marginTop: 16,
+                  padding: '10px 14px',
+                  background: '#fbecec',
+                  color: '#a23a3a',
+                  borderRadius: 10,
+                  fontSize: 14,
+                }}
+              >
+                {newTopError}
+              </div>
+            )}
+            <button
+              type="submit"
+              disabled={newSubmitting}
+              style={{
+                ...primaryBtn,
+                width: '100%',
+                marginTop: 20,
+                opacity: newSubmitting ? 0.6 : 1,
+                cursor: newSubmitting ? 'default' : 'pointer',
+              }}
+            >
+              {newSubmitting ? 'שומר…' : 'שמור ומכור כרטיסייה'}
+            </button>
+          </form>
         </div>
       </div>
     );
   }
 
-  function Field({ label }: { label: string }) {
+  function NewCustomerField({
+    label,
+    value,
+    onChange,
+    required,
+    badge,
+    error,
+    type,
+    inputMode,
+    autoComplete,
+    placeholder,
+  }: {
+    label: string;
+    value: string;
+    onChange: (next: string) => void;
+    required?: boolean | undefined;
+    badge?: string | undefined;
+    error?: string | undefined;
+    type?: 'text' | 'tel' | 'email' | undefined;
+    inputMode?: 'tel' | 'email' | 'text' | undefined;
+    autoComplete?: string | undefined;
+    placeholder?: string | undefined;
+  }) {
     return (
       <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        <span style={{ fontSize: 13.5, color: MUTED }}>{label}</span>
-        <input style={inputStyle} />
+        <span
+          style={{
+            fontSize: 13.5,
+            color: MUTED,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+          }}
+        >
+          <span>
+            {label}
+            {required ? ' *' : ''}
+          </span>
+          {badge && (
+            <span
+              style={{
+                fontSize: 11,
+                fontWeight: 600,
+                color: '#a8643d',
+                background: '#fff4ee',
+                border: '1px solid #ffe3d4',
+                borderRadius: 999,
+                padding: '2px 8px',
+              }}
+            >
+              {badge}
+            </span>
+          )}
+        </span>
+        <input
+          style={{
+            ...inputStyle,
+            borderColor: error ? '#e8a4a4' : '#e9e0d9',
+          }}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          type={type ?? 'text'}
+          {...(inputMode !== undefined && { inputMode })}
+          {...(autoComplete !== undefined && { autoComplete })}
+          {...(placeholder !== undefined && { placeholder })}
+          disabled={newSubmitting}
+          aria-invalid={Boolean(error)}
+        />
+        {error && (
+          <span style={{ fontSize: 12.5, color: '#a23a3a' }} role="alert">
+            {error}
+          </span>
+        )}
       </label>
     );
   }
@@ -836,17 +1111,45 @@ export function PosApp() {
               החיוב מתבצע בקופה החיצונית. לאחר אישור התשלום, לחצו "אושר".
             </div>
             <div style={{ fontWeight: 600, margin: '18px 0 10px' }}>הלקוח שולם בקופה?</div>
+            {sellError && (
+              <div
+                role="alert"
+                style={{
+                  marginBottom: 12,
+                  padding: '10px 14px',
+                  background: '#fbecec',
+                  color: '#a23a3a',
+                  borderRadius: 10,
+                  fontSize: 14,
+                }}
+              >
+                {sellError}
+              </div>
+            )}
             <div style={{ display: 'flex', gap: 10 }}>
-              <button style={{ ...ghostBtn, flex: 1 }} onClick={() => setSellStep('choose')}>
+              <button
+                style={{ ...ghostBtn, flex: 1 }}
+                onClick={() => setSellStep('choose')}
+                disabled={sellSubmitting}
+              >
                 ביטול
               </button>
-              <button style={{ ...primaryBtn, flex: 1 }} onClick={() => setSellStep('done')}>
-                אושר
+              <button
+                style={{
+                  ...primaryBtn,
+                  flex: 1,
+                  opacity: sellSubmitting ? 0.6 : 1,
+                  cursor: sellSubmitting ? 'default' : 'pointer',
+                }}
+                onClick={() => void submitSell()}
+                disabled={sellSubmitting}
+              >
+                {sellSubmitting ? 'יוצר…' : 'אושר'}
               </button>
             </div>
           </div>
         )}
-        {sellStep === 'done' && (
+        {sellStep === 'done' && sellResponse && (
           <div style={{ ...card, textAlign: 'center' }}>
             <div
               style={{
@@ -859,14 +1162,39 @@ export function PosApp() {
             </div>
             <div style={{ fontSize: 22, fontWeight: 600, marginTop: 12 }}>הכרטיסייה נוצרה!</div>
             <div style={{ color: MUTED, fontSize: 14, marginTop: 6 }}>
-              כרטיסייה חדשה עם קוד QR נוצרה ונשלחה ב-SMS ללקוח
+              הכרטיסייה זמינה בכרטיס הלקוח. שליחת ה-SMS עם ה-QR תיכנס בעדכון הבא.
             </div>
             <div style={{ display: 'flex', justifyContent: 'center', margin: '18px 0' }}>
-              <FauxQr seed="M-20260617-0091" size={140} />
+              <FauxQr seed={sellResponse.card.serialNumber} size={140} />
             </div>
-            <button style={{ ...primaryBtn, width: '100%' }} onClick={() => setScreen('home')}>
-              חזרה למסך הראשי
-            </button>
+            <div style={{ fontSize: 13, color: MUTED, marginBottom: 4 }}>
+              {sellResponse.card.serialNumber}
+            </div>
+            <div style={{ fontSize: 13, color: MUTED, marginBottom: 14 }}>
+              תוקף עד {fmtDate(yyyyMmDd(sellResponse.card.expiresAt))}
+            </div>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button
+                style={{ ...ghostBtn, flex: 1 }}
+                onClick={() => {
+                  if (selectedId) {
+                    setScreen('customer');
+                  } else {
+                    setScreen('home');
+                  }
+                }}
+              >
+                לכרטיס הלקוח
+              </button>
+              <button
+                style={{ ...primaryBtn, flex: 1 }}
+                onClick={() => {
+                  setScreen('home');
+                }}
+              >
+                חזרה למסך הראשי
+              </button>
+            </div>
           </div>
         )}
       </div>
