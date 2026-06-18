@@ -118,3 +118,8 @@ test('GET /admin/actions without auth returns 401', async () => {
   const res = await app.inject({ method: 'GET', url: '/admin/actions' });
   assert.equal(res.statusCode, 401);
 });
+
+test('GET /cards without auth returns 401', async () => {
+  const res = await app.inject({ method: 'GET', url: '/cards?status=active' });
+  assert.equal(res.statusCode, 401);
+});

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { generateSerial, signToken, type KeyResolver } from '@memesh/qr-engine';
-import { eq, sql } from 'drizzle-orm';
+import { and, desc, eq, isNotNull, isNull, sql } from 'drizzle-orm';
 import type { PgDatabase } from 'drizzle-orm/pg-core';
 import { logStaffAction } from './actions';
 import { customers, punchCards } from './schema/index';
@@ -137,6 +137,60 @@ export interface CancelCardInput {
   reason: string;
   now?: Date;
 }
+
+export type CardListStatus = 'active' | 'expired' | 'cancelled';
+
+export interface ListCardsInput {
+  status?: CardListStatus | undefined;
+  /** Server-side cap. Caller is expected to clamp; default 100, max 200 typical. */
+  limit?: number | undefined;
+}
+
+/**
+ * List cards joined with customer info, filtered by status, for the admin
+ * "ניהול כרטיסיות" view. Buckets are mutually exclusive:
+ *   - active:    is_active = true
+ *   - cancelled: cancelled_at IS NOT NULL  (also is_active = false)
+ *   - expired:   is_active = false AND cancelled_at IS NULL
+ *     (covers expiry-by-time AND exhausted 12/12 — operationally one bucket)
+ */
+export const listCards = async (db: AnyPgDatabase, input: ListCardsInput = {}) => {
+  const limit = input.limit ?? 100;
+  const conds = [];
+  if (input.status === 'active') {
+    conds.push(eq(punchCards.isActive, true));
+  } else if (input.status === 'cancelled') {
+    conds.push(isNotNull(punchCards.cancelledAt));
+  } else if (input.status === 'expired') {
+    conds.push(eq(punchCards.isActive, false));
+    conds.push(isNull(punchCards.cancelledAt));
+  }
+  const where = conds.length === 0 ? undefined : conds.length === 1 ? conds[0] : and(...conds);
+
+  let query = db
+    .select({
+      id: punchCards.id,
+      customerId: punchCards.customerId,
+      serialNumber: punchCards.serialNumber,
+      totalEntries: punchCards.totalEntries,
+      usedEntries: punchCards.usedEntries,
+      isActive: punchCards.isActive,
+      expiresAt: punchCards.expiresAt,
+      cancelledAt: punchCards.cancelledAt,
+      cancelReason: punchCards.cancelReason,
+      source: punchCards.source,
+      createdAt: punchCards.createdAt,
+      customerFirstName: customers.firstName,
+      customerLastName: customers.lastName,
+      customerNumber: customers.customerNumber,
+      customerPhone: customers.phone,
+    })
+    .from(punchCards)
+    .leftJoin(customers, eq(customers.id, punchCards.customerId))
+    .$dynamic();
+  if (where) query = query.where(where);
+  return query.orderBy(desc(punchCards.createdAt)).limit(limit);
+};
 
 /** Cancel a card: deactivate it, record who/why, and log a staff action. */
 export const cancelCard = async (db: AnyPgDatabase, input: CancelCardInput) => {

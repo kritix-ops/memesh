@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { after, beforeEach, test } from 'node:test';
-import { sellCard } from './cards';
+import { listCardsForAdmin, sellCard } from './cards';
 
 interface FetchCall {
   url: string;
@@ -62,4 +62,44 @@ test('sellCard returns the error union on 400 invalid_body', async () => {
     assert.equal(res.status, 400);
     assert.equal(res.error, 'invalid_body');
   }
+});
+
+test('listCardsForAdmin builds /cards?status=... and unwraps the cards', async () => {
+  stubFetch({
+    status: 200,
+    body: {
+      cards: [
+        {
+          id: 'card-1',
+          customerId: 'cust-1',
+          serialNumber: 'M-20260618-0001',
+          totalEntries: 12,
+          usedEntries: 3,
+          isActive: true,
+          expiresAt: '2027-06-18T00:00:00.000Z',
+          cancelledAt: null,
+          cancelReason: null,
+          source: 'pos',
+          createdAt: '2026-06-18T10:00:00.000Z',
+          customerFirstName: 'Noa',
+          customerLastName: 'Cohen',
+          customerNumber: 'L-0001',
+          customerPhone: '052-3456789',
+        },
+      ],
+    },
+  });
+  const res = await listCardsForAdmin({ status: 'active' });
+  assert.equal(res.ok, true);
+  if (res.ok) {
+    assert.equal(res.data.cards.length, 1);
+    assert.equal(res.data.cards[0]?.customerNumber, 'L-0001');
+  }
+  assert.ok(lastCall?.url.includes('/cards?status=active'));
+});
+
+test('listCardsForAdmin omits the query string when no options are passed', async () => {
+  stubFetch({ status: 200, body: { cards: [] } });
+  await listCardsForAdmin();
+  assert.ok(lastCall?.url.endsWith('/cards'));
 });

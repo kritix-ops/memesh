@@ -5,7 +5,13 @@ import { verifyToken, type KeyResolver } from '@memesh/qr-engine';
 import { drizzle } from 'drizzle-orm/pglite';
 import { migrate } from 'drizzle-orm/pglite/migrator';
 import { listStaffActions } from './actions';
-import { allocateCustomerNumber, cancelCard, createCustomer, createPunchCard } from './cards';
+import {
+  allocateCustomerNumber,
+  cancelCard,
+  createCustomer,
+  createPunchCard,
+  listCards,
+} from './cards';
 import { punchCard } from './punch';
 
 async function freshDb() {
@@ -145,4 +151,60 @@ test('a cancelled card cannot be punched', async () => {
   const res = await punchCard(db, { punchCardId: card.id, method: 'qr_scan' });
   assert.equal(res.ok, false);
   if (!res.ok) assert.equal(res.reason, 'inactive');
+});
+
+// listCards bucket tests: seed one of each state and verify the filters
+// return mutually exclusive results.
+test('listCards filters by status (active / cancelled / expired)', async () => {
+  const db = await freshDb();
+  const cust = await makeCustomer(db);
+
+  // active: untouched fresh card
+  const activeCard = await createPunchCard(db, resolver, { customerId: cust.id });
+  // cancelled: cancel it
+  const toCancel = await createPunchCard(db, resolver, { customerId: cust.id });
+  await cancelCard(db, { cardId: toCancel.id, reason: 'בדיקת ביטול' });
+  // expired: punch to exhaustion. After the 12th punch the card flips is_active=false
+  // with cancelled_at NULL — which is exactly the "expired" bucket in listCards.
+  const toExhaust = await createPunchCard(db, resolver, { customerId: cust.id });
+  for (let i = 0; i < 12; i += 1) {
+    await punchCard(db, { punchCardId: toExhaust.id, method: 'serial' });
+  }
+
+  const active = await listCards(db, { status: 'active' });
+  assert.equal(active.length, 1);
+  assert.equal(active[0]?.id, activeCard.id);
+  assert.equal(active[0]?.customerFirstName, 'Noa');
+
+  const cancelled = await listCards(db, { status: 'cancelled' });
+  assert.equal(cancelled.length, 1);
+  assert.equal(cancelled[0]?.id, toCancel.id);
+  assert.equal(cancelled[0]?.cancelReason, 'בדיקת ביטול');
+
+  const expired = await listCards(db, { status: 'expired' });
+  assert.equal(expired.length, 1);
+  assert.equal(expired[0]?.id, toExhaust.id);
+});
+
+test('listCards without a status returns all rows joined with customer info', async () => {
+  const db = await freshDb();
+  const cust = await makeCustomer(db);
+  await createPunchCard(db, resolver, { customerId: cust.id });
+  await createPunchCard(db, resolver, { customerId: cust.id });
+
+  const all = await listCards(db);
+  assert.equal(all.length, 2);
+  assert.equal(all[0]?.customerLastName, 'Cohen');
+  assert.ok(all[0]?.customerNumber?.startsWith('L-'));
+});
+
+test('listCards respects the limit option', async () => {
+  const db = await freshDb();
+  const cust = await makeCustomer(db);
+  await createPunchCard(db, resolver, { customerId: cust.id });
+  await createPunchCard(db, resolver, { customerId: cust.id });
+  await createPunchCard(db, resolver, { customerId: cust.id });
+
+  const limited = await listCards(db, { limit: 2 });
+  assert.equal(limited.length, 2);
 });

@@ -1,4 +1,4 @@
-import { cancelCard, createPunchCard, db } from '@memesh/db';
+import { cancelCard, createPunchCard, db, listCards } from '@memesh/db';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { requireRoleHook } from '../lib/auth-guards.js';
@@ -13,6 +13,11 @@ const createBodySchema = z.object({
 });
 
 const cancelBodySchema = z.object({ reason: z.string().min(1).max(500) });
+
+const listQuerySchema = z.object({
+  status: z.enum(['active', 'expired', 'cancelled']).optional(),
+  limit: z.coerce.number().int().positive().max(200).optional(),
+});
 
 export const cardsRoutes: FastifyPluginAsync = async (fastify) => {
   // Sell a punch card. Payment is taken externally (AccuPOS); staff confirm here,
@@ -30,6 +35,19 @@ export const cardsRoutes: FastifyPluginAsync = async (fastify) => {
     request.log.info({ cardId: card.id, serial: card.serialNumber }, '[cards] created');
     return reply.code(201).send({ card });
   });
+
+  // List cards joined with customer info, filtered by status. Read-only admin
+  // surface; cashiers see cards via the per-customer detail screen.
+  fastify.get(
+    '/cards',
+    { preHandler: requireRoleHook('admin', 'manager') },
+    async (request, reply) => {
+      const parsed = listQuerySchema.safeParse(request.query);
+      if (!parsed.success) return reply.code(400).send({ error: 'invalid_query' });
+      const cards = await listCards(db, parsed.data);
+      return { cards };
+    },
+  );
 
   // Cancel a card (manager/admin), with a required reason. Logged to the action log.
   fastify.post(

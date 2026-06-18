@@ -9,6 +9,7 @@ import {
   type StaffActionRow,
   type StaffActionType,
 } from '../lib/api/admin';
+import { listCardsForAdmin, type AdminCardRow, type CardListStatus } from '../lib/api/cards';
 import { searchCustomers, type Customer } from '../lib/api/customers';
 import {
   createStaffMember,
@@ -395,6 +396,31 @@ function Customers() {
 // ---------------------------------------------------------------------------
 
 function Cards() {
+  const [status, setStatus] = useState<CardListStatus>('active');
+  const [rows, setRows] = useState<AdminCardRow[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setRows(null);
+    setError(null);
+    (async () => {
+      const res = await listCardsForAdmin({ status });
+      if (cancelled) return;
+      if (res.ok) setRows(res.data.cards);
+      else setError(res.error);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [status]);
+
+  const filters: { k: CardListStatus; l: string }[] = [
+    { k: 'active', l: 'פעילות' },
+    { k: 'expired', l: 'שפגו' },
+    { k: 'cancelled', l: 'בוטלו' },
+  ];
+
   return (
     <div style={card}>
       <div
@@ -408,15 +434,98 @@ function Cards() {
         }}
       >
         <div style={{ fontSize: 18, fontWeight: 600 }}>ניהול כרטיסיות</div>
-        <Badge text="תצוגה זמנית" bg="#fff4ee" color="#c97a52" />
+        <div style={{ display: 'flex', gap: 8 }}>
+          {filters.map((f) => {
+            const on = status === f.k;
+            return (
+              <button
+                key={f.k}
+                onClick={() => setStatus(f.k)}
+                style={{
+                  border: `1.5px solid ${on ? ORANGE : '#e9e0d9'}`,
+                  background: on ? '#fff4ee' : '#fff',
+                  color: on ? '#c97a52' : MUTED,
+                  borderRadius: 10,
+                  padding: '8px 16px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                {f.l}
+              </button>
+            );
+          })}
+        </div>
       </div>
-      <div style={{ color: MUTED, fontSize: 14, lineHeight: 1.6 }}>
-        רשימת הכרטיסיות המרוכזת תופעל בעדכון הבא (חיבור ל-endpoint ייעודי). בינתיים, ניתן לצפות
-        בכרטיסיית לקוח דרך עמדת הצוות: חיפוש לקוח → כרטיס לקוח. ביטול כרטיסייה זמין מכרטיס הלקוח
-        (יחובר בעדכון הבא יחד עם הצגת רשימה זו).
-      </div>
+      {error && (
+        <div style={{ color: '#a23a3a', fontSize: 14, padding: '8px 0' }}>
+          לא ניתן לטעון את רשימת הכרטיסיות. רעננו את הדף.
+        </div>
+      )}
+      {!error && rows === null && (
+        <div style={{ color: MUTED, fontSize: 14, padding: '8px 0' }}>טוען…</div>
+      )}
+      {rows && rows.length === 0 && (
+        <div style={{ color: MUTED, fontSize: 14, padding: '12px 0', textAlign: 'center' }}>
+          אין כרטיסיות בקטגוריה זו.
+        </div>
+      )}
+      {rows && rows.length > 0 && (
+        <Table head={['מספר סידורי', 'לקוח', 'ניצול', 'תוקף', 'סטטוס']}>
+          {rows.map((c) => {
+            const badge = cardStatusBadge(c);
+            const customerLabel =
+              c.customerFirstName || c.customerLastName
+                ? `${c.customerFirstName ?? ''} ${c.customerLastName ?? ''}`.trim()
+                : 'לא ידוע';
+            return (
+              <tr key={c.id} style={{ borderTop: '1px solid #f3efea' }}>
+                <Td muted>{c.serialNumber}</Td>
+                <Td>
+                  <div>{customerLabel}</div>
+                  {c.customerNumber && (
+                    <div style={{ fontSize: 12.5, color: MUTED, marginTop: 2 }}>
+                      {c.customerNumber} · {c.customerPhone ?? '—'}
+                    </div>
+                  )}
+                  {c.cancelReason && (
+                    <div
+                      style={{
+                        fontSize: 12.5,
+                        color: '#a23a3a',
+                        fontStyle: 'italic',
+                        marginTop: 4,
+                      }}
+                    >
+                      סיבת ביטול: {c.cancelReason}
+                    </div>
+                  )}
+                </Td>
+                <Td muted>
+                  {c.usedEntries} / {c.totalEntries}
+                </Td>
+                <Td muted>{fmtDate(c.expiresAt.slice(0, 10))}</Td>
+                <Td>
+                  <Badge text={badge.text} bg={badge.bg} color={badge.color} />
+                </Td>
+              </tr>
+            );
+          })}
+        </Table>
+      )}
+      {rows && rows.length === 100 && (
+        <div style={{ color: MUTED, fontSize: 12.5, marginTop: 10, textAlign: 'center' }}>
+          מוצגות 100 השורות האחרונות בקטגוריה זו.
+        </div>
+      )}
     </div>
   );
+}
+
+function cardStatusBadge(c: AdminCardRow): { text: string; bg: string; color: string } {
+  if (c.cancelledAt) return { text: 'בוטלה', bg: '#fbecec', color: '#c25a5a' };
+  if (!c.isActive) return { text: 'לא פעילה', bg: '#ececec', color: '#9aa3a6' };
+  return { text: 'פעילה', bg: '#f0f5e3', color: '#6f8f37' };
 }
 
 // ---------------------------------------------------------------------------
