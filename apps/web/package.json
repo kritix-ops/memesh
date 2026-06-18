@@ -11,6 +11,7 @@
     "test": "node --test --import tsx src/lib/api.test.ts src/lib/api/customers.test.ts src/lib/api/punch.test.ts src/lib/api/cards.test.ts src/lib/api/customer-auth.test.ts src/lib/api/me.test.ts src/lib/api/admin.test.ts src/lib/api/staff.test.ts"
   },
   "dependencies": {
+    "@yudiel/react-qr-scanner": "^2.3.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },

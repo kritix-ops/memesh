@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { after, beforeEach, test } from 'node:test';
-import { punchBySerial } from './punch';
+import { punchBySerial, punchByToken } from './punch';
 
 interface FetchCall {
   url: string;
@@ -74,5 +74,40 @@ test('punchBySerial returns {ok:false} with reason code on 409 exhausted', async
   if (!res.ok) {
     assert.equal(res.status, 409);
     assert.equal(res.error, 'exhausted');
+  }
+});
+
+test('punchByToken POSTs /punch with token + companions + idempotency key', async () => {
+  stubFetch({
+    status: 200,
+    body: { ok: true, replay: false, remaining: 9, usedEntries: 3, totalEntries: 12 },
+  });
+  const res = await punchByToken('signed.token.string', {
+    companions: 2,
+    idempotencyKey: 'idem-xyz',
+  });
+  assert.equal(res.ok, true);
+  if (res.ok) {
+    assert.equal(res.data.remaining, 9);
+  }
+  assert.equal(lastCall?.init.method, 'POST');
+  assert.ok(lastCall?.url.endsWith('/punch'));
+  assert.equal(
+    lastCall?.init.body,
+    JSON.stringify({
+      token: 'signed.token.string',
+      companions: 2,
+      idempotencyKey: 'idem-xyz',
+    }),
+  );
+});
+
+test('punchByToken surfaces invalid_signature on 401', async () => {
+  stubFetch({ status: 401, body: { ok: false, error: 'invalid_signature' } });
+  const res = await punchByToken('tampered.token');
+  assert.equal(res.ok, false);
+  if (!res.ok) {
+    assert.equal(res.status, 401);
+    assert.equal(res.error, 'invalid_signature');
   }
 });

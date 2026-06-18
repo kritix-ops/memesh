@@ -1,3 +1,4 @@
+import { Scanner, type IDetectedBarcode, type IScannerError } from '@yudiel/react-qr-scanner';
 import { type CSSProperties, useEffect, useRef, useState } from 'react';
 import { FauxQr, PunchCard, Sun } from '../brand';
 import { sellCard, type SellCardResponse } from '../lib/api/cards';
@@ -9,9 +10,9 @@ import {
   type CustomerDetailResponse,
   type PunchCard as ApiPunchCard,
 } from '../lib/api/customers';
-import { punchBySerial } from '../lib/api/punch';
+import { punchBySerial, punchByToken } from '../lib/api/punch';
 import { useStaffSession } from '../lib/staff-session';
-import { companionLabel, fmtDate, fullName, initialCustomers, type MockCustomer } from '../mock';
+import { companionLabel, fmtDate } from '../mock';
 import { PunchConfirmModal } from './PunchConfirmModal';
 
 const ORANGE = '#ffa983';
@@ -136,9 +137,21 @@ function humanizeSellError(code: string): string {
   return 'שגיאה במכירת הכרטיסייה. נסו שוב.';
 }
 
+// Maps @yudiel/react-qr-scanner's IScannerError.kind to Hebrew. Order matches
+// the typed union so a future addition surfaces as 'unknown' instead of slipping.
+function humanizeScanError(kind: IScannerError['kind']): string {
+  if (kind === 'permission-denied')
+    return 'אין הרשאה למצלמה. אפשרו מצלמה בהגדרות הדפדפן או השתמשו בהזנת מספר סידורי.';
+  if (kind === 'no-camera') return 'לא נמצאה מצלמה בהתקן. השתמשו בהזנת מספר סידורי.';
+  if (kind === 'in-use') return 'המצלמה בשימוש ביישום אחר. סגרו וחזרו לסרוק.';
+  if (kind === 'insecure-context')
+    return 'הסריקה דורשת חיבור מאובטח (HTTPS). השתמשו בהזנת מספר סידורי.';
+  if (kind === 'unsupported') return 'הדפדפן לא תומך בסריקה. השתמשו בהזנת מספר סידורי.';
+  return 'שגיאה זמנית במצלמה. נסו שוב או הזינו מספר סידורי.';
+}
+
 type Screen = 'home' | 'search' | 'customer' | 'new' | 'sell' | 'scan';
 type SellStep = 'choose' | 'confirm' | 'done';
-type ScanState = 'camera' | 'success' | 'done' | 'fail';
 
 const CARD_PRICE = 320;
 
@@ -148,15 +161,10 @@ export function PosApp() {
   // the discriminated union still needs narrowing for type safety.
   const sessionUser = sessionState.status === 'signed-in' ? sessionState.user : null;
 
-  // Mock state kept for Scan/Sell/NewCustomer flows still on mock data. Search
-  // + Customer detail consume the LIVE state below instead.
-  const [customers, setCustomers] = useState<MockCustomer[]>(initialCustomers);
   const [screen, setScreen] = useState<Screen>('home');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [sellStep, setSellStep] = useState<SellStep>('choose');
-  const [scanState, setScanState] = useState<ScanState>('camera');
-  const [companions, setCompanions] = useState(1);
 
   // Live search state (debounced + abortable). Empty query => no fetch.
   const [searchResults, setSearchResults] = useState<Customer[]>([]);
@@ -402,19 +410,6 @@ export function PosApp() {
     }
   };
 
-  // Demo customer used by the Scan flow (still on mock data). The real Scan
-  // wiring lands in a follow-up chunk together with POST /punch.
-  const scanned = customers[0]!;
-
-  // Mock punch used only by Scan/Customer-overlay flows still on mock data.
-  // The real Customer detail screen below disables its punch button until
-  // POST /punch is wired.
-  const punch = (id: string) => {
-    setCustomers((prev) =>
-      prev.map((c) => (c.id === id && c.used < c.total ? { ...c, used: c.used + 1 } : c)),
-    );
-  };
-
   const openCustomer = (id: string) => {
     setSelectedId(id);
     setScreen('customer');
@@ -479,11 +474,7 @@ export function PosApp() {
         bg: ORANGE,
         border: ORANGE,
         tint: 'rgba(255,255,255,0.28)',
-        onClick: () => {
-          setScanState('camera');
-          setCompanions(1);
-          setScreen('scan');
-        },
+        onClick: () => setScreen('scan'),
       },
     ];
     return (
@@ -844,51 +835,6 @@ export function PosApp() {
     );
   }
 
-  function CompanionStepper() {
-    return (
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: 18,
-          marginTop: 16,
-        }}
-      >
-        <StepBtn label="−" onClick={() => setCompanions((n) => Math.max(1, n - 1))} />
-        <div style={{ textAlign: 'center', minWidth: 90 }}>
-          <div style={{ fontSize: 40, fontWeight: 600, color: ORANGE, lineHeight: 1 }}>
-            {companions}
-          </div>
-          <div style={{ fontSize: 13, color: MUTED, marginTop: 4 }}>
-            {companionLabel(companions)}
-          </div>
-        </div>
-        <StepBtn label="+" onClick={() => setCompanions((n) => Math.min(4, n + 1))} />
-      </div>
-    );
-  }
-
-  function StepBtn({ label, onClick }: { label: string; onClick: () => void }) {
-    return (
-      <button
-        onClick={onClick}
-        style={{
-          width: 48,
-          height: 48,
-          borderRadius: 12,
-          border: '1.5px solid #e9e0d9',
-          background: '#fff',
-          fontSize: 24,
-          color: INK,
-          cursor: 'pointer',
-        }}
-      >
-        {label}
-      </button>
-    );
-  }
-
   function NewCustomer() {
     return (
       <div>
@@ -1202,68 +1148,190 @@ export function PosApp() {
   }
 
   function Scan() {
-    const remaining = scanned.total - scanned.used;
+    type ScanPhase = 'camera' | 'serial' | 'confirming' | 'submitting' | 'success' | 'error';
+    type Source = { mode: 'token'; token: string } | { mode: 'serial'; serial: string };
+
+    const [phase, setPhase] = useState<ScanPhase>('camera');
+    const [source, setSource] = useState<Source | null>(null);
+    const [scanKey, setScanKey] = useState('');
+    const [cameraError, setCameraError] = useState<string | null>(null);
+    const [result, setResult] = useState<{ remaining: number; total: number } | null>(null);
+    const [punchErrorMsg, setPunchErrorMsg] = useState<string | null>(null);
+    const [serialInput, setSerialInput] = useState('');
+    const [serialFieldError, setSerialFieldError] = useState<string | null>(null);
+
+    useEffect(() => {
+      console.info('[web scan] mounted');
+      return () => console.info('[web scan] unmounted');
+    }, []);
+
+    const reset = () => {
+      setPhase('camera');
+      setSource(null);
+      setResult(null);
+      setPunchErrorMsg(null);
+      setSerialInput('');
+      setSerialFieldError(null);
+      setCameraError(null);
+    };
+
+    const onScannerDetect = (codes: IDetectedBarcode[]) => {
+      if (phase !== 'camera') return;
+      const first = codes[0];
+      if (!first?.rawValue) return;
+      console.info('[web scan] detected', { tokenPrefix: first.rawValue.slice(0, 8) });
+      setSource({ mode: 'token', token: first.rawValue });
+      setScanKey(crypto.randomUUID());
+      setPhase('confirming');
+    };
+
+    const onScannerError = (err: unknown) => {
+      const scannerErr = err as IScannerError;
+      console.warn('[web scan] error', { kind: scannerErr.kind });
+      setCameraError(humanizeScanError(scannerErr.kind));
+    };
+
+    const submitSerial = () => {
+      const trimmed = serialInput.trim();
+      if (!trimmed) {
+        setSerialFieldError('נא להזין מספר סידורי');
+        return;
+      }
+      setSerialFieldError(null);
+      setSource({ mode: 'serial', serial: trimmed });
+      setScanKey(crypto.randomUUID());
+      setPhase('confirming');
+    };
+
+    const confirmPunch = async (companions: number) => {
+      if (!source) return;
+      setPhase('submitting');
+      setPunchErrorMsg(null);
+      console.info('[web scan] punch submit', { mode: source.mode, companions });
+      const res =
+        source.mode === 'token'
+          ? await punchByToken(source.token, { companions, idempotencyKey: scanKey })
+          : await punchBySerial(source.serial, { companions, idempotencyKey: scanKey });
+      if (res.ok) {
+        console.info('[web scan] punch success', { remaining: res.data.remaining });
+        setResult({ remaining: res.data.remaining, total: res.data.totalEntries });
+        setPhase('success');
+        return;
+      }
+      console.warn('[web scan] punch error', { status: res.status, error: res.error });
+      setPunchErrorMsg(humanizePunchError(res.error));
+      setPhase('error');
+    };
+
     return (
       <div>
         <BackBar label="חזרה" to="home" />
-        {scanState === 'camera' && (
+        {phase === 'camera' && (
           <div style={{ ...card, textAlign: 'center' }}>
             <div
               style={{
-                background: INK,
-                color: '#fff',
                 borderRadius: 16,
-                height: 240,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontSize: 15,
+                overflow: 'hidden',
+                aspectRatio: '4 / 3',
+                background: INK,
+                position: 'relative',
               }}
             >
-              מקמו את קוד ה-QR במסגרת
+              {cameraError ? (
+                <div
+                  style={{
+                    color: '#fff',
+                    padding: 24,
+                    fontSize: 14,
+                    height: '100%',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    textAlign: 'center',
+                  }}
+                >
+                  {cameraError}
+                </div>
+              ) : (
+                <Scanner
+                  onScan={onScannerDetect}
+                  onError={onScannerError}
+                  constraints={{ facingMode: 'environment' }}
+                  styles={{
+                    container: { width: '100%', height: '100%' },
+                    video: { width: '100%', height: '100%', objectFit: 'cover' },
+                  }}
+                />
+              )}
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 16 }}>
-              <button
-                style={{ ...primaryBtn }}
-                onClick={() => {
-                  setCompanions(1);
-                  setScanState('success');
-                }}
-              >
-                סריקה (הדגמה — סריקה תקינה)
-              </button>
-              <button style={{ ...ghostBtn }} onClick={() => setScanState('fail')}>
-                הדגמת כרטיסייה שפגה
-              </button>
+            <div style={{ color: MUTED, fontSize: 13.5, marginTop: 12 }}>
+              מקמו את קוד ה-QR של הכרטיסייה במסגרת
             </div>
-            <div style={{ color: MUTED, fontSize: 13, marginTop: 14 }}>
-              אין סריקה? חיפוש ידני לפי מספר סידורי או טלפון
-            </div>
-          </div>
-        )}
-        {scanState === 'success' && (
-          <div style={{ ...card, textAlign: 'center' }}>
-            <div style={{ display: 'flex', justifyContent: 'center' }}>
-              <Sun size={64} />
-            </div>
-            <div style={{ fontSize: 20, fontWeight: 600, marginTop: 10 }}>{fullName(scanned)}</div>
-            <div style={{ color: MUTED, marginTop: 4 }}>
-              כניסות שנותרו · {remaining} מתוך {scanned.total}
-            </div>
-            <div style={{ fontWeight: 600, marginTop: 18 }}>כמה מלווים?</div>
-            <CompanionStepper />
             <button
-              style={{ ...primaryBtn, width: '100%', marginTop: 18 }}
+              style={{ ...ghostBtn, width: '100%', marginTop: 12 }}
               onClick={() => {
-                punch(scanned.id);
-                setScanState('done');
+                setSerialInput('');
+                setSerialFieldError(null);
+                setPhase('serial');
               }}
             >
-              ניקוב
+              הזנת מספר סידורי במקום
             </button>
           </div>
         )}
-        {scanState === 'done' && (
+
+        {phase === 'serial' && (
+          <div style={{ ...card }}>
+            <div style={{ fontSize: 18, fontWeight: 600, marginBottom: 6 }}>הזנת מספר סידורי</div>
+            <div style={{ color: MUTED, fontSize: 13.5, marginBottom: 14 }}>
+              מספר סידורי בפורמט M-YYYYMMDD-NNNN מודפס על הכרטיסייה
+            </div>
+            <input
+              autoFocus
+              value={serialInput}
+              onChange={(e) => setSerialInput(e.target.value)}
+              placeholder="M-20260618-0001"
+              style={{
+                ...inputStyle,
+                borderColor: serialFieldError ? '#e8a4a4' : '#e9e0d9',
+                letterSpacing: 1,
+              }}
+            />
+            {serialFieldError && (
+              <div style={{ fontSize: 12.5, color: '#a23a3a', marginTop: 6 }} role="alert">
+                {serialFieldError}
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
+              <button
+                style={{ ...ghostBtn, flex: 1 }}
+                onClick={() => {
+                  setSerialInput('');
+                  setSerialFieldError(null);
+                  setPhase('camera');
+                }}
+              >
+                חזרה לסריקה
+              </button>
+              <button style={{ ...primaryBtn, flex: 1 }} onClick={submitSerial}>
+                המשך
+              </button>
+            </div>
+          </div>
+        )}
+
+        {(phase === 'confirming' || phase === 'submitting') && (
+          <PunchConfirmModal
+            onClose={() => {
+              if (phase === 'submitting') return;
+              reset();
+            }}
+            onConfirm={confirmPunch}
+            submitting={phase === 'submitting'}
+          />
+        )}
+
+        {phase === 'success' && result && (
           <div style={{ ...card, textAlign: 'center' }}>
             <div
               style={{
@@ -1276,33 +1344,28 @@ export function PosApp() {
             </div>
             <div style={{ fontSize: 22, fontWeight: 600, marginTop: 12 }}>ניקוב בוצע</div>
             <div style={{ color: MUTED, marginTop: 6 }}>
-              {fullName(scanned)} · נותרו {scanned.total - scanned.used} מתוך {scanned.total}
+              נותרו {result.remaining} מתוך {result.total}
             </div>
-            <button
-              style={{ ...primaryBtn, width: '100%', marginTop: 18 }}
-              onClick={() => {
-                setScanState('camera');
-                setCompanions(1);
-              }}
-            >
+            <button style={{ ...primaryBtn, width: '100%', marginTop: 18 }} onClick={reset}>
               סריקה הבאה
             </button>
           </div>
         )}
-        {scanState === 'fail' && (
+
+        {phase === 'error' && (
           <div style={{ ...card, textAlign: 'center' }}>
-            <div style={{ fontSize: 20, fontWeight: 600, color: '#c25a5a' }}>
-              הכרטיסייה אינה פעילה
+            <div style={{ fontSize: 20, fontWeight: 600, color: '#c25a5a' }}>הניקוב לא בוצע</div>
+            <div style={{ color: MUTED, marginTop: 8, fontSize: 14 }}>
+              {punchErrorMsg ?? 'שגיאה לא ידועה.'}
             </div>
-            <div style={{ color: MUTED, marginTop: 8 }}>
-              תוקף הכרטיסייה פג בתאריך 03.04.2026. ניתן למכור כרטיסייה חדשה.
+            <div style={{ display: 'flex', gap: 10, marginTop: 18 }}>
+              <button style={{ ...ghostBtn, flex: 1 }} onClick={() => setPhase('serial')}>
+                מספר סידורי
+              </button>
+              <button style={{ ...primaryBtn, flex: 1 }} onClick={reset}>
+                סריקה חוזרת
+              </button>
             </div>
-            <button
-              style={{ ...primaryBtn, width: '100%', marginTop: 18 }}
-              onClick={() => setScanState('camera')}
-            >
-              סריקה חוזרת
-            </button>
           </div>
         )}
       </div>
