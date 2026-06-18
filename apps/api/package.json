@@ -9,7 +9,7 @@
     "start": "tsx src/server.ts",
     "typecheck": "tsc --noEmit",
     "test": "node --test --import tsx src/app.test.ts src/lib/wp-sync.test.ts scripts/seed-admin.test.ts",
-    "seed:admin": "tsx scripts/seed-admin.ts"
+    "seed:admin": "tsx --env-file-if-exists=../../.env --env-file-if-exists=../../packages/db/.env.local scripts/seed-admin.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.0",
