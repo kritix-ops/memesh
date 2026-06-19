@@ -1,6 +1,7 @@
 import { Scanner, type IDetectedBarcode, type IScannerError } from '@yudiel/react-qr-scanner';
 import { type CSSProperties, useEffect, useRef, useState } from 'react';
 import { FauxQr, PunchCard, Sun } from '../brand';
+import { getCardPricing, type CardPricing } from '../lib/api/card-settings';
 import { sellCard, type SellCardResponse } from '../lib/api/cards';
 import {
   createCustomer,
@@ -155,7 +156,13 @@ function humanizeScanError(kind: IScannerError['kind']): string {
 type Screen = 'home' | 'search' | 'customer' | 'new' | 'sell' | 'scan';
 type SellStep = 'choose' | 'confirm' | 'done';
 
-const CARD_PRICE = 320;
+// Fallback if /pos/card-pricing fails (network blip, brief API outage). The
+// sale must still go through — the server uses its own settings on POST /cards,
+// so a stale fallback here only affects what the cashier sees, not what's charged.
+const FALLBACK_PRICING: CardPricing = {
+  priceShekels: 320,
+  pitchLabel: 'משלמים על 10, מקבלים 12 · תקף לשנה',
+};
 
 export function PosApp() {
   const { state: sessionState } = useStaffSession();
@@ -167,6 +174,27 @@ export function PosApp() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [sellStep, setSellStep] = useState<SellStep>('choose');
+
+  // Card price + pitch text come from /pos/card-pricing (admin-editable in the
+  // 'הגדרות' tab). Fetched once on mount; falls back to the hardcoded defaults
+  // if the call fails so the cashier can still ring up a sale.
+  const [pricing, setPricing] = useState<CardPricing>(FALLBACK_PRICING);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const res = await getCardPricing();
+      if (cancelled) return;
+      if (res.ok) {
+        console.info('[web pos pricing] fetched', { priceShekels: res.data.priceShekels });
+        setPricing(res.data);
+      } else {
+        console.warn('[web pos pricing] fallback', { error: res.error });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Live search state (debounced + abortable). Empty query => no fetch.
   const [searchResults, setSearchResults] = useState<Customer[]>([]);
@@ -1288,12 +1316,10 @@ export function PosApp() {
                 marginTop: 16,
               }}
             >
-              <div style={{ fontWeight: 600, fontSize: 18 }}>כרטיסייה · 12 כניסות</div>
-              <div style={{ color: MUTED, fontSize: 14, marginTop: 4 }}>
-                משלמים על 10, מקבלים 12 · תקף לשנה
-              </div>
+              <div style={{ fontWeight: 600, fontSize: 18 }}>כרטיסייה</div>
+              <div style={{ color: MUTED, fontSize: 14, marginTop: 4 }}>{pricing.pitchLabel}</div>
               <div style={{ fontSize: 36, fontWeight: 600, color: ORANGE, marginTop: 12 }}>
-                ₪{CARD_PRICE}
+                ₪{pricing.priceShekels}
               </div>
               <div style={{ color: MUTED, fontSize: 13.5, marginTop: 4 }}>
                 כל כניסה = ילד אחד + מלווה אחד
@@ -1311,7 +1337,7 @@ export function PosApp() {
           <div style={{ ...card }}>
             <div style={{ fontSize: 20, fontWeight: 600 }}>סכום לתשלום</div>
             <div style={{ fontSize: 40, fontWeight: 600, color: ORANGE, margin: '8px 0 14px' }}>
-              ₪{CARD_PRICE}
+              ₪{pricing.priceShekels}
             </div>
             <div style={{ color: MUTED, fontSize: 14 }}>
               החיוב מתבצע בקופה החיצונית. לאחר אישור התשלום, לחצו "אושר".

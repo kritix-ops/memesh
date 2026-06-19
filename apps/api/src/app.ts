@@ -7,6 +7,7 @@ import { authPlugin } from './plugins/auth.js';
 import { securityPlugin } from './plugins/security.js';
 import { adminRoutes } from './routes/admin.js';
 import { authRoutes } from './routes/auth.js';
+import { cardSettingsRoutes } from './routes/card-settings.js';
 import { cardsRoutes } from './routes/cards.js';
 import { customerAuthRoutes } from './routes/customer-auth.js';
 import { customersRoutes } from './routes/customers.js';
@@ -47,6 +48,7 @@ export const buildApp = async (): Promise<FastifyInstance> => {
   await fastify.register(meRoutes);
   await fastify.register(customersRoutes);
   await fastify.register(cardsRoutes);
+  await fastify.register(cardSettingsRoutes);
   await fastify.register(punchRoutes);
   await fastify.register(staffRoutes);
   await fastify.register(adminRoutes);

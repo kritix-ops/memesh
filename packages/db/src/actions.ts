@@ -10,6 +10,7 @@ export type StaffActionType =
   | 'cancel_card'
   | 'register_customer'
   | 'create_staff'
+  | 'update_card_settings'
   | 'other';
 
 export interface LogStaffActionInput {

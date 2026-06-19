@@ -5,6 +5,7 @@ import { verifyToken, type KeyResolver } from '@memesh/qr-engine';
 import { drizzle } from 'drizzle-orm/pglite';
 import { migrate } from 'drizzle-orm/pglite/migrator';
 import { listStaffActions } from './actions';
+import { updateCardSettings } from './card-settings';
 import {
   allocateCustomerNumber,
   cancelCard,
@@ -287,4 +288,33 @@ test('listCards respects the limit option', async () => {
 
   const limited = await listCards(db, { limit: 2 });
   assert.equal(limited.length, 2);
+});
+
+test('createPunchCard reads default total entries from card_settings', async () => {
+  const db = await freshDb();
+  await updateCardSettings(db, { totalEntries: 8 });
+  const cust = await makeCustomer(db);
+
+  const card = await createPunchCard(db, resolver, { customerId: cust.id });
+  assert.equal(card.totalEntries, 8);
+});
+
+test('createPunchCard honours an explicit totalEntries override over the settings default', async () => {
+  const db = await freshDb();
+  await updateCardSettings(db, { totalEntries: 8 });
+  const cust = await makeCustomer(db);
+
+  const card = await createPunchCard(db, resolver, { customerId: cust.id, totalEntries: 15 });
+  assert.equal(card.totalEntries, 15);
+});
+
+test('createPunchCard uses validityDays from card_settings for expiresAt', async () => {
+  const db = await freshDb();
+  await updateCardSettings(db, { validityDays: 30 });
+  const cust = await makeCustomer(db);
+  const fixedNow = new Date('2026-06-19T12:00:00.000Z');
+
+  const card = await createPunchCard(db, resolver, { customerId: cust.id, now: fixedNow });
+  const expected = new Date(fixedNow.getTime() + 30 * 24 * 60 * 60 * 1000);
+  assert.equal(card.expiresAt.getTime(), expected.getTime());
 });

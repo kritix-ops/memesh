@@ -6,3 +6,4 @@ export * from './scan-attempts';
 export * from './customer-otps';
 export * from './staff-actions';
 export * from './sequences';
+export * from './card-settings';

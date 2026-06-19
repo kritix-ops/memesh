@@ -3,13 +3,11 @@ import { generateSerial, signToken, type KeyResolver } from '@memesh/qr-engine';
 import { and, desc, eq, isNotNull, isNull, sql } from 'drizzle-orm';
 import type { PgDatabase } from 'drizzle-orm/pg-core';
 import { logStaffAction } from './actions';
+import { getCardSettings } from './card-settings';
 import { customers, punchCardEntries, punchCards, staff, type ChildRecord } from './schema/index';
 
 // Accept any PostgreSQL Drizzle database (node-postgres in prod, PGlite in tests).
 type AnyPgDatabase = PgDatabase<any, any, any>;
-
-const CARD_VALIDITY_DAYS = 365;
-const DEFAULT_TOTAL_ENTRIES = 12;
 
 const extractRows = (result: unknown): Array<Record<string, unknown>> => {
   if (
@@ -104,9 +102,12 @@ export interface CreatePunchCardInput {
 }
 
 /**
- * Create a punch card: allocate a serial, mint a server-signed QR token bound to
- * the card id, and store it with a one-year expiry. The QR carries no authority
- * of its own; verification always goes back to this row.
+ * Create a punch card: allocate a serial, mint a server-signed QR token bound
+ * to the card id, and store it with the configured expiry. The QR carries no
+ * authority of its own; verification always goes back to this row.
+ *
+ * Validity days and default total entries come from `card_settings`. An
+ * explicit `input.totalEntries` still wins (POS may override per sale).
  */
 export const createPunchCard = async (
   db: AnyPgDatabase,
@@ -114,6 +115,7 @@ export const createPunchCard = async (
   input: CreatePunchCardInput,
 ) => {
   const now = input.now ?? new Date();
+  const settings = await getCardSettings(db);
   const id = randomUUID();
   const serialNumber = await allocateSerial(db, now);
   const { keyId } = resolver.resolveSigningKey();
@@ -126,7 +128,7 @@ export const createPunchCard = async (
     },
     resolver,
   );
-  const expiresAt = new Date(now.getTime() + CARD_VALIDITY_DAYS * 24 * 60 * 60 * 1000);
+  const expiresAt = new Date(now.getTime() + settings.validityDays * 24 * 60 * 60 * 1000);
   const rows = await db
     .insert(punchCards)
     .values({
@@ -135,7 +137,7 @@ export const createPunchCard = async (
       serialNumber,
       qrToken,
       keyId,
-      totalEntries: input.totalEntries ?? DEFAULT_TOTAL_ENTRIES,
+      totalEntries: input.totalEntries ?? settings.totalEntries,
       expiresAt,
       source: input.source ?? 'pos',
       wcOrderId: input.wcOrderId ?? null,

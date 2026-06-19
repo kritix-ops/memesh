@@ -8,6 +8,13 @@
       "when": 1781711568936,
       "tag": "0000_tricky_northstar",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1781900293094,
+      "tag": "0001_sweet_green_goblin",
+      "breakpoints": true
     }
   ]
 }

@@ -18,6 +18,12 @@ import {
   type CardListStatus,
 } from '../lib/api/cards';
 import {
+  getCardSettings,
+  updateCardSettings,
+  type CardSettings,
+  type CardSettingsPatch,
+} from '../lib/api/card-settings';
+import {
   createCustomer,
   deleteCustomerById,
   getCustomerDetail,
@@ -78,13 +84,16 @@ const ghostBtn: CSSProperties = {
   cursor: 'pointer',
 };
 
-type View = 'dashboard' | 'customers' | 'cards' | 'staff' | 'reports';
-const NAV: { key: View; label: string }[] = [
+type View = 'dashboard' | 'customers' | 'cards' | 'staff' | 'reports' | 'settings';
+// `adminOnly` items are filtered out of the nav for managers (and any other
+// non-admin role). The server enforces the same gate; this is UX only.
+const NAV: { key: View; label: string; adminOnly?: boolean }[] = [
   { key: 'dashboard', label: 'לוח בקרה' },
   { key: 'customers', label: 'ניהול לקוחות' },
   { key: 'cards', label: 'ניהול כרטיסיות' },
   { key: 'staff', label: 'ניהול צוות' },
   { key: 'reports', label: 'דוחות' },
+  { key: 'settings', label: 'הגדרות', adminOnly: true },
 ];
 
 const roleStyle = (role: StaffRole): { bg: string; color: string; label: string } => {
@@ -99,6 +108,7 @@ const actionLabel = (type: StaffActionType): string => {
   if (type === 'cancel_card') return 'ביטול כרטיסייה';
   if (type === 'register_customer') return 'רישום לקוח';
   if (type === 'create_staff') return 'הוספת איש צוות';
+  if (type === 'update_card_settings') return 'עדכון הגדרות כרטיסייה';
   return 'פעולה';
 };
 
@@ -130,6 +140,10 @@ export function AdminApp() {
   const [view, setView] = useState<View>('dashboard');
   const { width } = useViewport();
   const stacked = width < 1000;
+  const { state: navSessionState } = useStaffSession();
+  const navRole: StaffRole | null =
+    navSessionState.status === 'signed-in' ? navSessionState.user.role : null;
+  const visibleNav = NAV.filter((n) => !n.adminOnly || navRole === 'admin');
 
   return (
     <main
@@ -157,7 +171,7 @@ export function AdminApp() {
             : { ...card, width: 210, alignSelf: 'flex-start', padding: 10 }
         }
       >
-        {NAV.map((n) => {
+        {visibleNav.map((n) => {
           const on = view === n.key;
           return (
             <button
@@ -216,6 +230,7 @@ export function AdminApp() {
         {view === 'cards' && <Cards />}
         {view === 'staff' && <Staff />}
         {view === 'reports' && <Reports />}
+        {view === 'settings' && <Settings />}
       </div>
     </main>
   );
@@ -2459,6 +2474,266 @@ function Reports() {
         />
       )}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Settings — admin-editable defaults applied to new cards only.
+// ---------------------------------------------------------------------------
+
+// Field-level errors map server validation codes to Hebrew text below the input.
+function humanizeSettingsError(code: string): string {
+  if (code === 'price_out_of_range') return 'מחיר חייב להיות בין 0 ל-10,000';
+  if (code === 'validity_out_of_range') return 'תוקף חייב להיות בין 1 ל-3,650 ימים';
+  if (code === 'entries_out_of_range') return 'כניסות חייב להיות בין 1 ל-100';
+  if (code === 'pitch_length') return 'טקסט שיווקי חייב לכלול בין תו אחד ל-200 תווים';
+  if (code === 'no_changes') return 'לא בוצעו שינויים';
+  if (code === 'invalid_body') return 'נתונים לא תקינים. בדקו ונסו שוב.';
+  if (code === 'forbidden') return 'רק אדמין יכול לערוך הגדרות.';
+  return 'לא ניתן לשמור את ההגדרות. נסו שוב בעוד רגע.';
+}
+
+function Settings() {
+  const [loaded, setLoaded] = useState<CardSettings | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  // Form state, kept as strings so the inputs are controlled cleanly while the
+  // user is editing (an in-progress empty number field would otherwise jump to 0).
+  const [priceStr, setPriceStr] = useState('');
+  const [validityStr, setValidityStr] = useState('');
+  const [entriesStr, setEntriesStr] = useState('');
+  const [pitch, setPitch] = useState('');
+
+  const [submitting, setSubmitting] = useState(false);
+  const [topError, setTopError] = useState<string | null>(null);
+  const [savedFlash, setSavedFlash] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      console.info('[web admin settings] load');
+      const res = await getCardSettings();
+      if (cancelled) return;
+      if (res.ok) {
+        setLoaded(res.data.settings);
+        setPriceStr(String(res.data.settings.priceShekels));
+        setValidityStr(String(res.data.settings.validityDays));
+        setEntriesStr(String(res.data.settings.totalEntries));
+        setPitch(res.data.settings.pitchLabel);
+      } else {
+        console.warn('[web admin settings] load failed', { error: res.error });
+        setLoadError(res.error);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const dirty =
+    loaded !== null &&
+    (priceStr !== String(loaded.priceShekels) ||
+      validityStr !== String(loaded.validityDays) ||
+      entriesStr !== String(loaded.totalEntries) ||
+      pitch !== loaded.pitchLabel);
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!loaded || !dirty || submitting) return;
+
+    // Build a patch containing only fields whose displayed value actually
+    // changed. Lets the server return `no_changes` on a no-op submit.
+    const patch: CardSettingsPatch = {};
+    const price = Number(priceStr);
+    const validity = Number(validityStr);
+    const entries = Number(entriesStr);
+    if (!Number.isInteger(price) || price < 0) {
+      setTopError('מחיר חייב להיות מספר שלם חיובי');
+      return;
+    }
+    if (!Number.isInteger(validity) || validity < 1) {
+      setTopError('תוקף חייב להיות מספר שלם של ימים');
+      return;
+    }
+    if (!Number.isInteger(entries) || entries < 1) {
+      setTopError('כניסות חייב להיות מספר שלם חיובי');
+      return;
+    }
+    if (price !== loaded.priceShekels) patch.priceShekels = price;
+    if (validity !== loaded.validityDays) patch.validityDays = validity;
+    if (entries !== loaded.totalEntries) patch.totalEntries = entries;
+    if (pitch.trim() !== loaded.pitchLabel) patch.pitchLabel = pitch.trim();
+
+    setSubmitting(true);
+    setTopError(null);
+    console.info('[web admin settings] save', { fields: Object.keys(patch) });
+    const res = await updateCardSettings(patch);
+    setSubmitting(false);
+    if (!res.ok) {
+      console.warn('[web admin settings] save failed', { error: res.error });
+      setTopError(humanizeSettingsError(res.error));
+      return;
+    }
+    console.info('[web admin settings] saved', { diff: res.data.diff });
+    setLoaded(res.data.settings);
+    setSavedFlash('הגדרות נשמרו');
+    setTimeout(() => setSavedFlash(null), 2500);
+  };
+
+  if (loadError) {
+    return (
+      <div style={card}>
+        <div style={{ fontSize: 18, fontWeight: 600, marginBottom: 8 }}>הגדרות</div>
+        <div style={{ color: '#a23a3a', fontSize: 14 }}>
+          לא ניתן לטעון הגדרות.{' '}
+          {loadError === 'forbidden' ? 'רק אדמין יכול לפתוח מסך זה.' : 'רעננו את הדף.'}
+        </div>
+      </div>
+    );
+  }
+  if (!loaded) {
+    return (
+      <div style={card}>
+        <div style={{ fontSize: 18, fontWeight: 600, marginBottom: 8 }}>הגדרות</div>
+        <div style={{ color: MUTED, fontSize: 14 }}>טוען…</div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={card}>
+        <div style={{ fontSize: 18, fontWeight: 600 }}>הגדרות כרטיסייה</div>
+        <div style={{ color: MUTED, fontSize: 13.5, marginTop: 4 }}>
+          ערכים אלה חלים על כרטיסיות חדשות בלבד. כרטיסיות שכבר נמכרו שומרות את הערכים המקוריים.
+        </div>
+
+        <form onSubmit={submit} style={{ marginTop: 18 }}>
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))',
+              gap: 14,
+            }}
+          >
+            <SettingsField
+              label="מחיר (₪)"
+              value={priceStr}
+              onChange={setPriceStr}
+              type="number"
+              disabled={submitting}
+              inputMode="numeric"
+            />
+            <SettingsField
+              label="תוקף כרטיסייה (ימים)"
+              value={validityStr}
+              onChange={setValidityStr}
+              type="number"
+              disabled={submitting}
+              inputMode="numeric"
+            />
+            <SettingsField
+              label="כניסות בכרטיסייה"
+              value={entriesStr}
+              onChange={setEntriesStr}
+              type="number"
+              disabled={submitting}
+              inputMode="numeric"
+            />
+          </div>
+
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 14 }}>
+            <span style={{ fontSize: 13.5, color: MUTED }}>טקסט שיווקי בקופה</span>
+            <input
+              style={inputStyle}
+              value={pitch}
+              onChange={(e) => setPitch(e.target.value)}
+              disabled={submitting}
+              maxLength={200}
+            />
+            <span style={{ fontSize: 12.5, color: MUTED }}>
+              נראה ללקוח במסך מכירת הכרטיסייה בקופה.
+            </span>
+          </label>
+
+          {topError && (
+            <div
+              role="alert"
+              style={{
+                marginTop: 14,
+                padding: '10px 14px',
+                background: '#fbecec',
+                color: '#a23a3a',
+                borderRadius: 10,
+                fontSize: 14,
+              }}
+            >
+              {topError}
+            </div>
+          )}
+          {savedFlash && (
+            <div
+              role="status"
+              style={{
+                marginTop: 14,
+                padding: '10px 14px',
+                background: '#f0f5e3',
+                color: '#6f8f37',
+                borderRadius: 10,
+                fontSize: 14,
+                fontWeight: 600,
+              }}
+            >
+              ✓ {savedFlash}
+            </div>
+          )}
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 18 }}>
+            <button
+              type="submit"
+              disabled={submitting || !dirty}
+              style={{
+                ...primaryBtn,
+                opacity: submitting || !dirty ? 0.5 : 1,
+                cursor: submitting || !dirty ? 'default' : 'pointer',
+              }}
+            >
+              {submitting ? 'שומר…' : 'שמור'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function SettingsField({
+  label,
+  value,
+  onChange,
+  type,
+  disabled,
+  inputMode,
+}: {
+  label: string;
+  value: string;
+  onChange: (next: string) => void;
+  type?: 'text' | 'number';
+  disabled?: boolean;
+  inputMode?: 'numeric' | 'text';
+}) {
+  return (
+    <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <span style={{ fontSize: 13.5, color: MUTED }}>{label}</span>
+      <input
+        style={inputStyle}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        type={type ?? 'text'}
+        {...(inputMode !== undefined && { inputMode })}
+        disabled={disabled}
+      />
+    </label>
   );
 }
 
