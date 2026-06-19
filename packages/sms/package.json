@@ -9,7 +9,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --test --import tsx src/console-provider.test.ts src/phone.test.ts src/019-provider.test.ts"
+    "test": "node --test --import tsx src/console-provider.test.ts src/phone.test.ts src/019-provider.test.ts src/pulseem-provider.test.ts"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

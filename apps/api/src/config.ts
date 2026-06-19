@@ -17,9 +17,14 @@ const envSchema = z.object({
   WP_SYNC_USER: z.string().optional(),
   WP_SYNC_APP_PASSWORD: z.string().optional(),
   // SMS provider selection. 'console' is the safe default and logs each
-  // message to stdout. '019' requires SMS_019_TOKEN + SMS_019_SOURCE to
-  // actually send. See _plans/2026-06-18-sms-provider-selection.md.
-  SMS_PROVIDER: z.enum(['console', '019']).default('console'),
+  // message to stdout. 'pulseem' is the production provider (the account
+  // Yanai signed up for at pulseem.co.il); requires PULSEEM_API_KEY +
+  // PULSEEM_FROM_NUMBER. '019' is a DRAFT alternative that was never wired
+  // to a live account — kept in the tree but no longer recommended.
+  SMS_PROVIDER: z.enum(['console', 'pulseem', '019']).default('console'),
+  PULSEEM_API_KEY: z.string().optional(),
+  PULSEEM_FROM_NUMBER: z.string().optional(),
+  PULSEEM_BASE_URL: z.string().url().optional(),
   SMS_019_TOKEN: z.string().optional(),
   SMS_019_SOURCE: z.string().max(11).optional(),
   SMS_019_ENDPOINT: z.string().url().optional(),

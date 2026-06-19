@@ -1,15 +1,34 @@
-import { ConsoleSmsProvider, Sms019Provider, type SmsProvider } from '@memesh/sms';
+import {
+  ConsoleSmsProvider,
+  PulseemProvider,
+  Sms019Provider,
+  type SmsProvider,
+} from '@memesh/sms';
 import { env } from '../config.js';
 
 /**
- * Select the SMS provider based on env. Console is the safe default — actual
- * SMS only flips on when SMS_PROVIDER=019 + the SMS_019_* secrets are set.
+ * Select the SMS provider based on env. 'console' is the safe default and
+ * logs each message to stdout (used in dev and on a fresh production deploy
+ * before SMS credentials are wired). 'pulseem' is the live provider Yanai
+ * signed up for at pulseem.co.il — requires PULSEEM_API_KEY and
+ * PULSEEM_FROM_NUMBER. '019' is a DRAFT alternative that was never used
+ * against a real account; kept for now but not recommended.
  *
- * The Sms019Provider is DRAFT (see _plans/2026-06-18-sms-provider-selection.md):
- * its JSON wire format is the best read of the 019 docs we could verify, but
- * the first live call against a real account is what confirms it.
+ * See _plans/2026-06-19-pulseem-sms-provider.md for the integration plan.
  */
 function createSmsProvider(): SmsProvider {
+  if (env.SMS_PROVIDER === 'pulseem') {
+    if (!env.PULSEEM_API_KEY || !env.PULSEEM_FROM_NUMBER) {
+      throw new Error(
+        '[api sms] SMS_PROVIDER=pulseem requires PULSEEM_API_KEY and PULSEEM_FROM_NUMBER',
+      );
+    }
+    return new PulseemProvider({
+      apiKey: env.PULSEEM_API_KEY,
+      fromNumber: env.PULSEEM_FROM_NUMBER,
+      ...(env.PULSEEM_BASE_URL !== undefined && { baseUrl: env.PULSEEM_BASE_URL }),
+    });
+  }
   if (env.SMS_PROVIDER === '019') {
     if (!env.SMS_019_TOKEN || !env.SMS_019_SOURCE) {
       throw new Error('[api sms] SMS_PROVIDER=019 requires SMS_019_TOKEN and SMS_019_SOURCE');
