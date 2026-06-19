@@ -158,15 +158,18 @@ export async function punchCard(db: AnyPgDatabase, input: PunchInput): Promise<P
 
     // Expiry with grace: card is past expiresAt → if within grace, accept and
     // flag `grace: true` on the success result. Past grace → hard fail.
-    const expiresMs = card.expiresAt.getTime();
-    const graceCutoffMs = expiresMs + settings.gracePeriodDays * 24 * 60 * 60 * 1000;
+    // `expiresAt: null` is a "forever" card (validityDays=0); no expiry check.
     let inGrace = false;
-    if (expiresMs <= now.getTime()) {
-      if (now.getTime() <= graceCutoffMs) {
-        inGrace = true;
-      } else {
-        await writeAudit('expired');
-        return { ok: false, reason: 'expired' };
+    if (card.expiresAt !== null) {
+      const expiresMs = card.expiresAt.getTime();
+      const graceCutoffMs = expiresMs + settings.gracePeriodDays * 24 * 60 * 60 * 1000;
+      if (expiresMs <= now.getTime()) {
+        if (now.getTime() <= graceCutoffMs) {
+          inGrace = true;
+        } else {
+          await writeAudit('expired');
+          return { ok: false, reason: 'expired' };
+        }
       }
     }
 

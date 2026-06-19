@@ -34,7 +34,8 @@ export interface AdminCardRow {
   totalEntries: number;
   usedEntries: number;
   isActive: boolean;
-  expiresAt: string;
+  /** null = "forever" card. */
+  expiresAt: string | null;
   cancelledAt: string | null;
   cancelReason: string | null;
   source: 'pos' | 'online' | 'manual';
@@ -71,7 +72,8 @@ export interface CardDetailCard {
   totalEntries: number;
   usedEntries: number;
   isActive: boolean;
-  expiresAt: string;
+  /** null = "forever" card. */
+  expiresAt: string | null;
   source: 'pos' | 'online' | 'manual';
   wcOrderId: string | null;
   cancelledAt: string | null;

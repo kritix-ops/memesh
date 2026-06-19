@@ -50,9 +50,12 @@ export const cardsRoutes: FastifyPluginAsync = async (fastify) => {
       try {
         const customer = await getCustomerById(db, parsed.data.customerId);
         if (!customer) return;
+        const expiryClause = card.expiresAt
+          ? `, תוקף עד ${card.expiresAt.toISOString().slice(0, 10)}`
+          : ' (ללא תפוגה)';
         await sendMarketingSms({
           to: customer.phone,
-          body: `הכרטיסייה שלך ב-Memesh נוצרה! ${card.totalEntries} כניסות, תוקף עד ${card.expiresAt.toISOString().slice(0, 10)}. מספר סידורי: ${card.serialNumber}`,
+          body: `הכרטיסייה שלך ב-Memesh נוצרה! ${card.totalEntries} כניסות${expiryClause}. מספר סידורי: ${card.serialNumber}`,
           marketingConsentAt: customer.marketingConsentAt,
           kind: 'purchase',
           log: request.log,

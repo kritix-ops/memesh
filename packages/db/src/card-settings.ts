@@ -11,7 +11,8 @@ export type CancelRole = 'admin' | 'manager';
 // Server is the source of truth; the frontend's validation is a UX nicety.
 export const CARD_SETTINGS_LIMITS = {
   priceShekels: { min: 0, max: 10000 },
-  validityDays: { min: 1, max: 3650 },
+  // 0 = "forever" (cards created with no expiresAt). 1..3650 = limited.
+  validityDays: { min: 0, max: 3650 },
   totalEntries: { min: 1, max: 100 },
   pitchLabel: { minLength: 1, maxLength: 200 },
   minCompanions: { min: 1, max: 10 },

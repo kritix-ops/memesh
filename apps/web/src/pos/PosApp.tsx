@@ -860,7 +860,9 @@ export function PosApp() {
               <FauxQr seed={activeCard.serialNumber} size={140} />
               <div style={{ fontSize: 13, color: MUTED }}>{activeCard.serialNumber}</div>
               <div style={{ fontSize: 13, color: MUTED }}>
-                תוקף עד {fmtDate(yyyyMmDd(activeCard.expiresAt))}
+                {activeCard.expiresAt === null
+                  ? 'ללא תפוגה'
+                  : `תוקף עד ${fmtDate(yyyyMmDd(activeCard.expiresAt))}`}
               </div>
             </div>
           </div>
@@ -1455,7 +1457,9 @@ export function PosApp() {
               {sellResponse.card.serialNumber}
             </div>
             <div style={{ fontSize: 13, color: MUTED, marginBottom: 14 }}>
-              תוקף עד {fmtDate(yyyyMmDd(sellResponse.card.expiresAt))}
+              {sellResponse.card.expiresAt === null
+                ? 'ללא תפוגה'
+                : `תוקף עד ${fmtDate(yyyyMmDd(sellResponse.card.expiresAt))}`}
             </div>
             <div style={{ display: 'flex', gap: 10 }}>
               <button

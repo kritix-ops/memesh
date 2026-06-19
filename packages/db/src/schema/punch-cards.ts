@@ -25,7 +25,9 @@ export const punchCards = pgTable('punch_cards', {
   totalEntries: integer('total_entries').notNull().default(12),
   usedEntries: integer('used_entries').notNull().default(0),
   isActive: boolean('is_active').notNull().default(true),
-  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(), // created_at + 365 days
+  // null = no expiry ("forever" cards, enabled when card_settings.validityDays = 0).
+  // Non-null = created_at + validityDays.
+  expiresAt: timestamp('expires_at', { withTimezone: true }),
   source: punchCardSourceEnum('source').notNull().default('pos'),
   cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
   cancelledBy: uuid('cancelled_by').references(() => staff.id),

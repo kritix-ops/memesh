@@ -362,7 +362,9 @@ function Home({
             <FauxQr seed={c.serialNumber} size={130} />
             <div style={{ fontSize: 13, color: MUTED }}>{c.serialNumber}</div>
             <div style={{ fontSize: 13, color: MUTED }}>
-              תוקף עד {fmtDate(yyyyMmDd(c.expiresAt))}
+              {c.expiresAt === null
+                ? 'ללא תפוגה'
+                : `תוקף עד ${fmtDate(yyyyMmDd(c.expiresAt))}`}
             </div>
           </div>
         ))}

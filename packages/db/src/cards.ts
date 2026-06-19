@@ -136,7 +136,11 @@ export const createPunchCard = async (
     },
     resolver,
   );
-  const expiresAt = new Date(now.getTime() + settings.validityDays * 24 * 60 * 60 * 1000);
+  // validityDays=0 = "forever" → expiresAt stored as null.
+  const expiresAt =
+    settings.validityDays === 0
+      ? null
+      : new Date(now.getTime() + settings.validityDays * 24 * 60 * 60 * 1000);
   const rows = await db
     .insert(punchCards)
     .values({
@@ -280,16 +284,27 @@ export const scanCardLookup = async (
     .where(eq(punchCardEntries.punchCardId, cardId))
     .orderBy(desc(punchCardEntries.punchedAt));
 
-  const expiresMs = row.expiresAt.getTime();
-  const graceCutoffMs = expiresMs + settings.gracePeriodDays * MS_PER_DAY;
-  const expiresInDays = Math.ceil((expiresMs - now.getTime()) / MS_PER_DAY);
+  // `expiresAt: null` = "forever" card (validityDays=0). No expiry status
+  // can apply, and expiresInDays is null so the frontend renders "ללא תפוגה".
+  const isForever = row.expiresAt === null;
+  const expiresMs = isForever ? null : row.expiresAt!.getTime();
+  const graceCutoffMs =
+    expiresMs === null ? null : expiresMs + settings.gracePeriodDays * MS_PER_DAY;
+  const expiresInDays =
+    expiresMs === null ? null : Math.ceil((expiresMs - now.getTime()) / MS_PER_DAY);
 
   let status: 'ok' | 'cancelled' | 'exhausted' | 'expired' | 'grace';
   if (row.cancelledAt) status = 'cancelled';
   else if (row.usedEntries >= row.totalEntries) status = 'exhausted';
-  else if (expiresMs <= now.getTime() && now.getTime() <= graceCutoffMs && settings.gracePeriodDays > 0) {
+  else if (
+    expiresMs !== null &&
+    graceCutoffMs !== null &&
+    expiresMs <= now.getTime() &&
+    now.getTime() <= graceCutoffMs &&
+    settings.gracePeriodDays > 0
+  ) {
     status = 'grace';
-  } else if (expiresMs <= now.getTime()) status = 'expired';
+  } else if (expiresMs !== null && expiresMs <= now.getTime()) status = 'expired';
   else status = 'ok';
 
   return {

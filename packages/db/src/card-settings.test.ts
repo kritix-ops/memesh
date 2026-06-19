@@ -61,9 +61,11 @@ test('updateCardSettings rejects out-of-range price', async () => {
   if (!negative.ok) assert.equal(negative.error, 'price_out_of_range');
 });
 
-test('updateCardSettings rejects validity 0 and entries 0', async () => {
+test('updateCardSettings rejects validity > 3650 and entries 0', async () => {
   const db = await freshDb();
-  const v = await updateCardSettings(db, { validityDays: 0 });
+  // validityDays=0 is now the "forever" sentinel, so it must be accepted.
+  // Test the upper bound instead.
+  const v = await updateCardSettings(db, { validityDays: 99999 });
   assert.equal(v.ok, false);
   if (!v.ok) assert.equal(v.error, 'validity_out_of_range');
   const e = await updateCardSettings(db, { totalEntries: 0 });

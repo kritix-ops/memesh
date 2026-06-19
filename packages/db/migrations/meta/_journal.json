@@ -22,6 +22,13 @@
       "when": 1781902601460,
       "tag": "0002_slim_zarek",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1781904858986,
+      "tag": "0003_naive_smiling_tiger",
+      "breakpoints": true
     }
   ]
 }

@@ -44,7 +44,8 @@ export interface PunchCard {
   totalEntries: number;
   usedEntries: number;
   isActive: boolean;
-  expiresAt: string;
+  /** null = "forever" card (created when settings.validityDays=0). */
+  expiresAt: string | null;
   source: 'pos' | 'online' | 'manual';
   cancelledAt: string | null;
   cancelledBy: string | null;

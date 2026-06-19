@@ -204,33 +204,42 @@ function PricingSection({
   onSaved: (next: CardSettings) => void;
   reload: () => Promise<void>;
 }) {
+  // validityDays=0 is the "forever" sentinel on the server. In the UI we
+  // expose it as a separate boolean toggle that disables the days input, so
+  // the cashier doesn't have to know the convention.
   const [price, setPrice] = useState(String(loaded.priceShekels));
-  const [validity, setValidity] = useState(String(loaded.validityDays));
+  const [forever, setForever] = useState(loaded.validityDays === 0);
+  const [validityDraft, setValidityDraft] = useState(
+    loaded.validityDays === 0 ? '365' : String(loaded.validityDays),
+  );
   const [entries, setEntries] = useState(String(loaded.totalEntries));
   const [pitch, setPitch] = useState(loaded.pitchLabel);
   const { submitting, error, flash, save } = useSectionSave(onSaved, reload);
 
   useEffect(() => {
     setPrice(String(loaded.priceShekels));
-    setValidity(String(loaded.validityDays));
+    setForever(loaded.validityDays === 0);
+    setValidityDraft(loaded.validityDays === 0 ? '365' : String(loaded.validityDays));
     setEntries(String(loaded.totalEntries));
     setPitch(loaded.pitchLabel);
   }, [loaded]);
 
+  const effectiveValidity = forever ? 0 : Number(validityDraft);
+
   const dirty =
     price !== String(loaded.priceShekels) ||
-    validity !== String(loaded.validityDays) ||
+    effectiveValidity !== loaded.validityDays ||
     entries !== String(loaded.totalEntries) ||
     pitch !== loaded.pitchLabel;
 
   const submit = async () => {
     const patch: CardSettingsPatch = {};
     const p = Number(price);
-    const v = Number(validity);
     const e = Number(entries);
-    if (!Number.isInteger(p) || !Number.isInteger(v) || !Number.isInteger(e)) return;
+    if (!Number.isInteger(p) || !Number.isInteger(e)) return;
+    if (!forever && !Number.isInteger(effectiveValidity)) return;
     if (p !== loaded.priceShekels) patch.priceShekels = p;
-    if (v !== loaded.validityDays) patch.validityDays = v;
+    if (effectiveValidity !== loaded.validityDays) patch.validityDays = effectiveValidity;
     if (e !== loaded.totalEntries) patch.totalEntries = e;
     if (pitch.trim() !== loaded.pitchLabel) patch.pitchLabel = pitch.trim();
     await save(patch, 'pricing');
@@ -241,19 +250,31 @@ function PricingSection({
       title="הגדרות כרטיסייה"
       description="ערכים אלה חלים על כרטיסיות חדשות בלבד. כרטיסיות שכבר נמכרו שומרות את הערכים המקוריים."
     >
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: 14 }}>
+      <div
+        style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: 14 }}
+      >
         <NumberField label="מחיר (₪)" value={price} onChange={setPrice} disabled={submitting} />
         <NumberField
           label="תוקף כרטיסייה (ימים)"
-          value={validity}
-          onChange={setValidity}
-          disabled={submitting}
+          value={forever ? '' : validityDraft}
+          onChange={setValidityDraft}
+          disabled={submitting || forever}
           suffix="ימים"
+          {...(forever && { hint: 'מבוטל — הכרטיסייה ללא תאריך תפוגה.' })}
         />
         <NumberField
           label="כניסות בכרטיסייה"
           value={entries}
           onChange={setEntries}
+          disabled={submitting}
+        />
+      </div>
+      <div style={{ marginTop: 14 }}>
+        <BooleanField
+          label="ללא תפוגה (כרטיסייה לכל החיים)"
+          description="כשמופעל, כרטיסיות חדשות נוצרות ללא תאריך תפוגה. ניתן לבטל או לסיים ניצול בלבד."
+          checked={forever}
+          onChange={setForever}
           disabled={submitting}
         />
       </div>

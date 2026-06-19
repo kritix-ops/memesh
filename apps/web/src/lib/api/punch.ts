@@ -83,7 +83,8 @@ export interface ScanLookupCard {
   totalEntries: number;
   usedEntries: number;
   isActive: boolean;
-  expiresAt: string;
+  /** null = "forever" card (created when settings.validityDays=0). */
+  expiresAt: string | null;
   cancelledAt: string | null;
   cancelReason: string | null;
   createdAt: string;
@@ -116,8 +117,11 @@ export interface ScanLookupEntry {
 
 export interface ScanLookupResponse {
   status: ScanLookupStatus;
-  /** Negative when already expired; non-negative when still within validity. */
-  expiresInDays: number;
+  /**
+   * Days until expiry. Negative when already expired. null for "forever"
+   * cards (no expiry at all).
+   */
+  expiresInDays: number | null;
   /** From settings — render an "expiring soon" badge when status==='ok' and 0 < expiresInDays ≤ this. 0 disables. */
   expiryBadgeThresholdDays: number;
   card: ScanLookupCard;

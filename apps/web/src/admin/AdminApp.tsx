@@ -845,7 +845,7 @@ function Cards() {
                 <Td muted>
                   {c.usedEntries} / {c.totalEntries}
                 </Td>
-                <Td muted>{fmtDate(c.expiresAt.slice(0, 10))}</Td>
+                <Td muted>{c.expiresAt === null ? 'ללא תפוגה' : fmtDate(c.expiresAt.slice(0, 10))}</Td>
                 <Td>
                   <Badge text={badge.text} bg={badge.bg} color={badge.color} />
                 </Td>
@@ -1220,7 +1220,9 @@ function CardDetailBody({ detail }: { detail: CardDetailResponse }) {
           {card.usedEntries} / {card.totalEntries}
         </DetailField>
         <DetailField label="הונפקה">{fmtDate(card.createdAt.slice(0, 10))}</DetailField>
-        <DetailField label="תוקף עד">{fmtDate(card.expiresAt.slice(0, 10))}</DetailField>
+        <DetailField label="תוקף עד">
+          {card.expiresAt === null ? 'ללא תפוגה' : fmtDate(card.expiresAt.slice(0, 10))}
+        </DetailField>
         <DetailField label="מקור">{card.source}</DetailField>
         {card.customerEmail && <DetailField label='דוא"ל'>{card.customerEmail}</DetailField>}
         {card.wcOrderId && <DetailField label="מזהה הזמנה (וקומרס)">{card.wcOrderId}</DetailField>}
@@ -1642,8 +1644,10 @@ function CustomerDetailBody({ detail }: { detail: CustomerDetailResponse }) {
               <div>
                 <div style={{ fontSize: 14, fontWeight: 600 }}>{c.serialNumber}</div>
                 <div style={{ fontSize: 12.5, color: MUTED, marginTop: 2 }}>
-                  {c.usedEntries} / {c.totalEntries} כניסות · תוקף עד{' '}
-                  {fmtDate(c.expiresAt.slice(0, 10))}
+                  {c.usedEntries} / {c.totalEntries} כניסות ·{' '}
+                  {c.expiresAt === null
+                    ? 'ללא תפוגה'
+                    : `תוקף עד ${fmtDate(c.expiresAt.slice(0, 10))}`}
                 </div>
               </div>
               <Badge text={status.text} bg={status.bg} color={status.color} />

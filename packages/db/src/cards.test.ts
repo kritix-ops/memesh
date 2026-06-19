@@ -98,7 +98,7 @@ test('createPunchCard mints a serial + signed QR and stores a 12-entry card', as
   assert.equal(card.usedEntries, 0);
   assert.equal(card.isActive, true);
   assert.equal(card.keyId, 'test-key');
-  assert.ok(card.expiresAt.getTime() > Date.now());
+  assert.ok(card.expiresAt && card.expiresAt.getTime() > Date.now());
 });
 
 test('the minted QR token verifies and points back to the card', async () => {
@@ -319,7 +319,8 @@ test('createPunchCard uses validityDays from card_settings for expiresAt', async
 
   const card = await createPunchCard(db, resolver, { customerId: cust.id, now: fixedNow });
   const expected = new Date(fixedNow.getTime() + 30 * 24 * 60 * 60 * 1000);
-  assert.equal(card.expiresAt.getTime(), expected.getTime());
+  assert.ok(card.expiresAt);
+  assert.equal(card.expiresAt!.getTime(), expected.getTime());
 });
 
 // ---------------------------------------------------------------------------
@@ -424,12 +425,13 @@ test('scanCardLookup returns status=grace when expired but within gracePeriodDay
   // Card validity is 365 days by default, so it expires 2025-01-01.
   // Query 5 days after expiry → still within 14d grace.
   const card = await createPunchCard(db, resolver, { customerId: cust.id, now: created });
-  const queryAt = new Date(card.expiresAt.getTime() + 5 * 24 * 60 * 60 * 1000);
+  assert.ok(card.expiresAt);
+  const queryAt = new Date(card.expiresAt!.getTime() + 5 * 24 * 60 * 60 * 1000);
   const preview = await scanCardLookup(db, card.id, queryAt);
   assert.ok(preview);
   assert.equal(preview.status, 'grace');
-  // expiresInDays is negative when past expiry.
-  assert.ok(preview.expiresInDays <= 0);
+  // expiresInDays is negative when past expiry (and non-null for limited cards).
+  assert.ok(preview.expiresInDays !== null && preview.expiresInDays <= 0);
 });
 
 test('scanCardLookup status=expired once past grace window', async () => {
@@ -438,7 +440,8 @@ test('scanCardLookup status=expired once past grace window', async () => {
   const cust = await makeCustomer(db);
   const created = new Date('2024-01-01T00:00:00.000Z');
   const card = await createPunchCard(db, resolver, { customerId: cust.id, now: created });
-  const queryAt = new Date(card.expiresAt.getTime() + 30 * 24 * 60 * 60 * 1000);
+  assert.ok(card.expiresAt);
+  const queryAt = new Date(card.expiresAt!.getTime() + 30 * 24 * 60 * 60 * 1000);
   const preview = await scanCardLookup(db, card.id, queryAt);
   assert.ok(preview);
   assert.equal(preview.status, 'expired');
@@ -528,7 +531,8 @@ test('punchCard accepts a punch within grace period and flags grace:true', async
   const cust = await makeCustomer(db);
   const created = new Date('2024-01-01T00:00:00.000Z');
   const card = await createPunchCard(db, resolver, { customerId: cust.id, now: created });
-  const queryAt = new Date(card.expiresAt.getTime() + 3 * 24 * 60 * 60 * 1000); // 3d past expiry, within 10d grace
+  assert.ok(card.expiresAt);
+  const queryAt = new Date(card.expiresAt!.getTime() + 3 * 24 * 60 * 60 * 1000); // 3d past expiry, within 10d grace
 
   const res = await punchCard(db, { punchCardId: card.id, method: 'serial', now: queryAt });
   assert.equal(res.ok, true);
@@ -541,7 +545,8 @@ test('punchCard rejects a punch past the grace cutoff', async () => {
   const cust = await makeCustomer(db);
   const created = new Date('2024-01-01T00:00:00.000Z');
   const card = await createPunchCard(db, resolver, { customerId: cust.id, now: created });
-  const queryAt = new Date(card.expiresAt.getTime() + 30 * 24 * 60 * 60 * 1000);
+  assert.ok(card.expiresAt);
+  const queryAt = new Date(card.expiresAt!.getTime() + 30 * 24 * 60 * 60 * 1000);
 
   const res = await punchCard(db, { punchCardId: card.id, method: 'serial', now: queryAt });
   assert.equal(res.ok, false);
@@ -589,5 +594,78 @@ test('cancelCard with allowCancelAfterFirstPunch=true allows cancel even after p
   await punchCard(db, { punchCardId: card.id, method: 'serial' });
 
   const res = await cancelCard(db, { cardId: card.id, reason: 'בקשת לקוח לבדיקה' });
+  assert.equal(res.ok, true);
+});
+
+// ---------------------------------------------------------------------------
+// "Forever" cards — validityDays=0 → expiresAt=null
+// ---------------------------------------------------------------------------
+
+test('createPunchCard stores expiresAt=null when settings.validityDays=0', async () => {
+  const db = await freshDb();
+  await updateCardSettings(db, { validityDays: 0 });
+  const cust = await makeCustomer(db);
+
+  const card = await createPunchCard(db, resolver, { customerId: cust.id });
+  assert.equal(card.expiresAt, null);
+});
+
+test('scanCardLookup returns status=ok and expiresInDays=null for a forever card', async () => {
+  const db = await freshDb();
+  await updateCardSettings(db, { validityDays: 0 });
+  const cust = await makeCustomer(db);
+  const card = await createPunchCard(db, resolver, { customerId: cust.id });
+
+  // Query at any future date — forever card never goes 'expired' or 'grace'.
+  const queryAt = new Date('2099-12-31T00:00:00.000Z');
+  const preview = await scanCardLookup(db, card.id, queryAt);
+  assert.ok(preview);
+  assert.equal(preview.status, 'ok');
+  assert.equal(preview.expiresInDays, null);
+  assert.equal(preview.card.expiresAt, null);
+});
+
+test('punchCard accepts a forever card years after creation', async () => {
+  const db = await freshDb();
+  await updateCardSettings(db, { validityDays: 0 });
+  const cust = await makeCustomer(db);
+  const card = await createPunchCard(db, resolver, {
+    customerId: cust.id,
+    now: new Date('2024-01-01T00:00:00.000Z'),
+  });
+
+  const queryAt = new Date('2099-12-31T00:00:00.000Z');
+  const res = await punchCard(db, { punchCardId: card.id, method: 'serial', now: queryAt });
+  assert.equal(res.ok, true);
+  if (res.ok) assert.equal(res.grace, false);
+});
+
+test('forever card can still be exhausted', async () => {
+  const db = await freshDb();
+  await updateCardSettings(db, { validityDays: 0 });
+  const cust = await makeCustomer(db);
+  const card = await createPunchCard(db, resolver, { customerId: cust.id });
+
+  for (let i = 0; i < 12; i += 1) {
+    await punchCard(db, { punchCardId: card.id, method: 'serial' });
+  }
+  const preview = await scanCardLookup(db, card.id);
+  assert.ok(preview);
+  assert.equal(preview.status, 'exhausted');
+});
+
+test('forever card can still be cancelled', async () => {
+  const db = await freshDb();
+  await updateCardSettings(db, { validityDays: 0 });
+  const cust = await makeCustomer(db);
+  const card = await createPunchCard(db, resolver, { customerId: cust.id });
+
+  const cancelled = await cancelCard(db, { cardId: card.id, reason: 'בקשת לקוח לבדיקה' });
+  assert.equal(cancelled.ok, true);
+});
+
+test('updateCardSettings accepts validityDays=0 (forever mode)', async () => {
+  const db = await freshDb();
+  const res = await updateCardSettings(db, { validityDays: 0 });
   assert.equal(res.ok, true);
 });

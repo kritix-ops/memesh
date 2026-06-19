@@ -93,9 +93,11 @@ const statusMessage = (preview: ScanLookupResponse): string => {
   }
   if (preview.status === 'exhausted') return 'הכרטיסייה נוצלה במלואה — אין כניסות נוספות';
   if (preview.status === 'expired')
-    return `הכרטיסייה פגת תוקף (פגה ב-${fmtDay(preview.card.expiresAt)})`;
+    return `הכרטיסייה פגת תוקף${
+      preview.card.expiresAt ? ` (פגה ב-${fmtDay(preview.card.expiresAt)})` : ''
+    }`;
   if (preview.status === 'grace') {
-    const days = Math.abs(preview.expiresInDays);
+    const days = preview.expiresInDays === null ? 0 : Math.abs(preview.expiresInDays);
     return `הכרטיסייה בתקופת חסד · פגה לפני ${days} ימים. עדיין ניתן לנקב.`;
   }
   return '';
@@ -150,6 +152,7 @@ export function PunchConfirmModal({
     preview &&
     preview.status === 'ok' &&
     preview.expiryBadgeThresholdDays > 0 &&
+    preview.expiresInDays !== null &&
     preview.expiresInDays > 0 &&
     preview.expiresInDays <= preview.expiryBadgeThresholdDays;
 
@@ -388,7 +391,9 @@ function PreviewBlock({
         </div>
         <div>
           <div style={{ color: MUTED, fontSize: 12 }}>תוקף עד</div>
-          <div style={{ fontWeight: 600, color: INK }}>{fmtDay(card.expiresAt)}</div>
+          <div style={{ fontWeight: 600, color: INK }}>
+            {card.expiresAt === null ? 'ללא תפוגה' : fmtDay(card.expiresAt)}
+          </div>
         </div>
         <div style={{ gridColumn: '1 / -1', fontSize: 12, color: MUTED }}>
           {card.serialNumber}
