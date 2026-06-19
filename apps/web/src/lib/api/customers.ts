@@ -111,3 +111,11 @@ export const createCustomer = (
   input: CreateCustomerInput,
 ): Promise<ApiResult<CreateCustomerResponse>> =>
   apiRequest('/customers', { method: 'POST', body: input });
+
+/**
+ * Hard-delete a customer (admin/manager only). Returns the `has_dependents`
+ * error code when the customer still has cards in any state — the UI surfaces
+ * a "cancel/clear cards first" message and keeps the row visible.
+ */
+export const deleteCustomerById = (id: string): Promise<ApiResult<{ ok: true }>> =>
+  apiRequest(`/customers/${id}`, { method: 'DELETE' });

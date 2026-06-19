@@ -1,4 +1,4 @@
-import { createCustomer, customerDetail, customers, db } from '@memesh/db';
+import { createCustomer, customerDetail, customers, db, deleteCustomer } from '@memesh/db';
 import { ilike, or } from 'drizzle-orm';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
@@ -87,6 +87,39 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
       const detail = await customerDetail(db, id);
       if (!detail) return reply.code(404).send({ error: 'not_found' });
       return detail;
+    },
+  );
+
+  // Hard-delete a customer (admin/manager only). Cashiers cannot delete
+  // — they can only register new customers and punch cards. If the customer
+  // has cards (active, expired, or cancelled), Postgres throws an FK
+  // violation; we surface that as 409 so the operator knows to cancel/clean
+  // up cards first.
+  fastify.delete(
+    '/customers/:id',
+    { preHandler: requireRoleHook('admin', 'manager') },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      if (!z.string().uuid().safeParse(id).success) {
+        return reply.code(400).send({ error: 'invalid_id' });
+      }
+      try {
+        const deleted = await deleteCustomer(db, id);
+        if (!deleted) return reply.code(404).send({ error: 'not_found' });
+        request.log.info({ id }, '[customers] deleted');
+        return { ok: true };
+      } catch (err) {
+        const code =
+          err && typeof err === 'object' && 'code' in err
+            ? String((err as { code?: unknown }).code)
+            : '';
+        if (code === '23503') {
+          request.log.info({ id }, '[customers] delete blocked by FK (has cards)');
+          return reply.code(409).send({ error: 'has_dependents' });
+        }
+        request.log.warn({ err }, '[customers] delete failed');
+        return reply.code(500).send({ error: 'delete_failed' });
+      }
     },
   );
 

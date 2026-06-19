@@ -60,3 +60,14 @@ export const updateStaffMember = (
   patch: UpdateStaffInput,
 ): Promise<ApiResult<UpdateStaffResponse>> =>
   apiRequest(`/staff/${id}`, { method: 'PATCH', body: patch });
+
+/**
+ * Hard-delete a staff member (admin only). Returns a structured error when
+ * the row is still referenced by other tables (`has_dependents`), when the
+ * caller would delete themselves (`cannot_delete_self`), or when the row
+ * is the last active admin (`cannot_delete_last_admin`). The UI surfaces
+ * those by name so the operator knows what to do (deactivate, log in as
+ * someone else, promote another admin first).
+ */
+export const deleteStaffMember = (id: string): Promise<ApiResult<{ ok: true }>> =>
+  apiRequest(`/staff/${id}`, { method: 'DELETE' });

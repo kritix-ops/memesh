@@ -140,3 +140,19 @@ test('PATCH /staff/:id without auth returns 401', async () => {
   });
   assert.equal(res.statusCode, 401);
 });
+
+test('DELETE /staff/:id without auth returns 401', async () => {
+  const res = await app.inject({
+    method: 'DELETE',
+    url: '/staff/00000000-0000-0000-0000-000000000000',
+  });
+  assert.equal(res.statusCode, 401);
+});
+
+test('DELETE /customers/:id without auth returns 401', async () => {
+  const res = await app.inject({
+    method: 'DELETE',
+    url: '/customers/00000000-0000-0000-0000-000000000000',
+  });
+  assert.equal(res.statusCode, 401);
+});

@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import type { PgDatabase } from 'drizzle-orm/pg-core';
 import { type ChildRecord, customers, staff } from './schema/index';
 
@@ -117,6 +117,41 @@ export const updateCustomerProfile = async (
   if (patch.children !== undefined) set.children = patch.children;
 
   const rows = await db.update(customers).set(set).where(eq(customers.id, id)).returning();
+  return rows[0];
+};
+
+/**
+ * Hard-delete a staff row. Returns the deleted row's id (or undefined if no
+ * row matched). Will throw the underlying Postgres error if the row is still
+ * referenced by another table (customers.registeredBy, punch_card_entries.
+ * punchedBy, punch_cards.cancelledBy, staff_actions.staffId); the route layer
+ * surfaces that as a 409 with a clear message and tells the operator to
+ * deactivate instead.
+ */
+export const deleteStaff = async (db: AnyPgDatabase, id: string) => {
+  const rows = await db.delete(staff).where(eq(staff.id, id)).returning({ id: staff.id });
+  return rows[0];
+};
+
+/** Count active admins, used by the route layer to refuse the last-admin delete. */
+export const countActiveAdmins = async (db: AnyPgDatabase): Promise<number> => {
+  const rows = await db
+    .select({ id: staff.id })
+    .from(staff)
+    .where(and(eq(staff.role, 'admin'), eq(staff.isActive, true)));
+  return rows.length;
+};
+
+/**
+ * Hard-delete a customer row. Returns the deleted row's id (or undefined if
+ * no row matched). Will throw on FK violations from punch_cards.customerId —
+ * the route layer surfaces that as a 409.
+ */
+export const deleteCustomer = async (db: AnyPgDatabase, id: string) => {
+  const rows = await db
+    .delete(customers)
+    .where(eq(customers.id, id))
+    .returning({ id: customers.id });
   return rows[0];
 };
 

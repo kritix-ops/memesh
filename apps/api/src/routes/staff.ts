@@ -1,5 +1,12 @@
 import { hashPassword, STAFF_ROLES } from '@memesh/auth';
-import { createStaff, db, listStaff, updateStaff } from '@memesh/db';
+import {
+  countActiveAdmins,
+  createStaff,
+  db,
+  deleteStaff,
+  listStaff,
+  updateStaff,
+} from '@memesh/db';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { requireRoleHook } from '../lib/auth-guards.js';
@@ -83,4 +90,53 @@ export const staffRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.code(500).send({ error: 'update_failed' });
     }
   });
+
+  // Hard-delete a staff member (admin only). Refuses self-delete and refuses
+  // to remove the last active admin (would lock the org out of administration).
+  // If the staff row is still referenced (registered customers, punches,
+  // staff_actions), Postgres throws an FK violation and we return 409 with
+  // a clear code — the operator should deactivate via PATCH instead.
+  fastify.delete(
+    '/staff/:id',
+    { preHandler: requireRoleHook('admin') },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      if (!z.string().uuid().safeParse(id).success) {
+        return reply.code(400).send({ error: 'invalid_id' });
+      }
+      if (request.user?.id === id) {
+        return reply.code(409).send({ error: 'cannot_delete_self' });
+      }
+      // If this admin is the last active admin, refuse the delete. Best-effort
+      // (small race against a concurrent delete; the FK guard below is the
+      // real safety net for data loss, this is just clearer UX).
+      const target = await listStaff(db);
+      const targetRow = target.find((s) => s.id === id);
+      if (!targetRow) return reply.code(404).send({ error: 'not_found' });
+      if (targetRow.role === 'admin' && targetRow.isActive) {
+        const activeAdmins = await countActiveAdmins(db);
+        if (activeAdmins <= 1) {
+          return reply.code(409).send({ error: 'cannot_delete_last_admin' });
+        }
+      }
+      try {
+        const deleted = await deleteStaff(db, id);
+        if (!deleted) return reply.code(404).send({ error: 'not_found' });
+        request.log.info({ id }, '[staff] deleted');
+        return { ok: true };
+      } catch (err) {
+        // 23503 = foreign_key_violation. The staff row has dependents
+        // (registered customers, punches, cancellations, staff_actions). Tell
+        // the operator to deactivate instead of deleting.
+        const code =
+          err && typeof err === 'object' && 'code' in err ? String((err as { code?: unknown }).code) : '';
+        if (code === '23503') {
+          request.log.info({ id }, '[staff] delete blocked by FK; suggest deactivate');
+          return reply.code(409).send({ error: 'has_dependents' });
+        }
+        request.log.warn({ err }, '[staff] delete failed');
+        return reply.code(500).send({ error: 'delete_failed' });
+      }
+    },
+  );
 };

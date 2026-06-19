@@ -18,6 +18,7 @@ import {
   type CardListStatus,
 } from '../lib/api/cards';
 import {
+  deleteCustomerById,
   getCustomerDetail,
   searchCustomers,
   type Customer,
@@ -25,6 +26,7 @@ import {
 } from '../lib/api/customers';
 import {
   createStaffMember,
+  deleteStaffMember,
   listStaff,
   updateStaffMember,
   type CreateStaffInput,
@@ -411,7 +413,17 @@ function Customers() {
         </Table>
       )}
       {detailFor && (
-        <CustomerDetailModal customerId={detailFor} onClose={() => setDetailFor(null)} />
+        <CustomerDetailModal
+          customerId={detailFor}
+          onClose={() => setDetailFor(null)}
+          onDeleted={() => {
+            // Re-run the current search by toggling the query through state.
+            // Simpler than threading a refresh callback: removing the deleted
+            // row from results in place gives instant feedback and avoids a
+            // network round-trip the user can verify anyway by re-searching.
+            setResults((prev) => prev.filter((c) => c.id !== detailFor));
+          }}
+        />
       )}
     </div>
   );
@@ -982,10 +994,19 @@ function DetailField({ label, children }: { label: string; children: ReactNode }
   );
 }
 
-function CustomerDetailModal({ customerId, onClose }: { customerId: string; onClose: () => void }) {
+function CustomerDetailModal({
+  customerId,
+  onClose,
+  onDeleted,
+}: {
+  customerId: string;
+  onClose: () => void;
+  onDeleted?: () => void;
+}) {
   const [detail, setDetail] = useState<CustomerDetailResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -1040,21 +1061,40 @@ function CustomerDetailModal({ customerId, onClose }: { customerId: string; onCl
           }}
         >
           <div style={{ fontWeight: 600, fontSize: 18, color: INK }}>פרטי לקוח</div>
-          <button
-            onClick={onClose}
-            style={{
-              border: 'none',
-              background: 'transparent',
-              color: MUTED,
-              cursor: 'pointer',
-              fontSize: 22,
-              lineHeight: 1,
-              padding: '4px 8px',
-            }}
-            aria-label="סגירה"
-          >
-            ×
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {detail && (
+              <button
+                onClick={() => setConfirmDelete(true)}
+                style={{
+                  border: '1.5px solid #f0d6d6',
+                  background: '#fff',
+                  color: '#a23a3a',
+                  borderRadius: 8,
+                  padding: '6px 12px',
+                  fontWeight: 600,
+                  fontSize: 13,
+                  cursor: 'pointer',
+                }}
+              >
+                מחק
+              </button>
+            )}
+            <button
+              onClick={onClose}
+              style={{
+                border: 'none',
+                background: 'transparent',
+                color: MUTED,
+                cursor: 'pointer',
+                fontSize: 22,
+                lineHeight: 1,
+                padding: '4px 8px',
+              }}
+              aria-label="סגירה"
+            >
+              ×
+            </button>
+          </div>
         </div>
         {loading && <div style={{ color: MUTED, fontSize: 14 }}>טוען…</div>}
         {error && (
@@ -1063,6 +1103,131 @@ function CustomerDetailModal({ customerId, onClose }: { customerId: string; onCl
           </div>
         )}
         {detail && <CustomerDetailBody detail={detail} />}
+      </div>
+      {detail && confirmDelete && (
+        <DeleteCustomerModal
+          customer={detail.customer}
+          onClose={() => setConfirmDelete(false)}
+          onDeleted={() => {
+            setConfirmDelete(false);
+            onDeleted?.();
+            onClose();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function humanizeCustomerDeleteError(code: string): string {
+  if (code === 'has_dependents')
+    return 'לא ניתן למחוק — ללקוח יש כרטיסיות בהיסטוריה. בטלו את כל הכרטיסיות לפני המחיקה.';
+  if (code === 'not_found') return 'הלקוח לא נמצא. רעננו את הדף.';
+  if (code === 'forbidden') return 'רק מנהל או אדמין יכולים למחוק לקוח.';
+  return 'תקלה זמנית. נסו שוב בעוד רגע.';
+}
+
+function DeleteCustomerModal({
+  customer,
+  onClose,
+  onDeleted,
+}: {
+  customer: Customer;
+  onClose: () => void;
+  onDeleted: () => void;
+}) {
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async (): Promise<void> => {
+    setSubmitting(true);
+    setError(null);
+    const res = await deleteCustomerById(customer.id);
+    if (res.ok) {
+      onDeleted();
+      return;
+    }
+    setError(humanizeCustomerDeleteError(res.error));
+    setSubmitting(false);
+  };
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(0,0,0,0.4)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 1000,
+      }}
+    >
+      <div
+        style={{
+          background: '#fff',
+          borderRadius: 16,
+          padding: 24,
+          width: 420,
+          maxWidth: '95vw',
+          boxShadow: '0 12px 32px rgba(0,0,0,0.18)',
+        }}
+      >
+        <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>מחיקת לקוח</div>
+        <div style={{ color: MUTED, fontSize: 14, marginBottom: 18 }}>
+          האם למחוק את <b>{customer.firstName} {customer.lastName}</b> ({customer.phone})? פעולה זו לא ניתנת לביטול.
+        </div>
+        {error && (
+          <div
+            style={{
+              background: '#fdecec',
+              color: '#a23a3a',
+              padding: '10px 12px',
+              borderRadius: 8,
+              fontSize: 13,
+              marginBottom: 14,
+            }}
+          >
+            {error}
+          </div>
+        )}
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={submitting}
+            style={{
+              border: '1.5px solid #e9e0d9',
+              background: '#fff',
+              color: MUTED,
+              borderRadius: 8,
+              padding: '8px 16px',
+              fontWeight: 600,
+              cursor: 'pointer',
+            }}
+          >
+            ביטול
+          </button>
+          <button
+            type="button"
+            onClick={() => void submit()}
+            disabled={submitting}
+            style={{
+              border: 'none',
+              background: '#a23a3a',
+              color: '#fff',
+              borderRadius: 8,
+              padding: '8px 16px',
+              fontWeight: 600,
+              cursor: submitting ? 'wait' : 'pointer',
+              opacity: submitting ? 0.7 : 1,
+            }}
+          >
+            {submitting ? 'מוחק…' : 'מחק'}
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -1244,6 +1409,7 @@ function Staff() {
   const [listError, setListError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<StaffMember | null>(null);
+  const [deleting, setDeleting] = useState<StaffMember | null>(null);
   const { state: sessionState } = useStaffSession();
   const currentUserId = sessionState.status === 'signed-in' ? sessionState.user.id : null;
 
@@ -1364,6 +1530,23 @@ function Staff() {
               >
                 ערוך
               </button>
+              <button
+                onClick={() => setDeleting(m)}
+                disabled={isSelf}
+                title={isSelf ? 'לא ניתן למחוק את עצמך' : 'מחיקה'}
+                style={{
+                  border: '1.5px solid #f0d6d6',
+                  background: '#fff',
+                  color: isSelf ? '#cfb3b3' : '#a23a3a',
+                  borderRadius: 8,
+                  padding: '6px 12px',
+                  fontWeight: 600,
+                  fontSize: 13,
+                  cursor: isSelf ? 'not-allowed' : 'pointer',
+                }}
+              >
+                מחק
+              </button>
             </div>
           );
         })}
@@ -1375,6 +1558,16 @@ function Staff() {
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null);
+            void reload();
+          }}
+        />
+      )}
+      {deleting && (
+        <DeleteStaffModal
+          member={deleting}
+          onClose={() => setDeleting(null)}
+          onDeleted={() => {
+            setDeleting(null);
             void reload();
           }}
         />
@@ -1609,6 +1802,123 @@ function EditStaffModal({
             </div>
           </div>
         </form>
+      </div>
+    </div>
+  );
+}
+
+function humanizeStaffDeleteError(code: string): string {
+  if (code === 'cannot_delete_self')
+    return 'לא ניתן למחוק את עצמך. בקשו ממנהל אחר לבצע את הפעולה.';
+  if (code === 'cannot_delete_last_admin')
+    return 'לא ניתן למחוק את האדמין האחרון. מנו אדמין נוסף לפני המחיקה.';
+  if (code === 'has_dependents')
+    return 'לא ניתן למחוק — לאיש הצוות יש פעילות בהיסטוריה (לקוחות שנרשמו על שמו, ניקובים, ביטולים). השעו אותו בעריכה במקום זאת.';
+  if (code === 'not_found') return 'איש הצוות לא נמצא. רעננו את הדף.';
+  return 'תקלה זמנית. נסו שוב בעוד רגע.';
+}
+
+function DeleteStaffModal({
+  member,
+  onClose,
+  onDeleted,
+}: {
+  member: StaffMember;
+  onClose: () => void;
+  onDeleted: () => void;
+}) {
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async (): Promise<void> => {
+    setSubmitting(true);
+    setError(null);
+    const res = await deleteStaffMember(member.id);
+    if (res.ok) {
+      onDeleted();
+      return;
+    }
+    setError(humanizeStaffDeleteError(res.error));
+    setSubmitting(false);
+  };
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(0,0,0,0.4)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 1000,
+      }}
+    >
+      <div
+        style={{
+          background: '#fff',
+          borderRadius: 16,
+          padding: 24,
+          width: 420,
+          maxWidth: '95vw',
+          boxShadow: '0 12px 32px rgba(0,0,0,0.18)',
+        }}
+      >
+        <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>מחיקת איש צוות</div>
+        <div style={{ color: MUTED, fontSize: 14, marginBottom: 18 }}>
+          האם למחוק את <b>{member.firstName} {member.lastName}</b> ({member.phone})? פעולה זו לא ניתנת לביטול.
+        </div>
+        {error && (
+          <div
+            style={{
+              background: '#fdecec',
+              color: '#a23a3a',
+              padding: '10px 12px',
+              borderRadius: 8,
+              fontSize: 13,
+              marginBottom: 14,
+            }}
+          >
+            {error}
+          </div>
+        )}
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={submitting}
+            style={{
+              border: '1.5px solid #e9e0d9',
+              background: '#fff',
+              color: MUTED,
+              borderRadius: 8,
+              padding: '8px 16px',
+              fontWeight: 600,
+              cursor: 'pointer',
+            }}
+          >
+            ביטול
+          </button>
+          <button
+            type="button"
+            onClick={() => void submit()}
+            disabled={submitting}
+            style={{
+              border: 'none',
+              background: '#a23a3a',
+              color: '#fff',
+              borderRadius: 8,
+              padding: '8px 16px',
+              fontWeight: 600,
+              cursor: submitting ? 'wait' : 'pointer',
+              opacity: submitting ? 0.7 : 1,
+            }}
+          >
+            {submitting ? 'מוחק…' : 'מחק'}
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -1911,7 +2221,14 @@ function Reports() {
       </div>
 
       {detailFor && (
-        <CustomerDetailModal customerId={detailFor} onClose={() => setDetailFor(null)} />
+        <CustomerDetailModal
+          customerId={detailFor}
+          onClose={() => setDetailFor(null)}
+          onDeleted={() => {
+            // Drop the deleted customer from the dormant list immediately.
+            setDormant((prev) => (prev ? prev.filter((c) => c.id !== detailFor) : prev));
+          }}
+        />
       )}
     </div>
   );
