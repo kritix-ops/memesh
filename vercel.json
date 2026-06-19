@@ -2,6 +2,6 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
   "installCommand": "pnpm install",
-  "buildCommand": "if [ \"$VERCEL_ENV\" = \"production\" ]; then pnpm --filter @memesh/db db:migrate; fi && pnpm --filter @memesh/web build",
+  "buildCommand": "pnpm --filter @memesh/web build",
   "outputDirectory": "apps/web/dist"
 }
