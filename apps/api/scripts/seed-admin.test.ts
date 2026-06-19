@@ -32,6 +32,11 @@ const phone = () => {
 test('seedAdmin creates the first admin and stores a verifiable scrypt hash', async () => {
   const db = await freshDb();
   const p = phone();
+  // The phone() helper produces dashed input like 050-900-0001. seedAdmin
+  // normalizes that to 0509000001 before storage, so the returned row carries
+  // the canonical form — and verifySeededPassword can accept either format
+  // because it normalizes the lookup the same way.
+  const pNormalized = p.replace(/-/g, '');
   const result = await seedAdmin(db, {
     phone: p,
     password: 'a-strong-password-1!',
@@ -39,11 +44,20 @@ test('seedAdmin creates the first admin and stores a verifiable scrypt hash', as
     lastName: 'Owner',
   });
   assert.equal(result.kind, 'created');
-  assert.equal(result.phone, p);
+  assert.equal(result.phone, pNormalized);
   assert.ok(result.id);
 
+  // Verifying with the original dashed input still works (lookup normalizes).
   const verifies = await verifySeededPassword(db, p, 'a-strong-password-1!');
   assert.equal(verifies, true);
+
+  // And verifying with the no-dashes form also works (same normalization).
+  const verifiesNormalized = await verifySeededPassword(
+    db,
+    pNormalized,
+    'a-strong-password-1!',
+  );
+  assert.equal(verifiesNormalized, true);
 
   const wrongPasswordRejected = await verifySeededPassword(db, p, 'a-strong-password-1?');
   assert.equal(wrongPasswordRejected, false);

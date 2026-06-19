@@ -1,5 +1,6 @@
 import { hashPassword, verifyPassword } from '@memesh/auth';
 import { createStaff, MIGRATIONS_FOLDER, staff } from '@memesh/db';
+import { normalizeIsraeliPhone } from '@memesh/sms';
 import { eq } from 'drizzle-orm';
 import type { PgDatabase } from 'drizzle-orm/pg-core';
 import { fileURLToPath } from 'node:url';
@@ -43,7 +44,11 @@ export async function seedAdmin(
   if (input.password.length < MIN_PASSWORD_LENGTH) {
     throw new Error(`[seed admin] password must be at least ${MIN_PASSWORD_LENGTH} characters`);
   }
-  const existing = await db.select().from(staff).where(eq(staff.phone, input.phone)).limit(1);
+  // Normalize the phone to canonical 05XXXXXXXX form so what we store matches
+  // what the routes will look up later, regardless of whether the operator
+  // typed dashes in SEED_ADMIN_PHONE.
+  const phone = normalizeIsraeliPhone(input.phone);
+  const existing = await db.select().from(staff).where(eq(staff.phone, phone)).limit(1);
   const found = existing[0];
   if (found) {
     if (input.forceResetPassword) {
@@ -67,7 +72,7 @@ export async function seedAdmin(
   const row = await createStaff(db, {
     firstName: input.firstName ?? 'Admin',
     lastName: input.lastName ?? 'User',
-    phone: input.phone,
+    phone,
     passwordHash,
     role: 'admin',
     ...(input.email !== undefined && { email: input.email }),
@@ -82,7 +87,8 @@ export async function verifySeededPassword(
   phone: string,
   password: string,
 ): Promise<boolean> {
-  const rows = await db.select().from(staff).where(eq(staff.phone, phone)).limit(1);
+  const normalized = normalizeIsraeliPhone(phone);
+  const rows = await db.select().from(staff).where(eq(staff.phone, normalized)).limit(1);
   const row = rows[0];
   if (!row || !row.passwordHash) return false;
   return verifyPassword(password, row.passwordHash);

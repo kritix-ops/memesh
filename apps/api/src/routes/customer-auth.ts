@@ -4,13 +4,14 @@ import type { FastifyPluginAsync, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { customerAuthConfig } from '../auth.js';
 import { env } from '../config.js';
+import { phoneSchema } from '../lib/phone-schema.js';
 import { smsProvider } from '../lib/sms.js';
 
 const CUSTOMER_SESSION_MAX_AGE_SEC = 7 * 24 * 60 * 60;
 
-const requestSchema = z.object({ phone: z.string().min(3).max(32) });
+const requestSchema = z.object({ phone: phoneSchema });
 const verifySchema = z.object({
-  phone: z.string().min(3).max(32),
+  phone: phoneSchema,
   code: z.string().regex(/^\d{4,8}$/),
 });
 

@@ -3,6 +3,7 @@ import { ilike, or } from 'drizzle-orm';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { requireRoleHook } from '../lib/auth-guards.js';
+import { phoneSchema } from '../lib/phone-schema.js';
 import { getWpClient } from '../lib/wp-client.js';
 import { syncCustomerToWp } from '../lib/wp-sync.js';
 
@@ -20,7 +21,7 @@ const childSchema = z.object({
 const createBodySchema = z.object({
   firstName: z.string().min(1).max(80),
   lastName: z.string().min(1).max(80),
-  phone: z.string().min(3).max(32),
+  phone: phoneSchema,
   email: z.string().email().max(255).optional(),
   preferredChannel: z.enum(['sms', 'whatsapp', 'email']).optional(),
   // Optional marketing fields (Yanai feedback item 2). All independently

@@ -3,11 +3,12 @@ import { createStaff, db, listStaff, updateStaff } from '@memesh/db';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { requireRoleHook } from '../lib/auth-guards.js';
+import { phoneSchema } from '../lib/phone-schema.js';
 
 const createSchema = z.object({
   firstName: z.string().min(1).max(80),
   lastName: z.string().min(1).max(80),
-  phone: z.string().min(3).max(32),
+  phone: phoneSchema,
   password: z.string().min(4).max(256),
   role: z.enum(STAFF_ROLES).optional(),
   email: z.string().email().max(255).optional(),

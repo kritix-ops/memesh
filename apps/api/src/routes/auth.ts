@@ -11,13 +11,14 @@ import { z } from 'zod';
 import { authConfig } from '../auth.js';
 import { env } from '../config.js';
 import { requireAuthHook } from '../lib/auth-guards.js';
+import { phoneSchema } from '../lib/phone-schema.js';
 import { verifyStaffLogin } from '../lib/staff-repo.js';
 
 const ACCESS_MAX_AGE_SEC = 15 * 60;
 const REFRESH_MAX_AGE_SEC = 7 * 24 * 60 * 60;
 
 const staffLoginBodySchema = z.object({
-  phone: z.string().min(3).max(32),
+  phone: phoneSchema,
   password: z.string().min(1).max(256),
 });
 
