@@ -74,13 +74,22 @@ export interface CustomerDetailResponse {
   entries: PunchCardEntry[];
 }
 
-/** Search customers by name, phone, or customer number. The API caps at 20 results. */
+/**
+ * List or search customers. With a non-empty `q`, returns up to 20 matches
+ * by name, phone, or customer number. With an empty `q` (or omitted), the
+ * server returns the 50 most recently created customers — used as the
+ * default list on the admin Customers tab so the operator sees existing
+ * customers without having to type a search.
+ */
 export const searchCustomers = (
   q: string,
   opts: { signal?: AbortSignal } = {},
 ): Promise<ApiResult<CustomerSearchResponse>> => {
-  const params = new URLSearchParams({ q });
-  return apiRequest(`/customers?${params.toString()}`, opts.signal ? { signal: opts.signal } : {});
+  const params = new URLSearchParams();
+  if (q) params.set('q', q);
+  const qs = params.toString();
+  const url = qs ? `/customers?${qs}` : '/customers';
+  return apiRequest(url, opts.signal ? { signal: opts.signal } : {});
 };
 
 /** Fetch a single customer with their punch cards and recent entries. */

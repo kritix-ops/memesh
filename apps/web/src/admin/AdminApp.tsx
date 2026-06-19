@@ -334,14 +334,12 @@ function Customers() {
 
   useEffect(() => {
     const q = query.trim();
-    if (!q) {
-      setResults([]);
-      setError(null);
-      setLoading(false);
-      return;
-    }
     const controller = new AbortController();
-    const timer = setTimeout(async () => {
+    // No debounce for the default (empty-query) list — render the recent
+    // customers immediately on mount so the operator never lands on a blank
+    // screen. Search queries still debounce so we don't fire on every
+    // keystroke.
+    const fire = async () => {
       setLoading(true);
       setError(null);
       const res = await searchCustomers(q, { signal: controller.signal });
@@ -352,7 +350,12 @@ function Customers() {
         setError(res.error);
         setResults([]);
       }
-    }, SEARCH_DEBOUNCE_MS);
+    };
+    if (q === '') {
+      void fire();
+      return () => controller.abort();
+    }
+    const timer = setTimeout(() => void fire(), SEARCH_DEBOUNCE_MS);
     return () => {
       clearTimeout(timer);
       controller.abort();
@@ -384,15 +387,15 @@ function Customers() {
           </button>
         </div>
       </div>
-      {query.trim() === '' && (
-        <div style={{ color: MUTED, fontSize: 14, padding: '8px 0' }}>
-          הזינו טקסט לחיפוש לצפייה ברשימה.
-        </div>
-      )}
-      {loading && <div style={{ color: MUTED, fontSize: 14, padding: '8px 0' }}>מחפש…</div>}
+      {loading && <div style={{ color: MUTED, fontSize: 14, padding: '8px 0' }}>טוען…</div>}
       {error && (
         <div style={{ color: '#a23a3a', fontSize: 14, padding: '8px 0' }}>
-          שגיאה בחיפוש. נסו שוב.
+          שגיאה בטעינת הרשימה. נסו שוב.
+        </div>
+      )}
+      {!loading && !error && query.trim() === '' && results.length === 0 && (
+        <div style={{ color: MUTED, fontSize: 14, padding: '8px 0' }}>
+          אין לקוחות במערכת עדיין. הוסיפו לקוח ראשון בכפתור למעלה.
         </div>
       )}
       {!loading && !error && query.trim() !== '' && results.length === 0 && (

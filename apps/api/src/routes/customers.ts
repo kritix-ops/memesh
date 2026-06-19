@@ -1,5 +1,5 @@
 import { createCustomer, customerDetail, customers, db, deleteCustomer } from '@memesh/db';
-import { ilike, or } from 'drizzle-orm';
+import { desc, ilike, or } from 'drizzle-orm';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { requireRoleHook } from '../lib/auth-guards.js';
@@ -124,9 +124,21 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
   );
 
   // Search by name, phone, or customer number for the staff lookup screen.
-  fastify.get('/customers', { preHandler: requireRoleHook(...STAFF) }, async (request, reply) => {
+  // When no `q` is provided, return the most recent N customers — this is what
+  // the admin Customers tab uses as its default list (so an operator who has
+  // just added a customer immediately sees them without having to type a
+  // search). The cap stays small (50) so the response is fast and the UI
+  // doesn't try to render thousands of rows.
+  fastify.get('/customers', { preHandler: requireRoleHook(...STAFF) }, async (request, _reply) => {
     const q = (request.query as { q?: string }).q?.trim();
-    if (!q) return reply.code(400).send({ error: 'missing_query' });
+    if (!q) {
+      const results = await db
+        .select()
+        .from(customers)
+        .orderBy(desc(customers.createdAt))
+        .limit(50);
+      return { results };
+    }
     const pattern = `%${q}%`;
     const results = await db
       .select()
@@ -139,6 +151,7 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
           ilike(customers.customerNumber, pattern),
         ),
       )
+      .orderBy(desc(customers.createdAt))
       .limit(20);
     return { results };
   });
