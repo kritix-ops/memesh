@@ -191,3 +191,28 @@ export const reassignCardToCustomer = (
   customerId: string,
 ): Promise<ApiResult<ReassignCardResponse>> =>
   apiRequest(`/cards/${cardId}/reassign`, { method: 'POST', body: { customerId } });
+
+// ---------------------------------------------------------------------------
+// Admin-only direct edit of an existing card.
+//   - expiresAt: undefined = keep, null = forever, "YYYY-MM-DD" = set
+//   - totalEntries: number 1..1000
+//   - source: pos / online / manual
+// ---------------------------------------------------------------------------
+
+export interface EditCardInput {
+  totalEntries?: number;
+  source?: 'pos' | 'online' | 'manual';
+  expiresAt?: string | null;
+}
+
+export interface EditCardResponse {
+  card: AdminCardRow;
+  diff: Record<string, [unknown, unknown]>;
+  reactivated: boolean;
+}
+
+export const editCardForAdmin = (
+  cardId: string,
+  input: EditCardInput,
+): Promise<ApiResult<EditCardResponse>> =>
+  apiRequest(`/cards/${cardId}/edit`, { method: 'POST', body: input });

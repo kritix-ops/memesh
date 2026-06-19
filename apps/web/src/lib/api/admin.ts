@@ -39,6 +39,7 @@ export type StaffActionType =
   | 'update_card_settings'
   | 'refund_entry'
   | 'reassign_card'
+  | 'edit_card'
   | 'other';
 
 export interface StaffActionRow {

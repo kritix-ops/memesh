@@ -583,3 +583,173 @@ export const reassignCard = async (
     return { ok: true, card: newCard, fromCustomerNumber: fromNumber };
   });
 };
+
+// ---------------------------------------------------------------------------
+// editCard — admin-only direct edit of an existing card. Currently editable:
+// expiresAt (Date | null), totalEntries, source. Used + isActive are not
+// directly editable here:
+//   - reducing used is the refund flow (per-entry audit trail).
+//   - increasing used = a missed punch; that's a manual-punch feature, not
+//     part of the edit surface.
+//   - isActive flips automatically when totalEntries changes such that the
+//     card moves into/out of exhaustion.
+// ---------------------------------------------------------------------------
+
+export type EditCardFailure =
+  | 'card_not_found'
+  | 'card_cancelled'
+  | 'total_below_used'
+  | 'total_out_of_range'
+  | 'no_changes';
+
+export interface EditCardInput {
+  cardId: string;
+  /** undefined = keep, null = forever (no expiry), Date = new expiry. */
+  expiresAt?: Date | null;
+  totalEntries?: number;
+  source?: 'pos' | 'online' | 'manual';
+  staffId?: string;
+  now?: Date;
+}
+
+export type EditCardResult =
+  | {
+      ok: true;
+      card: typeof punchCards.$inferSelect;
+      diff: Record<string, [unknown, unknown]>;
+      reactivated: boolean;
+    }
+  | {
+      ok: false;
+      reason: EditCardFailure;
+      usedEntries?: number;
+    };
+
+const editCardRange = { totalEntries: { min: 1, max: 1000 } } as const;
+
+/**
+ * Apply an admin-issued edit to a card. Runs in a transaction so two
+ * concurrent edits or a concurrent punch can't end up with a stale row.
+ *
+ * Behavioral notes:
+ * - Lowering totalEntries below usedEntries → rejected (`total_below_used`).
+ *   The admin must refund entries first to free capacity.
+ * - Raising totalEntries above usedEntries on a card that had auto-
+ *   deactivated due to exhaustion (isActive=false, cancelledAt=null) →
+ *   reactivates the card.
+ * - Setting totalEntries == usedEntries → deactivates the card (matches
+ *   the punch-time exhaustion behavior).
+ * - expiresAt=null is the "forever" sentinel, matching createPunchCard's
+ *   convention.
+ * - A no-op patch returns `no_changes` so the route layer can surface it.
+ */
+export const editCard = async (
+  db: AnyPgDatabase,
+  input: EditCardInput,
+): Promise<EditCardResult> => {
+  const now = input.now ?? new Date();
+  if (
+    input.totalEntries !== undefined &&
+    (!Number.isInteger(input.totalEntries) ||
+      input.totalEntries < editCardRange.totalEntries.min ||
+      input.totalEntries > editCardRange.totalEntries.max)
+  ) {
+    return { ok: false, reason: 'total_out_of_range' };
+  }
+
+  return db.transaction(async (tx) => {
+    const cardRows = await tx
+      .select()
+      .from(punchCards)
+      .where(eq(punchCards.id, input.cardId))
+      .for('update')
+      .limit(1);
+    const card = cardRows[0];
+    if (!card) return { ok: false, reason: 'card_not_found' };
+    if (card.cancelledAt) return { ok: false, reason: 'card_cancelled' };
+
+    if (input.totalEntries !== undefined && input.totalEntries < card.usedEntries) {
+      return { ok: false, reason: 'total_below_used', usedEntries: card.usedEntries };
+    }
+
+    const next: Partial<typeof punchCards.$inferInsert> = {};
+    const diff: Record<string, [unknown, unknown]> = {};
+
+    if (input.totalEntries !== undefined && input.totalEntries !== card.totalEntries) {
+      next.totalEntries = input.totalEntries;
+      diff.totalEntries = [card.totalEntries, input.totalEntries];
+    }
+    if (input.source !== undefined && input.source !== card.source) {
+      next.source = input.source;
+      diff.source = [card.source, input.source];
+    }
+    if (input.expiresAt !== undefined) {
+      // Compare with the existing value semantically: null vs null are equal.
+      const currentMs = card.expiresAt ? card.expiresAt.getTime() : null;
+      const nextMs = input.expiresAt ? input.expiresAt.getTime() : null;
+      if (currentMs !== nextMs) {
+        next.expiresAt = input.expiresAt;
+        diff.expiresAt = [card.expiresAt, input.expiresAt];
+      }
+    }
+
+    if (Object.keys(diff).length === 0) return { ok: false, reason: 'no_changes' };
+
+    // Resolve reactivation / deactivation from the new totalEntries.
+    const effectiveTotal = next.totalEntries ?? card.totalEntries;
+    let isActive = card.isActive;
+    let reactivated = false;
+    if (effectiveTotal > card.usedEntries && !card.isActive && card.cancelledAt === null) {
+      isActive = true;
+      reactivated = true;
+    }
+    if (effectiveTotal <= card.usedEntries && card.isActive) {
+      // Exhausted by the edit.
+      isActive = false;
+    }
+    if (isActive !== card.isActive) next.isActive = isActive;
+
+    next.updatedAt = now;
+
+    const updated = await tx
+      .update(punchCards)
+      .set(next)
+      .where(eq(punchCards.id, card.id))
+      .returning();
+    const row = updated[0];
+    if (!row) return { ok: false, reason: 'card_not_found' };
+
+    await logStaffAction(tx, {
+      action: 'edit_card',
+      summary: summarizeEditDiff(card.serialNumber, diff, reactivated),
+      now,
+      ...(input.staffId !== undefined ? { staffId: input.staffId } : {}),
+    });
+
+    return { ok: true, card: row, diff, reactivated };
+  });
+};
+
+// Hebrew-facing summary line for the staff_actions log. e.g.
+// "עריכת כרטיסייה M-20260620-0001 · כניסות 12→24 · תוקף ללא תפוגה"
+const summarizeEditDiff = (
+  serial: string,
+  diff: Record<string, [unknown, unknown]>,
+  reactivated: boolean,
+): string => {
+  const parts: string[] = [];
+  if (diff.totalEntries) parts.push(`כניסות ${diff.totalEntries[0]}→${diff.totalEntries[1]}`);
+  if (diff.expiresAt) {
+    const to = diff.expiresAt[1];
+    const toLabel =
+      to === null
+        ? 'ללא תפוגה'
+        : to instanceof Date
+          ? to.toISOString().slice(0, 10)
+          : String(to);
+    parts.push(`תוקף ${toLabel}`);
+  }
+  if (diff.source) parts.push(`מקור ${diff.source[0]}→${diff.source[1]}`);
+  if (reactivated) parts.push('הופעלה מחדש');
+  return `עריכת כרטיסייה ${serial} · ${parts.join(' · ')}`;
+};

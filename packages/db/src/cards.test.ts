@@ -12,13 +12,14 @@ import {
   cardDetail,
   createCustomer,
   createPunchCard,
+  editCard,
   listCards,
+  reassignCard,
   scanCardLookup,
 } from './cards';
 import { punchCard, refundEntry } from './punch';
 import { punchCardEntries } from './schema/index';
 import { eq, sql } from 'drizzle-orm';
-import { reassignCard } from './cards';
 
 async function freshDb() {
   const client = new PGlite();
@@ -960,4 +961,136 @@ test('refundEntry logs a staff action with cashier+admin context', async () => {
   assert.ok(entry);
   assert.match(entry!.summary, /החזר כניסה/);
   assert.match(entry!.summary, /אושר ע"י אדמין/);
+});
+
+// ---------------------------------------------------------------------------
+// editCard — admin direct edit of expiry / totalEntries / source
+// ---------------------------------------------------------------------------
+
+test('editCard extends expiry and increases totalEntries', async () => {
+  const db = await freshDb();
+  const cust = await makeCustomer(db);
+  const admin = await makeStaff(db, 'admin');
+  const card = await createPunchCard(db, resolver, { customerId: cust.id });
+
+  const farFuture = new Date('2099-12-31T23:59:59.999Z');
+  const res = await editCard(db, {
+    cardId: card.id,
+    expiresAt: farFuture,
+    totalEntries: 24,
+    staffId: admin,
+  });
+  assert.equal(res.ok, true);
+  if (!res.ok) return;
+  assert.equal(res.card.totalEntries, 24);
+  assert.equal(res.card.expiresAt?.getTime(), farFuture.getTime());
+  assert.equal(res.reactivated, false);
+});
+
+test('editCard expiresAt=null makes the card forever', async () => {
+  const db = await freshDb();
+  const cust = await makeCustomer(db);
+  const admin = await makeStaff(db, 'admin');
+  const card = await createPunchCard(db, resolver, { customerId: cust.id });
+
+  const res = await editCard(db, { cardId: card.id, expiresAt: null, staffId: admin });
+  assert.equal(res.ok, true);
+  if (!res.ok) return;
+  assert.equal(res.card.expiresAt, null);
+});
+
+test('editCard refuses totalEntries below current usedEntries', async () => {
+  const db = await freshDb();
+  const cust = await makeCustomer(db);
+  const admin = await makeStaff(db, 'admin');
+  const card = await createPunchCard(db, resolver, { customerId: cust.id });
+  // Punch 5/12.
+  for (let i = 0; i < 5; i += 1) {
+    await punchCard(db, { punchCardId: card.id, method: 'serial' });
+  }
+  const res = await editCard(db, { cardId: card.id, totalEntries: 3, staffId: admin });
+  assert.equal(res.ok, false);
+  if (!res.ok) {
+    assert.equal(res.reason, 'total_below_used');
+    assert.equal(res.usedEntries, 5);
+  }
+});
+
+test('editCard reactivates an exhausted card when raising totalEntries', async () => {
+  const db = await freshDb();
+  const cust = await makeCustomer(db);
+  const admin = await makeStaff(db, 'admin');
+  const card = await createPunchCard(db, resolver, { customerId: cust.id });
+  for (let i = 0; i < 12; i += 1) {
+    await punchCard(db, { punchCardId: card.id, method: 'serial' });
+  }
+
+  const res = await editCard(db, { cardId: card.id, totalEntries: 20, staffId: admin });
+  assert.equal(res.ok, true);
+  if (!res.ok) return;
+  assert.equal(res.card.totalEntries, 20);
+  assert.equal(res.card.isActive, true);
+  assert.equal(res.reactivated, true);
+});
+
+test('editCard deactivates the card when totalEntries equals usedEntries', async () => {
+  const db = await freshDb();
+  const cust = await makeCustomer(db);
+  const admin = await makeStaff(db, 'admin');
+  const card = await createPunchCard(db, resolver, { customerId: cust.id });
+  for (let i = 0; i < 6; i += 1) {
+    await punchCard(db, { punchCardId: card.id, method: 'serial' });
+  }
+  const res = await editCard(db, { cardId: card.id, totalEntries: 6, staffId: admin });
+  assert.equal(res.ok, true);
+  if (!res.ok) return;
+  assert.equal(res.card.isActive, false);
+});
+
+test('editCard refuses no-op patches', async () => {
+  const db = await freshDb();
+  const cust = await makeCustomer(db);
+  const admin = await makeStaff(db, 'admin');
+  const card = await createPunchCard(db, resolver, { customerId: cust.id });
+
+  const res = await editCard(db, {
+    cardId: card.id,
+    totalEntries: card.totalEntries,
+    source: card.source,
+    staffId: admin,
+  });
+  assert.equal(res.ok, false);
+  if (!res.ok) assert.equal(res.reason, 'no_changes');
+});
+
+test('editCard refuses cancelled cards', async () => {
+  const db = await freshDb();
+  const cust = await makeCustomer(db);
+  const admin = await makeStaff(db, 'admin');
+  const card = await createPunchCard(db, resolver, { customerId: cust.id });
+  await cancelCard(db, { cardId: card.id, reason: 'בדיקת ביטול' });
+
+  const res = await editCard(db, { cardId: card.id, totalEntries: 20, staffId: admin });
+  assert.equal(res.ok, false);
+  if (!res.ok) assert.equal(res.reason, 'card_cancelled');
+});
+
+test('editCard logs a staff action with a Hebrew diff summary', async () => {
+  const db = await freshDb();
+  const cust = await makeCustomer(db);
+  const admin = await makeStaff(db, 'admin');
+  const card = await createPunchCard(db, resolver, { customerId: cust.id });
+
+  await editCard(db, {
+    cardId: card.id,
+    expiresAt: null,
+    totalEntries: 30,
+    staffId: admin,
+  });
+  const actions = await listStaffActions(db);
+  const audit = actions.find((a) => a.action === 'edit_card');
+  assert.ok(audit);
+  assert.match(audit!.summary, /עריכת כרטיסייה/);
+  assert.match(audit!.summary, /ללא תפוגה/);
+  assert.match(audit!.summary, /כניסות 12→30/);
 });

@@ -3,6 +3,7 @@ import {
   cardDetail,
   createPunchCard,
   db,
+  editCard,
   getCardSettings,
   getCustomerById,
   listCards,
@@ -44,6 +45,18 @@ const adminCreateBodySchema = z.object({
 });
 
 const reassignBodySchema = z.object({ customerId: z.string().uuid() });
+
+// Edit body. Each field optional. For expiresAt:
+//   - omitted = keep current value
+//   - null    = forever (no expiry)
+//   - "YYYY-MM-DD" = set to that day (end-of-day server-side)
+const editBodySchema = z.object({
+  totalEntries: z.number().int().min(1).max(1000).optional(),
+  source: z.enum(['pos', 'online', 'manual']).optional(),
+  expiresAt: z
+    .union([z.string().regex(/^\d{4}-\d{2}-\d{2}$/), z.null()])
+    .optional(),
+});
 
 const listQuerySchema = z.object({
   status: z.enum(['active', 'expired', 'cancelled']).optional(),
@@ -306,6 +319,66 @@ export const cardsRoutes: FastifyPluginAsync = async (fastify) => {
         '[admin create-card] success',
       );
       return reply.code(201).send({ card });
+    },
+  );
+
+  // Admin-only: edit an existing card (expiry, total entries, source).
+  // Used to be set-once at create time; this route lets the admin
+  // adjust mistakes or extend a card's lifetime after the fact.
+  fastify.post(
+    '/cards/:id/edit',
+    { preHandler: requireRoleHook('admin') },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      if (!z.string().uuid().safeParse(id).success) {
+        return reply.code(400).send({ error: 'invalid_id' });
+      }
+      const parsed = editBodySchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.code(400).send({ error: 'invalid_body', issues: parsed.error.issues });
+      }
+
+      const input: Parameters<typeof editCard>[1] = { cardId: id };
+      if (request.user) input.staffId = request.user.id;
+      if (parsed.data.totalEntries !== undefined) input.totalEntries = parsed.data.totalEntries;
+      if (parsed.data.source !== undefined) input.source = parsed.data.source;
+      if (parsed.data.expiresAt !== undefined) {
+        if (parsed.data.expiresAt === null) {
+          input.expiresAt = null;
+        } else {
+          // End of the chosen day in UTC. We store with TZ so the cashier's
+          // local-day boundary holds when reading back via toISOString().
+          const [y, m, d] = parsed.data.expiresAt.split('-').map(Number);
+          input.expiresAt = new Date(Date.UTC(y!, (m as number) - 1, d, 23, 59, 59, 999));
+        }
+      }
+
+      const result = await editCard(db, input);
+      if (!result.ok) {
+        if (result.reason === 'card_not_found')
+          return reply.code(404).send({ error: 'card_not_found' });
+        if (result.reason === 'card_cancelled')
+          return reply.code(409).send({ error: 'card_cancelled' });
+        if (result.reason === 'total_below_used')
+          return reply
+            .code(409)
+            .send({ error: 'total_below_used', usedEntries: result.usedEntries });
+        if (result.reason === 'total_out_of_range')
+          return reply.code(400).send({ error: 'total_out_of_range' });
+        if (result.reason === 'no_changes')
+          return reply.code(409).send({ error: 'no_changes' });
+      } else {
+        request.log.info(
+          { cardId: id, diff: result.diff, reactivated: result.reactivated },
+          '[cards] edited',
+        );
+        return reply.send({
+          card: result.card,
+          diff: result.diff,
+          reactivated: result.reactivated,
+        });
+      }
+      return reply.code(500).send({ error: 'unknown' });
     },
   );
 

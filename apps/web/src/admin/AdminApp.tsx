@@ -23,6 +23,7 @@ import {
 } from '../lib/api/card-settings';
 import {
   createCardForAdmin,
+  editCardForAdmin,
   reassignCardToCustomer,
   refundEntry,
 } from '../lib/api/cards';
@@ -30,6 +31,7 @@ import { Reports } from './reports/Reports';
 import { Settings } from './settings/Settings';
 import { RefundEntryModal } from '../pos/RefundEntryModal';
 import { CreateCardForAdminModal, type AdminCreateInput } from './CreateCardForAdminModal';
+import { EditCardModal, type EditCardSubmit } from './EditCardModal';
 import { ReassignCardModal } from './ReassignCardModal';
 import {
   createCustomer,
@@ -120,6 +122,7 @@ const actionLabel = (type: StaffActionType): string => {
   if (type === 'update_card_settings') return 'עדכון הגדרות כרטיסייה';
   if (type === 'refund_entry') return 'החזר כניסה';
   if (type === 'reassign_card') return 'העברת כרטיסייה';
+  if (type === 'edit_card') return 'עריכת כרטיסייה';
   return 'פעולה';
 };
 
@@ -707,6 +710,9 @@ function Cards() {
   const [refundEntryId, setRefundEntryId] = useState<string | null>(null);
   const [refundSubmitting, setRefundSubmitting] = useState(false);
   const [refundError, setRefundError] = useState<string | null>(null);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editSubmitting, setEditSubmitting] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
   const { state: cardsSessionState } = useStaffSession();
   const cardsRole = cardsSessionState.status === 'signed-in' ? cardsSessionState.user.role : null;
 
@@ -766,6 +772,32 @@ function Cards() {
   const head = showActions
     ? ['מספר סידורי', 'לקוח', 'ניצול', 'תוקף', 'סטטוס', '']
     : ['מספר סידורי', 'לקוח', 'ניצול', 'תוקף', 'סטטוס'];
+
+  const submitEdit = async (input: EditCardSubmit) => {
+    if (!detail) return;
+    setEditSubmitting(true);
+    setEditError(null);
+    console.info('[web admin edit-card] submit', { cardId: detail.card.id, input });
+    const res = await editCardForAdmin(detail.card.id, input);
+    setEditSubmitting(false);
+    if (!res.ok) {
+      console.warn('[web admin edit-card] error', { error: res.error });
+      setEditError(humanizeEditCardError(res.error));
+      return;
+    }
+    console.info('[web admin edit-card] success', {
+      cardId: detail.card.id,
+      diff: res.data.diff,
+      reactivated: res.data.reactivated,
+    });
+    setEditOpen(false);
+    // Refetch the card detail (header values + entries) and the outer cards list.
+    if (detailFor) {
+      const refreshed = await getCardDetail(detailFor);
+      if (refreshed.ok) setDetail(refreshed.data);
+    }
+    await reload();
+  };
 
   const submitRefund = async (
     cardId: string,
@@ -986,6 +1018,33 @@ function Cards() {
             setRefundError(null);
             setRefundEntryId(entryId);
           }}
+          {...(cardsRole === 'admin' && {
+            onEditCard: () => {
+              setEditError(null);
+              setEditOpen(true);
+            },
+          })}
+        />
+      )}
+      {editOpen && detail && (
+        <EditCardModal
+          card={{
+            id: detail.card.id,
+            serialNumber: detail.card.serialNumber,
+            totalEntries: detail.card.totalEntries,
+            usedEntries: detail.card.usedEntries,
+            source: detail.card.source,
+            expiresAt: detail.card.expiresAt,
+          }}
+          submitting={editSubmitting}
+          error={editError}
+          onClose={() => {
+            if (!editSubmitting) {
+              setEditOpen(false);
+              setEditError(null);
+            }
+          }}
+          onConfirm={(input) => void submitEdit(input)}
         />
       )}
       {refundEntryId &&
@@ -1032,6 +1091,18 @@ function humanizeReassignError(code: string): string {
   if (code === 'same_customer') return 'הכרטיסייה כבר שייכת ללקוח זה.';
   if (code === 'invalid_body') return 'נתונים לא תקינים. בדקו ונסו שוב.';
   if (code === 'forbidden') return 'רק אדמין יכול להעביר כרטיסייה.';
+  return 'תקלה זמנית. נסו שוב בעוד רגע.';
+}
+
+function humanizeEditCardError(code: string): string {
+  if (code === 'card_not_found') return 'הכרטיסייה לא נמצאה. רעננו את הדף.';
+  if (code === 'card_cancelled') return 'לא ניתן לערוך כרטיסייה מבוטלת.';
+  if (code === 'total_below_used')
+    return 'לא ניתן להוריד את ״סה״כ כניסות״ מתחת לכמות שנוצלה כבר. השתמשו בלחצן ״החזר״ בהיסטוריה.';
+  if (code === 'total_out_of_range') return 'מספר הכניסות חייב להיות בין 1 ל-1000.';
+  if (code === 'no_changes') return 'לא בוצעו שינויים.';
+  if (code === 'invalid_body') return 'נתונים לא תקינים. בדקו ונסו שוב.';
+  if (code === 'forbidden') return 'רק אדמין יכול לערוך כרטיסייה.';
   return 'תקלה זמנית. נסו שוב בעוד רגע.';
 }
 
@@ -1244,12 +1315,16 @@ function CardDetailModal({
   detail,
   onClose,
   onRefundEntry,
+  onEditCard,
 }: {
   loading: boolean;
   error: string | null;
   detail: CardDetailResponse | null;
   onClose: () => void;
   onRefundEntry: (entryId: string) => void;
+  /** When provided (admin only), shows an "ערוך" button in the header that
+   *  calls back to the parent. The parent owns the EditCardModal state. */
+  onEditCard?: () => void;
 }) {
   return (
     <div
@@ -1287,21 +1362,40 @@ function CardDetailModal({
           }}
         >
           <div style={{ fontWeight: 600, fontSize: 18, color: INK }}>פרטי כרטיסייה</div>
-          <button
-            onClick={onClose}
-            style={{
-              border: 'none',
-              background: 'transparent',
-              color: MUTED,
-              cursor: 'pointer',
-              fontSize: 22,
-              lineHeight: 1,
-              padding: '4px 8px',
-            }}
-            aria-label="סגירה"
-          >
-            ×
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {onEditCard && detail && !detail.card.cancelledAt && (
+              <button
+                onClick={onEditCard}
+                style={{
+                  border: '1.5px solid #e9e0d9',
+                  background: '#fff',
+                  color: MUTED,
+                  borderRadius: 8,
+                  padding: '6px 12px',
+                  fontWeight: 600,
+                  fontSize: 13,
+                  cursor: 'pointer',
+                }}
+              >
+                ערוך
+              </button>
+            )}
+            <button
+              onClick={onClose}
+              style={{
+                border: 'none',
+                background: 'transparent',
+                color: MUTED,
+                cursor: 'pointer',
+                fontSize: 22,
+                lineHeight: 1,
+                padding: '4px 8px',
+              }}
+              aria-label="סגירה"
+            >
+              ×
+            </button>
+          </div>
         </div>
 
         {loading && <div style={{ color: MUTED, fontSize: 14, padding: '8px 0' }}>טוען…</div>}
@@ -1506,6 +1600,9 @@ function CustomerDetailModal({
   const [openCardDetail, setOpenCardDetail] = useState<CardDetailResponse | null>(null);
   const [openCardLoading, setOpenCardLoading] = useState(false);
   const [openCardError, setOpenCardError] = useState<string | null>(null);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editSubmitting, setEditSubmitting] = useState(false);
+  const [editErr, setEditErr] = useState<string | null>(null);
 
   // Single shared refund-entry flow. Both the customer's recent-entries list
   // and the nested CardDetailModal's per-entry refund button feed into the
@@ -1577,6 +1674,21 @@ function CustomerDetailModal({
     if (!openCardDetailFor) return;
     const res = await getCardDetail(openCardDetailFor);
     if (res.ok) setOpenCardDetail(res.data);
+  };
+
+  const submitEditInline = async (input: EditCardSubmit) => {
+    if (!openCardDetail) return;
+    setEditSubmitting(true);
+    setEditErr(null);
+    const res = await editCardForAdmin(openCardDetail.card.id, input);
+    setEditSubmitting(false);
+    if (!res.ok) {
+      setEditErr(humanizeEditCardError(res.error));
+      return;
+    }
+    setEditOpen(false);
+    await refreshOpenCardDetail();
+    await refreshDetail();
   };
 
   // Map an entry (from the customer history list) to refund-target context.
@@ -1866,6 +1978,34 @@ function CustomerDetailModal({
           detail={openCardDetail}
           onClose={() => setOpenCardDetailFor(null)}
           onRefundEntry={openRefundForCardEntry}
+          {...(isAdmin && {
+            onEditCard: () => {
+              setEditErr(null);
+              setEditOpen(true);
+            },
+          })}
+        />
+      )}
+
+      {editOpen && openCardDetail && (
+        <EditCardModal
+          card={{
+            id: openCardDetail.card.id,
+            serialNumber: openCardDetail.card.serialNumber,
+            totalEntries: openCardDetail.card.totalEntries,
+            usedEntries: openCardDetail.card.usedEntries,
+            source: openCardDetail.card.source,
+            expiresAt: openCardDetail.card.expiresAt,
+          }}
+          submitting={editSubmitting}
+          error={editErr}
+          onClose={() => {
+            if (!editSubmitting) {
+              setEditOpen(false);
+              setEditErr(null);
+            }
+          }}
+          onConfirm={(input) => void submitEditInline(input)}
         />
       )}
 
