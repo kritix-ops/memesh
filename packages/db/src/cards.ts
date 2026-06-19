@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { generateSerial, signToken, type KeyResolver } from '@memesh/qr-engine';
-import { and, desc, eq, isNotNull, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, ilike, isNotNull, isNull, or, sql } from 'drizzle-orm';
 import type { PgDatabase } from 'drizzle-orm/pg-core';
 import { logStaffAction } from './actions';
 import { getCardSettings } from './card-settings';
@@ -165,6 +165,10 @@ export const createPunchCard = async (
       expiresAt,
       source: input.source ?? 'pos',
       wcOrderId: input.wcOrderId ?? null,
+      // When the caller injects `now` (tests, backfill), honor it for
+      // createdAt too — otherwise the row default Now() would diverge
+      // from expiresAt arithmetic.
+      ...(input.now !== undefined && { createdAt: input.now, updatedAt: input.now }),
     })
     .returning();
   const row = rows[0];
@@ -357,6 +361,8 @@ export interface ListCardsInput {
   status?: CardListStatus | undefined;
   /** Server-side cap. Caller is expected to clamp; default 100, max 200 typical. */
   limit?: number | undefined;
+  /** Free-text search across serial + customer name / phone / number. */
+  q?: string | undefined;
 }
 
 /**
@@ -366,6 +372,8 @@ export interface ListCardsInput {
  *   - cancelled: cancelled_at IS NOT NULL  (also is_active = false)
  *   - expired:   is_active = false AND cancelled_at IS NULL
  *     (covers expiry-by-time AND exhausted 12/12 — operationally one bucket)
+ *
+ * Optional `q` runs an ILIKE across serial + customer name/phone/number.
  */
 export const listCards = async (db: AnyPgDatabase, input: ListCardsInput = {}) => {
   const limit = input.limit ?? 100;
@@ -377,6 +385,18 @@ export const listCards = async (db: AnyPgDatabase, input: ListCardsInput = {}) =
   } else if (input.status === 'expired') {
     conds.push(eq(punchCards.isActive, false));
     conds.push(isNull(punchCards.cancelledAt));
+  }
+  const q = input.q?.trim();
+  if (q) {
+    const pattern = `%${q}%`;
+    const qCondition = or(
+      ilike(punchCards.serialNumber, pattern),
+      ilike(customers.firstName, pattern),
+      ilike(customers.lastName, pattern),
+      ilike(customers.phone, pattern),
+      ilike(customers.customerNumber, pattern),
+    );
+    if (qCondition) conds.push(qCondition);
   }
   const where = conds.length === 0 ? undefined : conds.length === 1 ? conds[0] : and(...conds);
 

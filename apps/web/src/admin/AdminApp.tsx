@@ -2,10 +2,8 @@ import { type CSSProperties, type FormEvent, type ReactNode, useEffect, useState
 import { type StaffRole } from '../lib/api/auth';
 import {
   getDashboardStats,
-  getDormantCustomers,
   listStaffActions,
   type DashboardStats,
-  type DormantCustomer,
   type StaffActionRow,
   type StaffActionType,
 } from '../lib/api/admin';
@@ -28,6 +26,7 @@ import {
   reassignCardToCustomer,
   refundEntry,
 } from '../lib/api/cards';
+import { Reports } from './reports/Reports';
 import { Settings } from './settings/Settings';
 import { RefundEntryModal } from '../pos/RefundEntryModal';
 import { CreateCardForAdminModal, type AdminCreateInput } from './CreateCardForAdminModal';
@@ -144,7 +143,6 @@ const fmtRelative = (iso: string, now = new Date()): string => {
   return fmtDate(iso.slice(0, 10));
 };
 
-const fmtIsoDay = (iso: string | null): string => (iso ? fmtDate(iso.slice(0, 10)) : 'אף פעם');
 
 const initialsOf = (first: string, last: string): string => (first[0] ?? '') + (last[0] ?? '');
 
@@ -690,6 +688,13 @@ function CreateCustomerModal({
 
 function Cards() {
   const [status, setStatus] = useState<CardListStatus>('active');
+  const [q, setQ] = useState('');
+  // Debounced copy of q so we only re-fetch after the user stops typing.
+  const [debouncedQ, setDebouncedQ] = useState('');
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQ(q.trim()), 300);
+    return () => clearTimeout(t);
+  }, [q]);
   const [rows, setRows] = useState<AdminCardRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [askCancel, setAskCancel] = useState<AdminCardRow | null>(null);
@@ -728,7 +733,7 @@ function Cards() {
   }, [detailFor]);
 
   const reload = async () => {
-    const res = await listCardsForAdmin({ status });
+    const res = await listCardsForAdmin({ status, ...(debouncedQ && { q: debouncedQ }) });
     if (res.ok) setRows(res.data.cards);
     else setError(res.error);
   };
@@ -738,7 +743,10 @@ function Cards() {
     setRows(null);
     setError(null);
     (async () => {
-      const res = await listCardsForAdmin({ status });
+      const res = await listCardsForAdmin({
+        status,
+        ...(debouncedQ && { q: debouncedQ }),
+      });
       if (cancelled) return;
       if (res.ok) setRows(res.data.cards);
       else setError(res.error);
@@ -746,7 +754,7 @@ function Cards() {
     return () => {
       cancelled = true;
     };
-  }, [status]);
+  }, [status, debouncedQ]);
 
   const filters: { k: CardListStatus; l: string }[] = [
     { k: 'active', l: 'פעילות' },
@@ -822,7 +830,7 @@ function Cards() {
         }}
       >
         <div style={{ fontSize: 18, fontWeight: 600 }}>ניהול כרטיסיות</div>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           {filters.map((f) => {
             const on = status === f.k;
             return (
@@ -844,6 +852,24 @@ function Cards() {
             );
           })}
         </div>
+      </div>
+      <div style={{ marginBottom: 14 }}>
+        <input
+          type="search"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="חיפוש לפי מספר סידורי, שם לקוח, טלפון או מס׳ לקוח…"
+          style={{
+            width: '100%',
+            fontSize: 14,
+            padding: '11px 14px',
+            border: '1.5px solid #e9e0d9',
+            borderRadius: 10,
+            background: '#fff',
+            outline: 'none',
+            boxSizing: 'border-box',
+          }}
+        />
       </div>
       {error && (
         <div style={{ color: '#a23a3a', fontSize: 14, padding: '8px 0' }}>
@@ -3033,108 +3059,12 @@ function FieldRow({
 }
 
 // ---------------------------------------------------------------------------
-// Reports (dormant + full action log)
+// Reports — moved into its own folder (apps/web/src/admin/reports/) with a
+// sub-nav across 5 sections (Overview / Customers / Cards / Entries / Revenue),
+// rich filters, CSV export, and browser print → PDF.
 // ---------------------------------------------------------------------------
 
-function Reports() {
-  const [dormant, setDormant] = useState<DormantCustomer[] | null>(null);
-  const [dormantError, setDormantError] = useState<string | null>(null);
-  const [actions, setActions] = useState<StaffActionRow[] | null>(null);
-  const [actionsError, setActionsError] = useState<string | null>(null);
-  const [detailFor, setDetailFor] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const [d, a] = await Promise.all([getDormantCustomers(), listStaffActions()]);
-      if (cancelled) return;
-      if (d.ok) setDormant(d.data.customers);
-      else setDormantError(d.error);
-      if (a.ok) setActions(a.data.actions);
-      else setActionsError(a.error);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div style={card}>
-        <div style={{ fontWeight: 600, marginBottom: 12 }}>לקוחות שלא ביקרו 30+ ימים</div>
-        {dormantError && (
-          <div style={{ color: '#a23a3a', fontSize: 14 }}>לא ניתן לטעון את הדוח. רעננו את הדף.</div>
-        )}
-        {!dormantError && !dormant && <div style={{ color: MUTED, fontSize: 14 }}>טוען…</div>}
-        {dormant && dormant.length === 0 && (
-          <div style={{ color: MUTED, fontSize: 14 }}>
-            אין לקוחות רדומים כרגע — כולם פעילים בחודש האחרון.
-          </div>
-        )}
-        {dormant?.map((c, i) => (
-          <div
-            key={c.id}
-            onClick={() => {
-              console.info('[web admin customer-detail] open from dormant', { id: c.id });
-              setDetailFor(c.id);
-            }}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 12,
-              padding: '10px 0',
-              borderTop: i ? '1px solid #f3efea' : 'none',
-              cursor: 'pointer',
-            }}
-          >
-            <div
-              style={{
-                width: 38,
-                height: 38,
-                borderRadius: 11,
-                background: '#f3f7e8',
-                color: '#6f8f37',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontWeight: 600,
-              }}
-            >
-              {initialsOf(c.firstName, c.lastName)}
-            </div>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontWeight: 600 }}>
-                {c.firstName} {c.lastName}
-              </div>
-              <div style={{ fontSize: 13, color: MUTED }}>
-                {c.customerNumber} · {c.phone}
-              </div>
-            </div>
-            <span style={{ fontSize: 12.5, color: MUTED }}>
-              ביקור אחרון: {fmtIsoDay(c.lastVisit)}
-            </span>
-          </div>
-        ))}
-      </div>
-
-      <div style={card}>
-        <div style={{ fontWeight: 600, marginBottom: 12 }}>יומן פעולות (50 אחרונות)</div>
-        <ActionList rows={actions} error={actionsError} limit={50} emptyText="אין פעולות עדיין." />
-      </div>
-
-      {detailFor && (
-        <CustomerDetailModal
-          customerId={detailFor}
-          onClose={() => setDetailFor(null)}
-          onDeleted={() => {
-            // Drop the deleted customer from the dormant list immediately.
-            setDormant((prev) => (prev ? prev.filter((c) => c.id !== detailFor) : prev));
-          }}
-        />
-      )}
-    </div>
-  );
-}
+// (the Reports() component is imported below from ./reports/Reports)
 
 // ---------------------------------------------------------------------------
 // Shared: action list, table primitives

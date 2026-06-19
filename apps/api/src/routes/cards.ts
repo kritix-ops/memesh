@@ -48,6 +48,7 @@ const reassignBodySchema = z.object({ customerId: z.string().uuid() });
 const listQuerySchema = z.object({
   status: z.enum(['active', 'expired', 'cancelled']).optional(),
   limit: z.coerce.number().int().positive().max(200).optional(),
+  q: z.string().trim().min(1).max(120).optional(),
 });
 
 export const cardsRoutes: FastifyPluginAsync = async (fastify) => {

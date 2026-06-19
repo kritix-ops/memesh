@@ -1,7 +1,29 @@
-import { and, count, desc, eq, gte, inArray, lt, sql } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  gte,
+  ilike,
+  inArray,
+  isNotNull,
+  isNull,
+  lt,
+  lte,
+  or,
+  sql,
+} from 'drizzle-orm';
 import type { PgDatabase } from 'drizzle-orm/pg-core';
 import { getCustomerById } from './accounts';
-import { customers, punchCardEntries, punchCards } from './schema/index';
+import { getCardSettings } from './card-settings';
+import {
+  cardSettings,
+  customers,
+  punchCardEntries,
+  punchCards,
+  staff,
+} from './schema/index';
 
 type AnyPgDatabase = PgDatabase<any, any, any>;
 
@@ -154,4 +176,483 @@ export const dormantCustomers = async (
     if (row) result.push({ ...row, lastVisit: d.lastEntry });
   }
   return result;
+};
+
+// ---------------------------------------------------------------------------
+// Reports — rich filtered queries for the admin Reports surface.
+//
+// Each function takes a structured filter object and returns rows in the
+// shape the API will pass through verbatim. Sorting where applicable.
+// ---------------------------------------------------------------------------
+
+const REPORT_DEFAULT_LIMIT = 200;
+const REPORT_MAX_LIMIT = 1000;
+
+export interface CustomersReportFilters {
+  q?: string;
+  registeredFrom?: Date;
+  registeredTo?: Date;
+  source?: 'referral' | 'social' | 'walk_by' | 'website' | 'other';
+  marketingConsent?: boolean;
+  hasActiveCard?: boolean;
+  dormantSinceDays?: number;
+  limit?: number;
+  sort?: 'createdAt' | 'lastVisit' | 'customerNumber';
+  sortDir?: 'asc' | 'desc';
+}
+
+export interface CustomersReportRow {
+  id: string;
+  customerNumber: string;
+  firstName: string;
+  lastName: string;
+  phone: string;
+  email: string | null;
+  source: string | null;
+  marketingConsentAt: string | null;
+  createdAt: string;
+  lastVisit: string | null;
+  activeCards: number;
+  totalCards: number;
+}
+
+/**
+ * Customers report. Builds a base customer query, then enriches each row
+ * with active-card count and last-visit timestamp via subqueries. Filter
+ * combinators are AND'd; q is a wide ILIKE across name + phone + number +
+ * email.
+ */
+export const customersReport = async (
+  db: AnyPgDatabase,
+  filters: CustomersReportFilters = {},
+  now: Date = new Date(),
+): Promise<CustomersReportRow[]> => {
+  const limit = Math.min(filters.limit ?? REPORT_DEFAULT_LIMIT, REPORT_MAX_LIMIT);
+  const conds = [];
+  const q = filters.q?.trim();
+  if (q) {
+    const p = `%${q}%`;
+    const qC = or(
+      ilike(customers.firstName, p),
+      ilike(customers.lastName, p),
+      ilike(customers.phone, p),
+      ilike(customers.customerNumber, p),
+      ilike(customers.email, p),
+    );
+    if (qC) conds.push(qC);
+  }
+  if (filters.registeredFrom) conds.push(gte(customers.createdAt, filters.registeredFrom));
+  if (filters.registeredTo) conds.push(lte(customers.createdAt, filters.registeredTo));
+  if (filters.source) conds.push(eq(customers.source, filters.source));
+  if (filters.marketingConsent === true) conds.push(isNotNull(customers.marketingConsentAt));
+  if (filters.marketingConsent === false) conds.push(isNull(customers.marketingConsentAt));
+
+  const where = conds.length === 0 ? undefined : conds.length === 1 ? conds[0] : and(...conds);
+
+  // Sort SQL builder per column.
+  const sortCol =
+    filters.sort === 'customerNumber'
+      ? customers.customerNumber
+      : filters.sort === 'lastVisit'
+        ? customers.createdAt // last-visit sort handled in JS below since it's a subquery
+        : customers.createdAt;
+  const sortFn = filters.sortDir === 'asc' ? asc : desc;
+
+  let baseQuery = db
+    .select({
+      id: customers.id,
+      customerNumber: customers.customerNumber,
+      firstName: customers.firstName,
+      lastName: customers.lastName,
+      phone: customers.phone,
+      email: customers.email,
+      source: customers.source,
+      marketingConsentAt: customers.marketingConsentAt,
+      createdAt: customers.createdAt,
+    })
+    .from(customers)
+    .$dynamic();
+  if (where) baseQuery = baseQuery.where(where);
+  const baseRows = await baseQuery.orderBy(sortFn(sortCol)).limit(limit);
+
+  // Enrich each row with active-card count + last-visit. We do this in a
+  // single follow-up query per metric, keyed by the customer ids we just
+  // got, to avoid N+1.
+  const ids = baseRows.map((r) => r.id);
+  if (ids.length === 0) return [];
+
+  const cardCountRows = await db
+    .select({
+      customerId: punchCards.customerId,
+      total: sql<number>`cast(count(*) as int)`,
+      active: sql<number>`cast(count(case when ${punchCards.isActive} then 1 end) as int)`,
+    })
+    .from(punchCards)
+    .where(inArray(punchCards.customerId, ids))
+    .groupBy(punchCards.customerId);
+  const cardCounts = new Map(
+    cardCountRows.map((r) => [r.customerId, { total: r.total, active: r.active }]),
+  );
+
+  const lastVisitRows = await db
+    .select({
+      customerId: punchCards.customerId,
+      lastVisit: sql<string | null>`max(${punchCardEntries.punchedAt})`,
+    })
+    .from(punchCards)
+    .leftJoin(punchCardEntries, eq(punchCardEntries.punchCardId, punchCards.id))
+    .where(inArray(punchCards.customerId, ids))
+    .groupBy(punchCards.customerId);
+  const lastVisits = new Map(lastVisitRows.map((r) => [r.customerId, r.lastVisit]));
+
+  let enriched: CustomersReportRow[] = baseRows.map((r) => {
+    const cc = cardCounts.get(r.id) ?? { total: 0, active: 0 };
+    return {
+      ...r,
+      createdAt: r.createdAt instanceof Date ? r.createdAt.toISOString() : String(r.createdAt),
+      marketingConsentAt:
+        r.marketingConsentAt instanceof Date
+          ? r.marketingConsentAt.toISOString()
+          : (r.marketingConsentAt as string | null),
+      lastVisit: lastVisits.get(r.id) ?? null,
+      activeCards: cc.active,
+      totalCards: cc.total,
+    };
+  });
+
+  // Apply post-filters that need the enriched data.
+  if (filters.hasActiveCard === true) enriched = enriched.filter((r) => r.activeCards > 0);
+  if (filters.hasActiveCard === false) enriched = enriched.filter((r) => r.activeCards === 0);
+  if (filters.dormantSinceDays !== undefined) {
+    const cutoff = daysAgo(now, filters.dormantSinceDays).getTime();
+    enriched = enriched.filter((r) => !r.lastVisit || new Date(r.lastVisit).getTime() < cutoff);
+  }
+
+  // lastVisit sort happens here because it's not on the base table.
+  if (filters.sort === 'lastVisit') {
+    enriched.sort((a, b) => {
+      const av = a.lastVisit ? new Date(a.lastVisit).getTime() : 0;
+      const bv = b.lastVisit ? new Date(b.lastVisit).getTime() : 0;
+      return filters.sortDir === 'asc' ? av - bv : bv - av;
+    });
+  }
+
+  return enriched;
+};
+
+export interface CardsReportFilters {
+  q?: string;
+  status?: 'active' | 'expired' | 'cancelled';
+  source?: 'pos' | 'online' | 'manual';
+  soldFrom?: Date;
+  soldTo?: Date;
+  expiringWithinDays?: number;
+  /** Inclusive: minimum usedEntries / totalEntries percentage 0..100. */
+  usageMinPct?: number;
+  /** Inclusive: maximum percentage. */
+  usageMaxPct?: number;
+  limit?: number;
+  sort?: 'createdAt' | 'expiresAt' | 'usedEntries' | 'serialNumber';
+  sortDir?: 'asc' | 'desc';
+}
+
+export interface CardsReportRow {
+  id: string;
+  serialNumber: string;
+  customerId: string;
+  customerNumber: string | null;
+  customerFirstName: string | null;
+  customerLastName: string | null;
+  customerPhone: string | null;
+  totalEntries: number;
+  usedEntries: number;
+  isActive: boolean;
+  expiresAt: string | null;
+  cancelledAt: string | null;
+  source: string;
+  createdAt: string;
+  usagePct: number;
+}
+
+export const cardsReport = async (
+  db: AnyPgDatabase,
+  filters: CardsReportFilters = {},
+  now: Date = new Date(),
+): Promise<CardsReportRow[]> => {
+  const limit = Math.min(filters.limit ?? REPORT_DEFAULT_LIMIT, REPORT_MAX_LIMIT);
+  const conds = [];
+  const q = filters.q?.trim();
+  if (q) {
+    const p = `%${q}%`;
+    const qC = or(
+      ilike(punchCards.serialNumber, p),
+      ilike(customers.firstName, p),
+      ilike(customers.lastName, p),
+      ilike(customers.phone, p),
+      ilike(customers.customerNumber, p),
+    );
+    if (qC) conds.push(qC);
+  }
+  if (filters.status === 'active') conds.push(eq(punchCards.isActive, true));
+  if (filters.status === 'cancelled') conds.push(isNotNull(punchCards.cancelledAt));
+  if (filters.status === 'expired') {
+    conds.push(eq(punchCards.isActive, false));
+    conds.push(isNull(punchCards.cancelledAt));
+  }
+  if (filters.source) conds.push(eq(punchCards.source, filters.source));
+  if (filters.soldFrom) conds.push(gte(punchCards.createdAt, filters.soldFrom));
+  if (filters.soldTo) conds.push(lte(punchCards.createdAt, filters.soldTo));
+  if (filters.expiringWithinDays !== undefined) {
+    conds.push(isNotNull(punchCards.expiresAt));
+    conds.push(gte(punchCards.expiresAt, now));
+    conds.push(lt(punchCards.expiresAt, daysAhead(now, filters.expiringWithinDays)));
+  }
+
+  const where = conds.length === 0 ? undefined : conds.length === 1 ? conds[0] : and(...conds);
+
+  const sortCol =
+    filters.sort === 'expiresAt'
+      ? punchCards.expiresAt
+      : filters.sort === 'usedEntries'
+        ? punchCards.usedEntries
+        : filters.sort === 'serialNumber'
+          ? punchCards.serialNumber
+          : punchCards.createdAt;
+  const sortFn = filters.sortDir === 'asc' ? asc : desc;
+
+  let query = db
+    .select({
+      id: punchCards.id,
+      serialNumber: punchCards.serialNumber,
+      customerId: punchCards.customerId,
+      customerNumber: customers.customerNumber,
+      customerFirstName: customers.firstName,
+      customerLastName: customers.lastName,
+      customerPhone: customers.phone,
+      totalEntries: punchCards.totalEntries,
+      usedEntries: punchCards.usedEntries,
+      isActive: punchCards.isActive,
+      expiresAt: punchCards.expiresAt,
+      cancelledAt: punchCards.cancelledAt,
+      source: punchCards.source,
+      createdAt: punchCards.createdAt,
+    })
+    .from(punchCards)
+    .leftJoin(customers, eq(customers.id, punchCards.customerId))
+    .$dynamic();
+  if (where) query = query.where(where);
+  const baseRows = await query.orderBy(sortFn(sortCol)).limit(limit);
+
+  let enriched: CardsReportRow[] = baseRows.map((r) => ({
+    ...r,
+    expiresAt: r.expiresAt instanceof Date ? r.expiresAt.toISOString() : (r.expiresAt as string | null),
+    cancelledAt:
+      r.cancelledAt instanceof Date
+        ? r.cancelledAt.toISOString()
+        : (r.cancelledAt as string | null),
+    createdAt: r.createdAt instanceof Date ? r.createdAt.toISOString() : String(r.createdAt),
+    usagePct: r.totalEntries === 0 ? 0 : Math.round((r.usedEntries / r.totalEntries) * 100),
+  }));
+
+  if (filters.usageMinPct !== undefined) {
+    enriched = enriched.filter((r) => r.usagePct >= filters.usageMinPct!);
+  }
+  if (filters.usageMaxPct !== undefined) {
+    enriched = enriched.filter((r) => r.usagePct <= filters.usageMaxPct!);
+  }
+  return enriched;
+};
+
+export interface EntriesReportFilters {
+  from?: Date;
+  to?: Date;
+  customerId?: string;
+  cardSerial?: string;
+  method?: 'qr_scan' | 'serial' | 'phone' | 'manual';
+  /** undefined = either, true = only refunded, false = only non-refunded. */
+  refunded?: boolean;
+  punchedBy?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface EntriesReportRow {
+  id: string;
+  punchedAt: string;
+  method: string;
+  companionCount: number;
+  refundedAt: string | null;
+  refundReason: string | null;
+  cardId: string;
+  cardSerial: string;
+  customerId: string;
+  customerNumber: string | null;
+  customerFirstName: string | null;
+  customerLastName: string | null;
+  staffId: string | null;
+  staffFirstName: string | null;
+  staffLastName: string | null;
+}
+
+export interface EntriesReportPage {
+  rows: EntriesReportRow[];
+  total: number;
+}
+
+export const entriesReport = async (
+  db: AnyPgDatabase,
+  filters: EntriesReportFilters = {},
+): Promise<EntriesReportPage> => {
+  const limit = Math.min(filters.limit ?? REPORT_DEFAULT_LIMIT, REPORT_MAX_LIMIT);
+  const offset = Math.max(0, filters.offset ?? 0);
+  const conds = [];
+  if (filters.from) conds.push(gte(punchCardEntries.punchedAt, filters.from));
+  if (filters.to) conds.push(lte(punchCardEntries.punchedAt, filters.to));
+  if (filters.method) conds.push(eq(punchCardEntries.method, filters.method));
+  if (filters.refunded === true) conds.push(isNotNull(punchCardEntries.refundedAt));
+  if (filters.refunded === false) conds.push(isNull(punchCardEntries.refundedAt));
+  if (filters.punchedBy) conds.push(eq(punchCardEntries.punchedBy, filters.punchedBy));
+  if (filters.customerId) conds.push(eq(punchCards.customerId, filters.customerId));
+  if (filters.cardSerial) conds.push(ilike(punchCards.serialNumber, `%${filters.cardSerial.trim()}%`));
+
+  const where = conds.length === 0 ? undefined : conds.length === 1 ? conds[0] : and(...conds);
+
+  let rowsQuery = db
+    .select({
+      id: punchCardEntries.id,
+      punchedAt: punchCardEntries.punchedAt,
+      method: punchCardEntries.method,
+      companionCount: punchCardEntries.companionCount,
+      refundedAt: punchCardEntries.refundedAt,
+      refundReason: punchCardEntries.refundReason,
+      cardId: punchCards.id,
+      cardSerial: punchCards.serialNumber,
+      customerId: punchCards.customerId,
+      customerNumber: customers.customerNumber,
+      customerFirstName: customers.firstName,
+      customerLastName: customers.lastName,
+      staffId: punchCardEntries.punchedBy,
+      staffFirstName: staff.firstName,
+      staffLastName: staff.lastName,
+    })
+    .from(punchCardEntries)
+    .leftJoin(punchCards, eq(punchCards.id, punchCardEntries.punchCardId))
+    .leftJoin(customers, eq(customers.id, punchCards.customerId))
+    .leftJoin(staff, eq(staff.id, punchCardEntries.punchedBy))
+    .$dynamic();
+  if (where) rowsQuery = rowsQuery.where(where);
+  const rawRows = await rowsQuery
+    .orderBy(desc(punchCardEntries.punchedAt))
+    .limit(limit)
+    .offset(offset);
+
+  // total count under the same filter set (no limit/offset).
+  let countQuery = db
+    .select({ n: count() })
+    .from(punchCardEntries)
+    .leftJoin(punchCards, eq(punchCards.id, punchCardEntries.punchCardId))
+    .$dynamic();
+  if (where) countQuery = countQuery.where(where);
+  const totalRows = await countQuery;
+  const total = Number(totalRows[0]?.n ?? 0);
+
+  const rows: EntriesReportRow[] = rawRows.map((r) => ({
+    id: r.id,
+    punchedAt: r.punchedAt instanceof Date ? r.punchedAt.toISOString() : String(r.punchedAt),
+    method: r.method,
+    companionCount: r.companionCount,
+    refundedAt:
+      r.refundedAt instanceof Date ? r.refundedAt.toISOString() : (r.refundedAt as string | null),
+    refundReason: r.refundReason,
+    cardId: r.cardId ?? '',
+    cardSerial: r.cardSerial ?? '',
+    customerId: r.customerId ?? '',
+    customerNumber: r.customerNumber,
+    customerFirstName: r.customerFirstName,
+    customerLastName: r.customerLastName,
+    staffId: r.staffId,
+    staffFirstName: r.staffFirstName,
+    staffLastName: r.staffLastName,
+  }));
+
+  return { rows, total };
+};
+
+export interface RevenueReportFilters {
+  from?: Date;
+  to?: Date;
+  groupBy?: 'day' | 'week' | 'month';
+}
+
+export interface RevenueReportRow {
+  period: string;
+  cardsSold: number;
+  estimatedRevenueShekels: number;
+}
+
+export interface RevenueReportResult {
+  rows: RevenueReportRow[];
+  estimatedFromPriceShekels: number;
+  totalCardsSold: number;
+  totalEstimatedRevenueShekels: number;
+}
+
+/**
+ * Revenue report. Bucket cards-sold by day/week/month, then multiply by the
+ * CURRENT settings.priceShekels to estimate revenue. Honest caveat: real
+ * price-at-sale isn't stored. Returns the assumed price so the UI can show
+ * the user what's being multiplied.
+ */
+export const revenueReport = async (
+  db: AnyPgDatabase,
+  filters: RevenueReportFilters = {},
+): Promise<RevenueReportResult> => {
+  const groupBy = filters.groupBy ?? 'day';
+  const conds = [
+    // We exclude cancelled cards from "sold" — cancelled = refunded/returned.
+    isNull(punchCards.cancelledAt),
+  ];
+  if (filters.from) conds.push(gte(punchCards.createdAt, filters.from));
+  if (filters.to) conds.push(lte(punchCards.createdAt, filters.to));
+
+  const where = conds.length === 1 ? conds[0] : and(...conds);
+
+  // Bucket expression per groupBy.
+  const bucketSql =
+    groupBy === 'day'
+      ? sql<string>`to_char(${punchCards.createdAt}, 'YYYY-MM-DD')`
+      : groupBy === 'week'
+        ? sql<string>`to_char(date_trunc('week', ${punchCards.createdAt}), 'IYYY-"W"IW')`
+        : sql<string>`to_char(${punchCards.createdAt}, 'YYYY-MM')`;
+
+  const rowsRaw = await db
+    .select({
+      period: bucketSql,
+      cardsSold: sql<number>`cast(count(*) as int)`,
+    })
+    .from(punchCards)
+    .where(where)
+    .groupBy(bucketSql)
+    .orderBy(bucketSql);
+
+  // Pull current price from settings for the estimate.
+  const settingsRows = await db.select().from(cardSettings).limit(1);
+  const fallbackPrice = (await getCardSettings(db)).priceShekels;
+  const estimatedFromPriceShekels = settingsRows[0]?.priceShekels ?? fallbackPrice;
+
+  const rows: RevenueReportRow[] = rowsRaw.map((r) => ({
+    period: r.period,
+    cardsSold: Number(r.cardsSold),
+    estimatedRevenueShekels: Number(r.cardsSold) * estimatedFromPriceShekels,
+  }));
+
+  const totalCardsSold = rows.reduce((acc, r) => acc + r.cardsSold, 0);
+  const totalEstimatedRevenueShekels = totalCardsSold * estimatedFromPriceShekels;
+
+  return {
+    rows,
+    estimatedFromPriceShekels,
+    totalCardsSold,
+    totalEstimatedRevenueShekels,
+  };
 };

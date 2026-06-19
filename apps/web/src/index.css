@@ -104,3 +104,67 @@ input,
 textarea {
   font-family: inherit;
 }
+
+/* Print stylesheet — used when an admin clicks "הדפסה / PDF" on a report.
+   Hides the app chrome (top nav, sub-nav, filter inputs, action buttons),
+   shows only the .report-printable region, and adds a print header echoing
+   the report title set by printReport(title). The user picks "Save as PDF"
+   from the browser's print dialog. */
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 14mm 12mm;
+  }
+  body {
+    background: #fff;
+  }
+  /* Hide everything that is not part of the printable report. */
+  .no-print,
+  nav,
+  header,
+  .report-filters,
+  .report-actions {
+    display: none !important;
+  }
+  /* The printable region grows to full width with no shadows / round corners
+     so the page looks like a clean document. */
+  .report-printable {
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    max-width: none !important;
+    width: 100% !important;
+  }
+  .report-printable::before {
+    content: attr(data-print-title) ' · ' attr(data-print-date);
+    display: block;
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 12px;
+    padding-bottom: 6px;
+    border-bottom: 1.5px solid #2d3436;
+  }
+  /* Tables: avoid breaking a row across pages, keep headers visible. */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11pt;
+  }
+  thead {
+    display: table-header-group;
+  }
+  tr {
+    page-break-inside: avoid;
+  }
+  th,
+  td {
+    padding: 6px 8px;
+    border-bottom: 1px solid #d9d9d9;
+    text-align: right;
+  }
+  th {
+    background: #f0f0f0;
+    font-weight: 600;
+  }
+}

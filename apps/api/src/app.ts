@@ -13,6 +13,7 @@ import { customerAuthRoutes } from './routes/customer-auth.js';
 import { customersRoutes } from './routes/customers.js';
 import { meRoutes } from './routes/me.js';
 import { punchRoutes } from './routes/punch.js';
+import { reportsRoutes } from './routes/reports.js';
 import { staffRoutes } from './routes/staff.js';
 
 /** Build the Fastify app without listening, so it can be driven by tests via inject(). */
@@ -52,6 +53,7 @@ export const buildApp = async (): Promise<FastifyInstance> => {
   await fastify.register(punchRoutes);
   await fastify.register(staffRoutes);
   await fastify.register(adminRoutes);
+  await fastify.register(reportsRoutes);
 
   fastify.get('/health', async () => ({
     status: 'ok',
