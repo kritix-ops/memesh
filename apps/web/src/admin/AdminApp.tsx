@@ -1475,6 +1475,22 @@ function CustomerDetailModal({
   const [cancelErr, setCancelErr] = useState<string | null>(null);
   const [cancelSubmitting, setCancelSubmitting] = useState(false);
 
+  // Nested CardDetailModal — opened when the admin clicks a card row.
+  const [openCardDetailFor, setOpenCardDetailFor] = useState<string | null>(null);
+  const [openCardDetail, setOpenCardDetail] = useState<CardDetailResponse | null>(null);
+  const [openCardLoading, setOpenCardLoading] = useState(false);
+  const [openCardError, setOpenCardError] = useState<string | null>(null);
+
+  // Single shared refund-entry flow. Both the customer's recent-entries list
+  // and the nested CardDetailModal's per-entry refund button feed into the
+  // same target state so we have one modal + one submit handler. cardId is
+  // needed because the entries list spans multiple cards.
+  const [refundTarget, setRefundTarget] = useState<
+    { cardId: string; entryId: string; summary: string } | null
+  >(null);
+  const [refundSubmitting, setRefundSubmitting] = useState(false);
+  const [refundErr, setRefundErr] = useState<string | null>(null);
+
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -1506,6 +1522,82 @@ function CustomerDetailModal({
   const refreshDetail = async () => {
     const res = await getCustomerDetail(customerId);
     if (res.ok) setDetail(res.data);
+  };
+
+  // Fetch the nested card detail whenever the admin clicks a card row.
+  useEffect(() => {
+    if (!openCardDetailFor) {
+      setOpenCardDetail(null);
+      setOpenCardLoading(false);
+      setOpenCardError(null);
+      return;
+    }
+    let cancelled = false;
+    setOpenCardLoading(true);
+    setOpenCardError(null);
+    (async () => {
+      const res = await getCardDetail(openCardDetailFor);
+      if (cancelled) return;
+      setOpenCardLoading(false);
+      if (res.ok) setOpenCardDetail(res.data);
+      else setOpenCardError(res.error);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [openCardDetailFor]);
+
+  const refreshOpenCardDetail = async () => {
+    if (!openCardDetailFor) return;
+    const res = await getCardDetail(openCardDetailFor);
+    if (res.ok) setOpenCardDetail(res.data);
+  };
+
+  // Map an entry (from the customer history list) to refund-target context.
+  // Entries can belong to any of the customer's cards, so we capture cardId
+  // here. summary is what the modal shows above the reason field.
+  const openRefundForCustomerEntry = (
+    cardId: string,
+    entryId: string,
+    summary: string,
+  ) => {
+    setRefundErr(null);
+    setRefundTarget({ cardId, entryId, summary });
+  };
+
+  const openRefundForCardEntry = (entryId: string) => {
+    if (!openCardDetail) return;
+    const target = openCardDetail.entries.find((e) => e.id === entryId);
+    if (!target) return;
+    const summary = `${fmtDateTime(target.punchedAt)} · ${
+      target.companionCount === 1 ? 'מלווה אחד' : `${target.companionCount} מלווים`
+    }`;
+    setRefundErr(null);
+    setRefundTarget({ cardId: openCardDetail.card.id, entryId, summary });
+  };
+
+  const submitRefund = async (reason: string, adminPassword: string | undefined) => {
+    if (!refundTarget) return;
+    setRefundSubmitting(true);
+    setRefundErr(null);
+    console.info('[web admin cust-refund] submit', { entryId: refundTarget.entryId });
+    const res = await refundEntry(refundTarget.cardId, refundTarget.entryId, {
+      reason,
+      ...(adminPassword !== undefined && { adminPassword }),
+    });
+    setRefundSubmitting(false);
+    if (!res.ok) {
+      console.warn('[web admin cust-refund] error', { error: res.error });
+      setRefundErr(humanizeAdminRefundError(res.error));
+      return;
+    }
+    console.info('[web admin cust-refund] success', { entryId: refundTarget.entryId });
+    setRefundTarget(null);
+    await refreshDetail();
+    // If the same card is open in the nested CardDetailModal, refresh it too.
+    if (openCardDetailFor === refundTarget.cardId) {
+      await refreshOpenCardDetail();
+    }
   };
 
   const submitCreate = async (input: AdminCreateInput) => {
@@ -1643,6 +1735,8 @@ function CustomerDetailModal({
           <CustomerDetailBody
             detail={detail}
             isAdmin={isAdmin}
+            onOpenCard={(cardId) => setOpenCardDetailFor(cardId)}
+            onRefundCustomerEntry={openRefundForCustomerEntry}
             {...(isAdmin && {
               onCreateCard: () => void openCreateCard(),
               onReassignCard: (c: ApiPunchCard) => setReassignFor(c),
@@ -1735,6 +1829,35 @@ function CustomerDetailModal({
             />
           );
         })()}
+
+      {/* Nested CardDetailModal — opens when the admin clicks a card row.
+          Its own onRefundEntry pipes into the shared refund target so we
+          only have one RefundEntryModal mounted at a time. */}
+      {openCardDetailFor && (
+        <CardDetailModal
+          loading={openCardLoading}
+          error={openCardError}
+          detail={openCardDetail}
+          onClose={() => setOpenCardDetailFor(null)}
+          onRefundEntry={openRefundForCardEntry}
+        />
+      )}
+
+      {refundTarget && (
+        <RefundEntryModal
+          entrySummary={refundTarget.summary}
+          selfApprove={isAdmin}
+          submitting={refundSubmitting}
+          error={refundErr}
+          onClose={() => {
+            if (!refundSubmitting) {
+              setRefundTarget(null);
+              setRefundErr(null);
+            }
+          }}
+          onConfirm={(reason, password) => void submitRefund(reason, password)}
+        />
+      )}
     </div>
   );
 }
@@ -1856,18 +1979,27 @@ function DeleteCustomerModal({
 function CustomerDetailBody({
   detail,
   isAdmin,
+  onOpenCard,
+  onRefundCustomerEntry,
   onCreateCard,
   onReassignCard,
   onCancelCard,
 }: {
   detail: CustomerDetailResponse;
   isAdmin: boolean;
+  onOpenCard: (cardId: string) => void;
+  onRefundCustomerEntry: (cardId: string, entryId: string, summary: string) => void;
   onCreateCard?: () => void;
   onReassignCard?: (card: ApiPunchCard) => void;
   onCancelCard?: (card: ApiPunchCard) => void;
 }) {
   const { customer, cards, entries } = detail;
   const activeCard = cards.find((c) => c.isActive) ?? cards[0];
+  // Map punchCardId → serialNumber so the entries history can label which
+  // card each entry came from. Only shown when the customer has > 1 card —
+  // single-card customers don't need the disambiguation noise.
+  const serialByCardId = new Map(cards.map((c) => [c.id, c.serialNumber]));
+  const showCardSerial = cards.length > 1;
   return (
     <>
       <div
@@ -2003,21 +2135,40 @@ function CustomerDetailBody({
                 flexWrap: 'wrap',
               }}
             >
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 14, fontWeight: 600 }}>{c.serialNumber}</div>
+              <button
+                type="button"
+                onClick={() => onOpenCard(c.id)}
+                title="פתחו פרטי כרטיסייה"
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  background: 'transparent',
+                  border: 'none',
+                  padding: '4px 6px',
+                  margin: '-4px -6px',
+                  borderRadius: 8,
+                  textAlign: 'right',
+                  cursor: 'pointer',
+                  color: 'inherit',
+                }}
+              >
+                <div style={{ fontSize: 14, fontWeight: 600, color: INK }}>{c.serialNumber}</div>
                 <div style={{ fontSize: 12.5, color: MUTED, marginTop: 2 }}>
                   {c.usedEntries} / {c.totalEntries} כניסות ·{' '}
                   {c.expiresAt === null
                     ? 'ללא תפוגה'
                     : `תוקף עד ${fmtDate(c.expiresAt.slice(0, 10))}`}
                 </div>
-              </div>
+              </button>
               <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
                 <Badge text={status.text} bg={status.bg} color={status.color} />
                 {showAdminActions && onReassignCard && (
                   <button
                     type="button"
-                    onClick={() => onReassignCard(c)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onReassignCard(c);
+                    }}
                     style={{
                       border: '1.5px solid #e9e0d9',
                       background: '#fff',
@@ -2035,7 +2186,10 @@ function CustomerDetailBody({
                 {showAdminActions && onCancelCard && (
                   <button
                     type="button"
-                    onClick={() => onCancelCard(c)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onCancelCard(c);
+                    }}
                     style={{
                       border: '1.5px solid #e8a4a4',
                       background: '#fff',
@@ -2062,23 +2216,70 @@ function CustomerDetailBody({
       {entries.length === 0 ? (
         <div style={{ color: MUTED, fontSize: 14 }}>אין כניסות עדיין.</div>
       ) : (
-        entries.slice(0, 10).map((e, i) => (
-          <div
-            key={e.id}
-            style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              padding: '6px 0',
-              borderTop: i ? '1px solid #f3efea' : 'none',
-              fontSize: 13.5,
-            }}
-          >
-            <span>{fmtDateTime(e.punchedAt)}</span>
-            <span style={{ color: MUTED }}>
-              {e.companionCount === 1 ? 'מלווה אחד' : `${e.companionCount} מלווים`}
-            </span>
-          </div>
-        ))
+        entries.slice(0, 10).map((e, i) => {
+          const refunded = e.refundedAt !== null;
+          const companions =
+            e.companionCount === 1 ? 'מלווה אחד' : `${e.companionCount} מלווים`;
+          const serial = serialByCardId.get(e.punchCardId);
+          // Refund summary always includes the card serial so the modal
+          // makes it unambiguous which card is being refunded, even when the
+          // customer has only one card (helps the audit trail).
+          const summary = `${fmtDateTime(e.punchedAt)} · ${companions}${
+            serial ? ` · ${serial}` : ''
+          }`;
+          return (
+            <div
+              key={e.id}
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                gap: 10,
+                padding: '6px 0',
+                borderTop: i ? '1px solid #f3efea' : 'none',
+                fontSize: 13.5,
+                opacity: refunded ? 0.55 : 1,
+              }}
+            >
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ textDecoration: refunded ? 'line-through' : 'none' }}>
+                  {fmtDateTime(e.punchedAt)}
+                </div>
+                {showCardSerial && serial && (
+                  <div style={{ fontSize: 12, color: MUTED, marginTop: 2 }}>
+                    כרטיסייה: {serial}
+                  </div>
+                )}
+                {refunded && (
+                  <div style={{ fontSize: 12, color: '#a23a3a', marginTop: 2 }}>
+                    הוחזר{e.refundReason ? ` · ${e.refundReason}` : ''}
+                  </div>
+                )}
+              </div>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0 }}>
+                <span style={{ color: MUTED, whiteSpace: 'nowrap' }}>{companions}</span>
+                {!refunded && (
+                  <button
+                    type="button"
+                    onClick={() => onRefundCustomerEntry(e.punchCardId, e.id, summary)}
+                    style={{
+                      border: '1.5px solid #e9e0d9',
+                      background: '#fff',
+                      color: MUTED,
+                      borderRadius: 8,
+                      padding: '4px 9px',
+                      fontWeight: 600,
+                      fontSize: 12,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    החזר
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })
       )}
       {activeCard && cards.length > 0 && entries.length === 0 && null}
     </>
