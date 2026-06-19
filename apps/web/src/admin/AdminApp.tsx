@@ -17,10 +17,21 @@ import {
   type CardDetailResponse,
   type CardListStatus,
 } from '../lib/api/cards';
-import { getCancelContext, type CancelContext } from '../lib/api/card-settings';
-import { refundEntry } from '../lib/api/cards';
+import {
+  getCancelContext,
+  getCardSettings as fetchCardSettings,
+  type CancelContext,
+  type CardSettings,
+} from '../lib/api/card-settings';
+import {
+  createCardForAdmin,
+  reassignCardToCustomer,
+  refundEntry,
+} from '../lib/api/cards';
 import { Settings } from './settings/Settings';
 import { RefundEntryModal } from '../pos/RefundEntryModal';
+import { CreateCardForAdminModal, type AdminCreateInput } from './CreateCardForAdminModal';
+import { ReassignCardModal } from './ReassignCardModal';
 import {
   createCustomer,
   deleteCustomerById,
@@ -28,6 +39,7 @@ import {
   searchCustomers,
   type Customer,
   type CustomerDetailResponse,
+  type PunchCard as ApiPunchCard,
 } from '../lib/api/customers';
 import {
   createStaffMember,
@@ -108,6 +120,7 @@ const actionLabel = (type: StaffActionType): string => {
   if (type === 'create_staff') return 'הוספת איש צוות';
   if (type === 'update_card_settings') return 'עדכון הגדרות כרטיסייה';
   if (type === 'refund_entry') return 'החזר כניסה';
+  if (type === 'reassign_card') return 'העברת כרטיסייה';
   return 'פעולה';
 };
 
@@ -979,6 +992,23 @@ function Cards() {
   );
 }
 
+function humanizeAdminCreateError(code: string): string {
+  if (code === 'customer_not_found') return 'הלקוח לא נמצא. רעננו את הדף.';
+  if (code === 'invalid_body') return 'נתונים לא תקינים. בדקו ונסו שוב.';
+  if (code === 'forbidden') return 'רק אדמין יכול להנפיק כרטיסייה ידנית.';
+  return 'תקלה זמנית. נסו שוב בעוד רגע.';
+}
+
+function humanizeReassignError(code: string): string {
+  if (code === 'card_not_found') return 'הכרטיסייה לא נמצאה. רעננו את הדף.';
+  if (code === 'customer_not_found') return 'הלקוח החדש לא נמצא.';
+  if (code === 'card_cancelled') return 'לא ניתן להעביר כרטיסייה מבוטלת.';
+  if (code === 'same_customer') return 'הכרטיסייה כבר שייכת ללקוח זה.';
+  if (code === 'invalid_body') return 'נתונים לא תקינים. בדקו ונסו שוב.';
+  if (code === 'forbidden') return 'רק אדמין יכול להעביר כרטיסייה.';
+  return 'תקלה זמנית. נסו שוב בעוד רגע.';
+}
+
 function humanizeAdminRefundError(code: string): string {
   if (code === 'admin_password_required') return 'נדרשת סיסמת אדמין.';
   if (code === 'admin_password_invalid')
@@ -1424,10 +1454,26 @@ function CustomerDetailModal({
   onClose: () => void;
   onDeleted?: () => void;
 }) {
+  const { state: cmSessionState } = useStaffSession();
+  const isAdmin = cmSessionState.status === 'signed-in' && cmSessionState.user.role === 'admin';
   const [detail, setDetail] = useState<CustomerDetailResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+
+  // Admin card-management state. Each modal owns its own submission +
+  // error so they can run independently. Settings are fetched on first
+  // open so the "create card" modal has the right defaults pre-filled.
+  const [creating, setCreating] = useState(false);
+  const [creatingErr, setCreatingErr] = useState<string | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [settingsDefaults, setSettingsDefaults] = useState<CardSettings | null>(null);
+  const [reassignFor, setReassignFor] = useState<ApiPunchCard | null>(null);
+  const [reassignErr, setReassignErr] = useState<string | null>(null);
+  const [reassignSubmitting, setReassignSubmitting] = useState(false);
+  const [cancelFor, setCancelFor] = useState<ApiPunchCard | null>(null);
+  const [cancelErr, setCancelErr] = useState<string | null>(null);
+  const [cancelSubmitting, setCancelSubmitting] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -1445,6 +1491,76 @@ function CustomerDetailModal({
       cancelled = true;
     };
   }, [customerId]);
+
+  // Lazy-load card settings only when an admin opens the create-card modal.
+  // Non-admins never see the button so they never trigger this.
+  const openCreateCard = async () => {
+    setCreatingErr(null);
+    setCreateOpen(true);
+    if (!settingsDefaults) {
+      const res = await fetchCardSettings();
+      if (res.ok) setSettingsDefaults(res.data.settings);
+    }
+  };
+
+  const refreshDetail = async () => {
+    const res = await getCustomerDetail(customerId);
+    if (res.ok) setDetail(res.data);
+  };
+
+  const submitCreate = async (input: AdminCreateInput) => {
+    setCreating(true);
+    setCreatingErr(null);
+    console.info('[web admin create-card] submit', input);
+    const res = await createCardForAdmin({
+      customerId,
+      totalEntries: input.totalEntries,
+      validityDays: input.validityDays,
+      source: input.source,
+    });
+    setCreating(false);
+    if (!res.ok) {
+      console.warn('[web admin create-card] error', { error: res.error });
+      setCreatingErr(humanizeAdminCreateError(res.error));
+      return;
+    }
+    console.info('[web admin create-card] success', { cardId: res.data.card.id });
+    setCreateOpen(false);
+    await refreshDetail();
+  };
+
+  const submitReassign = async (newCustomerId: string) => {
+    if (!reassignFor) return;
+    setReassignSubmitting(true);
+    setReassignErr(null);
+    console.info('[web admin reassign] submit', { cardId: reassignFor.id, newCustomerId });
+    const res = await reassignCardToCustomer(reassignFor.id, newCustomerId);
+    setReassignSubmitting(false);
+    if (!res.ok) {
+      console.warn('[web admin reassign] error', { error: res.error });
+      setReassignErr(humanizeReassignError(res.error));
+      return;
+    }
+    console.info('[web admin reassign] success', { cardId: reassignFor.id });
+    setReassignFor(null);
+    // The card no longer belongs to this customer — refresh wipes it from
+    // the list. If the admin was viewing it, it just disappears.
+    await refreshDetail();
+  };
+
+  const submitCancelInline = async (reason: string) => {
+    if (!cancelFor) return;
+    setCancelSubmitting(true);
+    setCancelErr(null);
+    const res = await cancelCardForAdmin(cancelFor.id, reason);
+    setCancelSubmitting(false);
+    if (!res.ok) {
+      setCancelErr(humanizeCancelError(res.error));
+      return;
+    }
+    setCancelFor(null);
+    await refreshDetail();
+  };
 
   return (
     <div
@@ -1523,7 +1639,20 @@ function CustomerDetailModal({
             לא ניתן לטעון את הלקוח. סגרו ונסו שוב.
           </div>
         )}
-        {detail && <CustomerDetailBody detail={detail} />}
+        {detail && (
+          <CustomerDetailBody
+            detail={detail}
+            isAdmin={isAdmin}
+            {...(isAdmin && {
+              onCreateCard: () => void openCreateCard(),
+              onReassignCard: (c: ApiPunchCard) => setReassignFor(c),
+              onCancelCard: (c: ApiPunchCard) => {
+                setCancelErr(null);
+                setCancelFor(c);
+              },
+            })}
+          />
+        )}
       </div>
       {detail && confirmDelete && (
         <DeleteCustomerModal
@@ -1536,6 +1665,76 @@ function CustomerDetailModal({
           }}
         />
       )}
+      {detail && createOpen && settingsDefaults && (
+        <CreateCardForAdminModal
+          customer={detail.customer}
+          defaults={settingsDefaults}
+          submitting={creating}
+          error={creatingErr}
+          onClose={() => !creating && setCreateOpen(false)}
+          onConfirm={(input) => void submitCreate(input)}
+        />
+      )}
+      {reassignFor && (
+        <ReassignCardModal
+          card={{
+            serialNumber: reassignFor.serialNumber,
+            usedEntries: reassignFor.usedEntries,
+            totalEntries: reassignFor.totalEntries,
+            customerFirstName: detail?.customer.firstName ?? null,
+            customerLastName: detail?.customer.lastName ?? null,
+            customerNumber: detail?.customer.customerNumber ?? null,
+          }}
+          currentCustomerId={customerId}
+          submitting={reassignSubmitting}
+          error={reassignErr}
+          onClose={() => {
+            if (!reassignSubmitting) {
+              setReassignFor(null);
+              setReassignErr(null);
+            }
+          }}
+          onConfirm={(toId) => void submitReassign(toId)}
+        />
+      )}
+      {cancelFor &&
+        (() => {
+          // Synthesize the minimal AdminCardRow the existing CancelCardModal
+          // expects from a PunchCard owned by this customer.
+          const c = cancelFor;
+          const cust = detail?.customer;
+          const adminRow: AdminCardRow = {
+            id: c.id,
+            customerId: c.customerId,
+            serialNumber: c.serialNumber,
+            totalEntries: c.totalEntries,
+            usedEntries: c.usedEntries,
+            isActive: c.isActive,
+            expiresAt: c.expiresAt,
+            cancelledAt: c.cancelledAt,
+            cancelReason: c.cancelReason,
+            source: c.source,
+            createdAt: c.createdAt,
+            customerFirstName: cust?.firstName ?? null,
+            customerLastName: cust?.lastName ?? null,
+            customerNumber: cust?.customerNumber ?? null,
+            customerPhone: cust?.phone ?? null,
+          };
+          return (
+            <CancelCardModal
+              card={adminRow}
+              submitting={cancelSubmitting}
+              error={cancelErr}
+              onClose={() => {
+                if (!cancelSubmitting) {
+                  setCancelFor(null);
+                  setCancelErr(null);
+                }
+              }}
+              onConfirm={(reason) => void submitCancelInline(reason)}
+            />
+          );
+        })()}
     </div>
   );
 }
@@ -1654,7 +1853,19 @@ function DeleteCustomerModal({
   );
 }
 
-function CustomerDetailBody({ detail }: { detail: CustomerDetailResponse }) {
+function CustomerDetailBody({
+  detail,
+  isAdmin,
+  onCreateCard,
+  onReassignCard,
+  onCancelCard,
+}: {
+  detail: CustomerDetailResponse;
+  isAdmin: boolean;
+  onCreateCard?: () => void;
+  onReassignCard?: (card: ApiPunchCard) => void;
+  onCancelCard?: (card: ApiPunchCard) => void;
+}) {
   const { customer, cards, entries } = detail;
   const activeCard = cards.find((c) => c.isActive) ?? cards[0];
   return (
@@ -1741,7 +1952,34 @@ function CustomerDetailBody({ detail }: { detail: CustomerDetailResponse }) {
         </div>
       )}
 
-      <div style={{ fontWeight: 600, marginBottom: 8 }}>כרטיסיות ({cards.length})</div>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          marginBottom: 8,
+        }}
+      >
+        <div style={{ fontWeight: 600 }}>כרטיסיות ({cards.length})</div>
+        {isAdmin && onCreateCard && (
+          <button
+            type="button"
+            onClick={onCreateCard}
+            style={{
+              border: 'none',
+              background: '#fff4ee',
+              color: '#c97a52',
+              borderRadius: 8,
+              padding: '6px 12px',
+              fontWeight: 600,
+              fontSize: 13,
+              cursor: 'pointer',
+            }}
+          >
+            + כרטיסייה חדשה
+          </button>
+        )}
+      </div>
       {cards.length === 0 ? (
         <div style={{ color: MUTED, fontSize: 14, marginBottom: 16 }}>אין כרטיסיות.</div>
       ) : (
@@ -1751,6 +1989,7 @@ function CustomerDetailBody({ detail }: { detail: CustomerDetailResponse }) {
             : c.isActive
               ? { text: 'פעילה', bg: '#f0f5e3', color: '#6f8f37' }
               : { text: 'לא פעילה', bg: '#ececec', color: '#9aa3a6' };
+          const showAdminActions = isAdmin && !c.cancelledAt;
           return (
             <div
               key={c.id}
@@ -1761,9 +2000,10 @@ function CustomerDetailBody({ detail }: { detail: CustomerDetailResponse }) {
                 gap: 12,
                 padding: '8px 0',
                 borderTop: i ? '1px solid #f3efea' : 'none',
+                flexWrap: 'wrap',
               }}
             >
-              <div>
+              <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 14, fontWeight: 600 }}>{c.serialNumber}</div>
                 <div style={{ fontSize: 12.5, color: MUTED, marginTop: 2 }}>
                   {c.usedEntries} / {c.totalEntries} כניסות ·{' '}
@@ -1772,7 +2012,45 @@ function CustomerDetailBody({ detail }: { detail: CustomerDetailResponse }) {
                     : `תוקף עד ${fmtDate(c.expiresAt.slice(0, 10))}`}
                 </div>
               </div>
-              <Badge text={status.text} bg={status.bg} color={status.color} />
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
+                <Badge text={status.text} bg={status.bg} color={status.color} />
+                {showAdminActions && onReassignCard && (
+                  <button
+                    type="button"
+                    onClick={() => onReassignCard(c)}
+                    style={{
+                      border: '1.5px solid #e9e0d9',
+                      background: '#fff',
+                      color: MUTED,
+                      borderRadius: 8,
+                      padding: '5px 10px',
+                      fontWeight: 600,
+                      fontSize: 12.5,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    העברה
+                  </button>
+                )}
+                {showAdminActions && onCancelCard && (
+                  <button
+                    type="button"
+                    onClick={() => onCancelCard(c)}
+                    style={{
+                      border: '1.5px solid #e8a4a4',
+                      background: '#fff',
+                      color: '#c25a5a',
+                      borderRadius: 8,
+                      padding: '5px 10px',
+                      fontWeight: 600,
+                      fontSize: 12.5,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    ביטול
+                  </button>
+                )}
+              </div>
             </div>
           );
         })

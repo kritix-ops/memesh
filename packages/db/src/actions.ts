@@ -12,6 +12,7 @@ export type StaffActionType =
   | 'create_staff'
   | 'update_card_settings'
   | 'refund_entry'
+  | 'reassign_card'
   | 'other';
 
 export interface LogStaffActionInput {

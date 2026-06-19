@@ -18,6 +18,7 @@ import {
 import { punchCard, refundEntry } from './punch';
 import { punchCardEntries } from './schema/index';
 import { eq, sql } from 'drizzle-orm';
+import { reassignCard } from './cards';
 
 async function freshDb() {
   const client = new PGlite();
@@ -810,6 +811,132 @@ test('refundEntry refuses to refund entries on a cancelled card', async () => {
   });
   assert.equal(r.ok, false);
   if (!r.ok) assert.equal(r.reason, 'card_cancelled');
+});
+
+// ---------------------------------------------------------------------------
+// createPunchCard — admin validityDays override
+// ---------------------------------------------------------------------------
+
+test('createPunchCard with explicit validityDays=7 overrides settings', async () => {
+  const db = await freshDb();
+  await updateCardSettings(db, { validityDays: 365 });
+  const cust = await makeCustomer(db);
+  const fixedNow = new Date('2026-06-20T12:00:00.000Z');
+
+  const card = await createPunchCard(db, resolver, {
+    customerId: cust.id,
+    validityDays: 7,
+    now: fixedNow,
+  });
+  assert.ok(card.expiresAt);
+  assert.equal(
+    card.expiresAt!.getTime(),
+    new Date(fixedNow.getTime() + 7 * 24 * 60 * 60 * 1000).getTime(),
+  );
+});
+
+test('createPunchCard with validityDays=null forces a forever card even if settings say 365', async () => {
+  const db = await freshDb();
+  // Settings default is 365.
+  const cust = await makeCustomer(db);
+  const card = await createPunchCard(db, resolver, {
+    customerId: cust.id,
+    validityDays: null,
+  });
+  assert.equal(card.expiresAt, null);
+});
+
+test('createPunchCard with validityDays=0 forces a forever card', async () => {
+  const db = await freshDb();
+  const cust = await makeCustomer(db);
+  const card = await createPunchCard(db, resolver, {
+    customerId: cust.id,
+    validityDays: 0,
+  });
+  assert.equal(card.expiresAt, null);
+});
+
+// ---------------------------------------------------------------------------
+// reassignCard
+// ---------------------------------------------------------------------------
+
+test('reassignCard moves a card to a new customer and preserves entries', async () => {
+  const db = await freshDb();
+  const a = await makeCustomer(db);
+  const b = await makeCustomer(db);
+  const admin = await makeStaff(db, 'admin');
+  const card = await createPunchCard(db, resolver, { customerId: a.id });
+  await punchCard(db, { punchCardId: card.id, method: 'serial' });
+  await punchCard(db, { punchCardId: card.id, method: 'serial' });
+
+  const res = await reassignCard(db, {
+    cardId: card.id,
+    newCustomerId: b.id,
+    staffId: admin,
+  });
+  assert.equal(res.ok, true);
+  if (!res.ok) return;
+  assert.equal(res.card.customerId, b.id);
+  assert.equal(res.card.usedEntries, 2); // entries preserved
+  assert.equal(res.fromCustomerNumber, a.customerNumber);
+
+  // Audit row contains both customer numbers.
+  const actions = await listStaffActions(db);
+  const audit = actions.find((x) => x.action === 'reassign_card');
+  assert.ok(audit);
+  assert.match(audit!.summary, new RegExp(`${a.customerNumber} → ${b.customerNumber}`));
+});
+
+test('reassignCard refuses same-customer no-op', async () => {
+  const db = await freshDb();
+  const a = await makeCustomer(db);
+  const admin = await makeStaff(db, 'admin');
+  const card = await createPunchCard(db, resolver, { customerId: a.id });
+
+  const res = await reassignCard(db, { cardId: card.id, newCustomerId: a.id, staffId: admin });
+  assert.equal(res.ok, false);
+  if (!res.ok) assert.equal(res.reason, 'same_customer');
+});
+
+test('reassignCard refuses cancelled cards', async () => {
+  const db = await freshDb();
+  const a = await makeCustomer(db);
+  const b = await makeCustomer(db);
+  const admin = await makeStaff(db, 'admin');
+  const card = await createPunchCard(db, resolver, { customerId: a.id });
+  await cancelCard(db, { cardId: card.id, reason: 'בדיקת ביטול' });
+
+  const res = await reassignCard(db, { cardId: card.id, newCustomerId: b.id, staffId: admin });
+  assert.equal(res.ok, false);
+  if (!res.ok) assert.equal(res.reason, 'card_cancelled');
+});
+
+test('reassignCard refuses unknown customer', async () => {
+  const db = await freshDb();
+  const a = await makeCustomer(db);
+  const admin = await makeStaff(db, 'admin');
+  const card = await createPunchCard(db, resolver, { customerId: a.id });
+
+  const res = await reassignCard(db, {
+    cardId: card.id,
+    newCustomerId: '00000000-0000-0000-0000-000000000000',
+    staffId: admin,
+  });
+  assert.equal(res.ok, false);
+  if (!res.ok) assert.equal(res.reason, 'customer_not_found');
+});
+
+test('reassignCard refuses unknown card', async () => {
+  const db = await freshDb();
+  const a = await makeCustomer(db);
+  const admin = await makeStaff(db, 'admin');
+  const res = await reassignCard(db, {
+    cardId: '00000000-0000-0000-0000-000000000000',
+    newCustomerId: a.id,
+    staffId: admin,
+  });
+  assert.equal(res.ok, false);
+  if (!res.ok) assert.equal(res.reason, 'card_not_found');
 });
 
 test('refundEntry logs a staff action with cashier+admin context', async () => {

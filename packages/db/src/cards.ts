@@ -105,6 +105,15 @@ export interface CreatePunchCardInput {
   customerId: string;
   source?: 'pos' | 'online' | 'manual';
   totalEntries?: number;
+  /**
+   * Override the card's lifetime explicitly.
+   * - `undefined` → use settings.validityDays
+   * - `null` → forever (expiresAt: null)
+   * - `0` → forever (matches settings sentinel)
+   * - `1..3650` → set expiresAt = now + N days
+   * Admin-only at the route layer; the db function does not enforce role.
+   */
+  validityDays?: number | null;
   wcOrderId?: string;
   now?: Date;
 }
@@ -136,11 +145,14 @@ export const createPunchCard = async (
     },
     resolver,
   );
-  // validityDays=0 = "forever" → expiresAt stored as null.
+  // Resolve effective validity. Admin can override settings via input.
+  // `null` or `0` both mean forever.
+  const effectiveValidity =
+    input.validityDays === undefined ? settings.validityDays : input.validityDays;
   const expiresAt =
-    settings.validityDays === 0
+    effectiveValidity === null || effectiveValidity === 0
       ? null
-      : new Date(now.getTime() + settings.validityDays * 24 * 60 * 60 * 1000);
+      : new Date(now.getTime() + effectiveValidity * 24 * 60 * 60 * 1000);
   const rows = await db
     .insert(punchCards)
     .values({
@@ -472,5 +484,82 @@ export const cancelCard = async (
       ...(input.staffId !== undefined ? { staffId: input.staffId } : {}),
     });
     return { ok: true, card };
+  });
+};
+
+export type ReassignCardFailure =
+  | 'card_not_found'
+  | 'customer_not_found'
+  | 'card_cancelled'
+  | 'same_customer';
+
+export interface ReassignCardInput {
+  cardId: string;
+  newCustomerId: string;
+  staffId?: string;
+  now?: Date;
+}
+
+export type ReassignCardResult =
+  | { ok: true; card: typeof punchCards.$inferSelect; fromCustomerNumber: string | null }
+  | { ok: false; reason: ReassignCardFailure };
+
+/**
+ * Move a card from its current owner to a different customer. Entries and
+ * usedEntries stay attached to the card — the new owner inherits the card's
+ * state, history and all. Audit row records both from/to customer numbers
+ * so the trail is human-readable.
+ *
+ * Refuses cancelled cards (a cancelled card is dead — reassigning it has no
+ * defensible business meaning) and no-op same-customer moves.
+ */
+export const reassignCard = async (
+  db: AnyPgDatabase,
+  input: ReassignCardInput,
+): Promise<ReassignCardResult> => {
+  const now = input.now ?? new Date();
+  return db.transaction(async (tx) => {
+    const cardRows = await tx
+      .select()
+      .from(punchCards)
+      .where(eq(punchCards.id, input.cardId))
+      .for('update')
+      .limit(1);
+    const card = cardRows[0];
+    if (!card) return { ok: false, reason: 'card_not_found' };
+    if (card.cancelledAt) return { ok: false, reason: 'card_cancelled' };
+    if (card.customerId === input.newCustomerId) return { ok: false, reason: 'same_customer' };
+
+    // Resolve the source + target customer numbers for the audit summary.
+    const fromRows = await tx
+      .select({ customerNumber: customers.customerNumber })
+      .from(customers)
+      .where(eq(customers.id, card.customerId))
+      .limit(1);
+    const toRows = await tx
+      .select({ id: customers.id, customerNumber: customers.customerNumber })
+      .from(customers)
+      .where(eq(customers.id, input.newCustomerId))
+      .limit(1);
+    const toCustomer = toRows[0];
+    if (!toCustomer) return { ok: false, reason: 'customer_not_found' };
+
+    const updated = await tx
+      .update(punchCards)
+      .set({ customerId: input.newCustomerId, updatedAt: now })
+      .where(eq(punchCards.id, card.id))
+      .returning();
+    const newCard = updated[0];
+    if (!newCard) return { ok: false, reason: 'card_not_found' };
+
+    const fromNumber = fromRows[0]?.customerNumber ?? null;
+    await logStaffAction(tx, {
+      action: 'reassign_card',
+      summary: `העברת כרטיסייה ${card.serialNumber} · ${fromNumber ?? '?'} → ${toCustomer.customerNumber}`,
+      now,
+      ...(input.staffId !== undefined ? { staffId: input.staffId } : {}),
+    });
+
+    return { ok: true, card: newCard, fromCustomerNumber: fromNumber };
   });
 };

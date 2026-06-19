@@ -157,3 +157,37 @@ export const refundEntry = (
     method: 'POST',
     body: input,
   });
+
+// ---------------------------------------------------------------------------
+// Admin-only card creation with overrides + reassign.
+// ---------------------------------------------------------------------------
+
+export interface AdminCreateCardInput {
+  customerId: string;
+  totalEntries?: number;
+  /** undefined = settings default, null or 0 = forever, N = N days. */
+  validityDays?: number | null;
+  source?: 'pos' | 'online' | 'manual';
+}
+
+export const createCardForAdmin = (
+  input: AdminCreateCardInput,
+): Promise<ApiResult<SellCardResponse>> =>
+  apiRequest('/admin/cards', { method: 'POST', body: input });
+
+export interface ReassignCardResponse {
+  card: {
+    id: string;
+    customerId: string;
+    serialNumber: string;
+    usedEntries: number;
+    totalEntries: number;
+  };
+  fromCustomerNumber: string | null;
+}
+
+export const reassignCardToCustomer = (
+  cardId: string,
+  customerId: string,
+): Promise<ApiResult<ReassignCardResponse>> =>
+  apiRequest(`/cards/${cardId}/reassign`, { method: 'POST', body: { customerId } });

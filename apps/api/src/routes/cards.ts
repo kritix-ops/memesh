@@ -6,6 +6,7 @@ import {
   getCardSettings,
   getCustomerById,
   listCards,
+  reassignCard,
   refundEntry,
   staff,
 } from '@memesh/db';
@@ -32,6 +33,17 @@ const refundBodySchema = z.object({
   /** Required when the initiating user's role is not admin. */
   adminPassword: z.string().min(1).max(200).optional(),
 });
+
+// Admin-only card creation: same fields as POST /cards plus a validityDays
+// override. `null` and `0` both mean "forever". Omit to use settings.
+const adminCreateBodySchema = z.object({
+  customerId: z.string().uuid(),
+  totalEntries: z.number().int().positive().max(100).optional(),
+  validityDays: z.number().int().min(0).max(3650).nullable().optional(),
+  source: z.enum(['pos', 'online', 'manual']).optional(),
+});
+
+const reassignBodySchema = z.object({ customerId: z.string().uuid() });
 
 const listQuerySchema = z.object({
   status: z.enum(['active', 'expired', 'cancelled']).optional(),
@@ -254,6 +266,84 @@ export const cardsRoutes: FastifyPluginAsync = async (fastify) => {
           remaining: result.remaining,
           reactivated: result.reactivated,
         });
+      }
+      return reply.code(500).send({ error: 'unknown' });
+    },
+  );
+
+  // Admin-only card creation with full override of totalEntries + validityDays
+  // + source. Used for gift cards, VIP setups, and back-office adjustments.
+  fastify.post(
+    '/admin/cards',
+    { preHandler: requireRoleHook('admin') },
+    async (request, reply) => {
+      const parsed = adminCreateBodySchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.code(400).send({ error: 'invalid_body', issues: parsed.error.issues });
+      }
+      // Validate customer exists up-front for a cleaner 404 (the FK would
+      // otherwise surface as a Postgres error).
+      const customer = await getCustomerById(db, parsed.data.customerId);
+      if (!customer) return reply.code(404).send({ error: 'customer_not_found' });
+
+      const card = await createPunchCard(db, envKeyResolver, {
+        customerId: parsed.data.customerId,
+        ...(parsed.data.totalEntries !== undefined && { totalEntries: parsed.data.totalEntries }),
+        ...(parsed.data.validityDays !== undefined && { validityDays: parsed.data.validityDays }),
+        source: parsed.data.source ?? 'manual',
+      });
+      request.log.info(
+        {
+          cardId: card.id,
+          serial: card.serialNumber,
+          customerId: parsed.data.customerId,
+          override: {
+            totalEntries: parsed.data.totalEntries ?? null,
+            validityDays: parsed.data.validityDays ?? null,
+          },
+        },
+        '[admin create-card] success',
+      );
+      return reply.code(201).send({ card });
+    },
+  );
+
+  // Admin-only: move a card to a different customer. Entries stay attached.
+  fastify.post(
+    '/cards/:id/reassign',
+    { preHandler: requireRoleHook('admin') },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      if (!z.string().uuid().safeParse(id).success) {
+        return reply.code(400).send({ error: 'invalid_id' });
+      }
+      const parsed = reassignBodySchema.safeParse(request.body);
+      if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
+
+      const result = await reassignCard(db, {
+        cardId: id,
+        newCustomerId: parsed.data.customerId,
+        ...(request.user && { staffId: request.user.id }),
+      });
+      if (!result.ok) {
+        if (result.reason === 'card_not_found')
+          return reply.code(404).send({ error: 'card_not_found' });
+        if (result.reason === 'customer_not_found')
+          return reply.code(404).send({ error: 'customer_not_found' });
+        if (result.reason === 'card_cancelled')
+          return reply.code(409).send({ error: 'card_cancelled' });
+        if (result.reason === 'same_customer')
+          return reply.code(409).send({ error: 'same_customer' });
+      } else {
+        request.log.info(
+          {
+            cardId: id,
+            toCustomerId: parsed.data.customerId,
+            fromCustomerNumber: result.fromCustomerNumber,
+          },
+          '[reassign] success',
+        );
+        return reply.send({ card: result.card, fromCustomerNumber: result.fromCustomerNumber });
       }
       return reply.code(500).send({ error: 'unknown' });
     },
