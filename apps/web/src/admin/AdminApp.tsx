@@ -18,6 +18,7 @@ import {
   type CardListStatus,
 } from '../lib/api/cards';
 import {
+  createCustomer,
   deleteCustomerById,
   getCustomerDetail,
   searchCustomers,
@@ -329,6 +330,7 @@ function Customers() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [detailFor, setDetailFor] = useState<string | null>(null);
+  const [showCreate, setShowCreate] = useState(false);
 
   useEffect(() => {
     const q = query.trim();
@@ -370,12 +372,17 @@ function Customers() {
         }}
       >
         <div style={{ fontSize: 18, fontWeight: 600 }}>ניהול לקוחות</div>
-        <input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="חיפוש לפי שם, טלפון או מספר לקוח…"
-          style={{ ...inputStyle, minWidth: 240, maxWidth: 360 }}
-        />
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="חיפוש לפי שם, טלפון או מספר לקוח…"
+            style={{ ...inputStyle, minWidth: 240, maxWidth: 360 }}
+          />
+          <button onClick={() => setShowCreate(true)} style={{ ...primaryBtn, whiteSpace: 'nowrap' }}>
+            + הוספת לקוח
+          </button>
+        </div>
       </div>
       {query.trim() === '' && (
         <div style={{ color: MUTED, fontSize: 14, padding: '8px 0' }}>
@@ -425,6 +432,224 @@ function Customers() {
           }}
         />
       )}
+      {showCreate && (
+        <CreateCustomerModal
+          onClose={() => setShowCreate(false)}
+          onCreated={(newCustomer) => {
+            setShowCreate(false);
+            // Surface the new customer in-place by adding it to the visible
+            // results list AND opening its detail modal — saves the operator
+            // from typing a search to confirm the create worked.
+            setResults((prev) => [newCustomer, ...prev]);
+            setDetailFor(newCustomer.id);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function humanizeCustomerCreateError(code: string): string {
+  if (code === 'phone_taken') return 'מספר הטלפון כבר רשום במערכת.';
+  if (code === 'invalid_body') return 'אחד השדות לא תקין. בדקו ונסו שוב.';
+  if (code === 'forbidden') return 'אין לכם הרשאה להוסיף לקוח.';
+  return 'לא ניתן לרשום את הלקוח כרגע. נסו שוב בעוד רגע.';
+}
+
+function CreateCustomerModal({
+  onClose,
+  onCreated,
+}: {
+  onClose: () => void;
+  onCreated: (customer: Customer) => void;
+}) {
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [email, setEmail] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [topError, setTopError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<{
+    firstName?: string;
+    lastName?: string;
+    phone?: string;
+    email?: string;
+  }>({});
+
+  const submit = async (e: React.FormEvent): Promise<void> => {
+    e.preventDefault();
+    const trimmedFirst = firstName.trim();
+    const trimmedLast = lastName.trim();
+    const trimmedPhone = phone.trim();
+    const trimmedEmail = email.trim();
+
+    const errors: typeof fieldErrors = {};
+    if (!trimmedFirst) errors.firstName = 'שדה חובה';
+    if (!trimmedLast) errors.lastName = 'שדה חובה';
+    if (!trimmedPhone) errors.phone = 'שדה חובה';
+    if (trimmedEmail && !/^\S+@\S+\.\S+$/.test(trimmedEmail))
+      errors.email = 'כתובת מייל לא תקינה';
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors);
+      setTopError(null);
+      return;
+    }
+
+    setSubmitting(true);
+    setFieldErrors({});
+    setTopError(null);
+    const res = await createCustomer({
+      firstName: trimmedFirst,
+      lastName: trimmedLast,
+      phone: trimmedPhone,
+      ...(trimmedEmail !== '' && { email: trimmedEmail }),
+    });
+    setSubmitting(false);
+
+    if (!res.ok) {
+      if (res.error === 'phone_taken') {
+        setFieldErrors({ phone: 'מספר הטלפון כבר רשום במערכת' });
+      } else {
+        setTopError(humanizeCustomerCreateError(res.error));
+      }
+      return;
+    }
+    onCreated(res.data.customer);
+  };
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      onClick={onClose}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(0,0,0,0.4)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 1000,
+        padding: 20,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: '#fff',
+          borderRadius: 16,
+          padding: 24,
+          width: 480,
+          maxWidth: '100%',
+          boxShadow: '0 12px 32px rgba(0,0,0,0.18)',
+        }}
+      >
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            marginBottom: 14,
+          }}
+        >
+          <div style={{ fontSize: 18, fontWeight: 700 }}>הוספת לקוח חדש</div>
+          <button
+            onClick={onClose}
+            aria-label="סגירה"
+            style={{
+              border: 'none',
+              background: 'transparent',
+              color: MUTED,
+              cursor: 'pointer',
+              fontSize: 22,
+              padding: '4px 8px',
+            }}
+          >
+            ×
+          </button>
+        </div>
+        {topError && (
+          <div
+            style={{
+              background: '#fdecec',
+              color: '#a23a3a',
+              padding: '10px 12px',
+              borderRadius: 8,
+              fontSize: 13,
+              marginBottom: 14,
+            }}
+          >
+            {topError}
+          </div>
+        )}
+        <form onSubmit={(e) => void submit(e)} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <FieldRow label="שם פרטי" error={fieldErrors.firstName}>
+            <input
+              autoFocus
+              value={firstName}
+              onChange={(e) => setFirstName(e.target.value)}
+              disabled={submitting}
+              style={inputStyle}
+            />
+          </FieldRow>
+          <FieldRow label="שם משפחה" error={fieldErrors.lastName}>
+            <input
+              value={lastName}
+              onChange={(e) => setLastName(e.target.value)}
+              disabled={submitting}
+              style={inputStyle}
+            />
+          </FieldRow>
+          <FieldRow label="טלפון" error={fieldErrors.phone}>
+            <input
+              type="tel"
+              placeholder="0541234567"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              disabled={submitting}
+              style={inputStyle}
+            />
+          </FieldRow>
+          <FieldRow label="דוא״ל (אופציונלי)" error={fieldErrors.email}>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              disabled={submitting}
+              style={inputStyle}
+            />
+          </FieldRow>
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 10 }}>
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={submitting}
+              style={{
+                border: '1.5px solid #e9e0d9',
+                background: '#fff',
+                color: MUTED,
+                borderRadius: 8,
+                padding: '8px 16px',
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+            >
+              ביטול
+            </button>
+            <button
+              type="submit"
+              disabled={submitting}
+              style={{
+                ...primaryBtn,
+                opacity: submitting ? 0.7 : 1,
+                cursor: submitting ? 'wait' : 'pointer',
+              }}
+            >
+              {submitting ? 'מוסיף…' : 'הוספה'}
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }
