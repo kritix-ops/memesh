@@ -75,7 +75,7 @@ export const punchByToken = (
 // an entry; powers the rich PunchConfirmModal so the cashier can confirm
 // "is this the right person?" before committing.
 
-export type ScanLookupStatus = 'ok' | 'cancelled' | 'exhausted' | 'expired';
+export type ScanLookupStatus = 'ok' | 'cancelled' | 'exhausted' | 'expired' | 'grace';
 
 export interface ScanLookupCard {
   id: string;
@@ -116,6 +116,10 @@ export interface ScanLookupEntry {
 
 export interface ScanLookupResponse {
   status: ScanLookupStatus;
+  /** Negative when already expired; non-negative when still within validity. */
+  expiresInDays: number;
+  /** From settings — render an "expiring soon" badge when status==='ok' and 0 < expiresInDays ≤ this. 0 disables. */
+  expiryBadgeThresholdDays: number;
   card: ScanLookupCard;
   customer: ScanLookupCustomer;
   entries: ScanLookupEntry[];

@@ -94,15 +94,22 @@ const statusMessage = (preview: ScanLookupResponse): string => {
   if (preview.status === 'exhausted') return 'הכרטיסייה נוצלה במלואה — אין כניסות נוספות';
   if (preview.status === 'expired')
     return `הכרטיסייה פגת תוקף (פגה ב-${fmtDay(preview.card.expiresAt)})`;
+  if (preview.status === 'grace') {
+    const days = Math.abs(preview.expiresInDays);
+    return `הכרטיסייה בתקופת חסד · פגה לפני ${days} ימים. עדיין ניתן לנקב.`;
+  }
   return '';
 };
+
+const isBlocking = (status: ScanLookupResponse['status']): boolean =>
+  status === 'cancelled' || status === 'exhausted' || status === 'expired';
 
 interface Props {
   /** Called when the user dismisses (overlay click or "ביטול"/"סגור"). */
   onClose: () => void;
   /**
    * Called with the chosen companion count when the user taps "נקב".
-   * Not called when the modal is rendered for a non-ok preview status.
+   * Not called when the modal is rendered for a blocking preview status.
    */
   onConfirm: (companions: number) => void;
   /** True while the parent is awaiting the punch response — disables the buttons. */
@@ -110,11 +117,13 @@ interface Props {
   /**
    * Optional preview block. Present in the scan flow so the cashier can see
    * who and what they are about to punch. Omitted in the customer-detail
-   * flow because the customer is already on screen. When the preview's
-   * `status !== 'ok'`, the companion picker is hidden and the primary
-   * action becomes "סגור".
+   * flow because the customer is already on screen. For blocking statuses
+   * the companion picker is hidden and the primary action becomes "סגור".
+   * For 'grace' the picker stays but with a yellow warning banner.
    */
   preview?: ScanLookupResponse;
+  /** Companion picker bounds — settings-driven. Defaults to 1..4 if omitted. */
+  companionRange?: { min: number; max: number };
 }
 
 /**
@@ -122,12 +131,27 @@ interface Props {
  * card preview block. The parent owns the idempotency key and the punch
  * call; this component is pure UI.
  */
-export function PunchConfirmModal({ onClose, onConfirm, submitting, preview }: Props) {
-  const [companions, setCompanions] = useState(1);
+export function PunchConfirmModal({
+  onClose,
+  onConfirm,
+  submitting,
+  preview,
+  companionRange,
+}: Props) {
+  const minC = companionRange?.min ?? 1;
+  const maxC = companionRange?.max ?? 4;
+  const [companions, setCompanions] = useState(minC);
 
-  const canPunch = !preview || preview.status === 'ok';
+  const blocking = preview ? isBlocking(preview.status) : false;
+  const canPunch = !blocking;
   const remaining = preview ? preview.card.totalEntries - preview.card.usedEntries : 0;
   const lastEntry = preview?.entries[0];
+  const showExpiringBadge =
+    preview &&
+    preview.status === 'ok' &&
+    preview.expiryBadgeThresholdDays > 0 &&
+    preview.expiresInDays > 0 &&
+    preview.expiresInDays <= preview.expiryBadgeThresholdDays;
 
   return (
     <div
@@ -139,7 +163,41 @@ export function PunchConfirmModal({ onClose, onConfirm, submitting, preview }: P
       <div style={panelStyle} onClick={(e) => e.stopPropagation()}>
         {preview && <PreviewBlock preview={preview} remaining={remaining} lastEntry={lastEntry} />}
 
-        {preview && !canPunch && (
+        {showExpiringBadge && preview && (
+          <div
+            role="status"
+            style={{
+              background: '#fff7d8',
+              color: '#8a6a18',
+              borderRadius: 10,
+              padding: '10px 12px',
+              fontSize: 13,
+              fontWeight: 600,
+              marginTop: preview ? 12 : 0,
+            }}
+          >
+            פג בקרוב · נותרו {preview.expiresInDays} ימים
+          </div>
+        )}
+
+        {preview && preview.status === 'grace' && (
+          <div
+            role="alert"
+            style={{
+              background: '#fff7d8',
+              color: '#8a6a18',
+              borderRadius: 10,
+              padding: '12px 14px',
+              fontSize: 14,
+              fontWeight: 600,
+              marginTop: preview ? 16 : 0,
+            }}
+          >
+            {statusMessage(preview)}
+          </div>
+        )}
+
+        {preview && blocking && (
           <div
             role="alert"
             style={{
@@ -180,8 +238,8 @@ export function PunchConfirmModal({ onClose, onConfirm, submitting, preview }: P
             >
               <button
                 style={stepBtnStyle}
-                onClick={() => setCompanions((n) => Math.max(1, n - 1))}
-                disabled={submitting}
+                onClick={() => setCompanions((n) => Math.max(minC, n - 1))}
+                disabled={submitting || companions <= minC}
                 aria-label="פחות מלווים"
               >
                 −
@@ -196,8 +254,8 @@ export function PunchConfirmModal({ onClose, onConfirm, submitting, preview }: P
               </div>
               <button
                 style={stepBtnStyle}
-                onClick={() => setCompanions((n) => Math.min(4, n + 1))}
-                disabled={submitting}
+                onClick={() => setCompanions((n) => Math.min(maxC, n + 1))}
+                disabled={submitting || companions >= maxC}
                 aria-label="עוד מלווים"
               >
                 +

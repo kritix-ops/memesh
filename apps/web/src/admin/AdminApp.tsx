@@ -17,12 +17,8 @@ import {
   type CardDetailResponse,
   type CardListStatus,
 } from '../lib/api/cards';
-import {
-  getCardSettings,
-  updateCardSettings,
-  type CardSettings,
-  type CardSettingsPatch,
-} from '../lib/api/card-settings';
+import { getCancelContext, type CancelContext } from '../lib/api/card-settings';
+import { Settings } from './settings/Settings';
 import {
   createCustomer,
   deleteCustomerById,
@@ -916,6 +912,10 @@ function humanizeCancelError(code: string): string {
   if (code === 'not_found') return 'הכרטיסייה לא נמצאה (ייתכן שכבר בוטלה). רעננו את הדף.';
   if (code === 'invalid_body') return 'סיבת הביטול אינה תקינה.';
   if (code === 'invalid_id') return 'מזהה כרטיסייה לא תקין.';
+  if (code === 'cancel_blocked_after_punch')
+    return 'לא ניתן לבטל כרטיסייה לאחר ניקוב הראשון, לפי ההגדרות.';
+  if (code === 'reason_too_short') return 'סיבת הביטול קצרה מדי.';
+  if (code === 'forbidden') return 'אין לך הרשאה לבטל כרטיסייה — שאלו את האדמין.';
   return 'תקלה זמנית. נסו שוב בעוד רגע.';
 }
 
@@ -933,7 +933,23 @@ function CancelCardModal({
   onConfirm: (reason: string) => void;
 }) {
   const [reason, setReason] = useState('');
+  const [context, setContext] = useState<CancelContext | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const res = await getCancelContext();
+      if (cancelled) return;
+      if (res.ok) setContext(res.data);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const trimmed = reason.trim();
+  const minLen = context?.minCancelReasonLength ?? 1;
+  const reasonTooShort = trimmed.length < minLen;
+  const blockedByPunches =
+    Boolean(context && !context.allowCancelAfterFirstPunch && card.usedEntries > 0);
   const customerLabel =
     card.customerFirstName || card.customerLastName
       ? `${card.customerFirstName ?? ''} ${card.customerLastName ?? ''}`.trim()
@@ -967,8 +983,45 @@ function CancelCardModal({
         <div style={{ fontSize: 14, color: MUTED, marginTop: 6, marginBottom: 16 }}>
           {card.serialNumber} · {customerLabel}
         </div>
+        {context?.refundPolicyText && context.refundPolicyText.trim() !== '' && (
+          <div
+            style={{
+              marginBottom: 14,
+              padding: '12px 14px',
+              background: '#fff8f3',
+              border: '1px solid #ffe3d4',
+              borderRadius: 10,
+              fontSize: 13,
+              color: INK,
+              whiteSpace: 'pre-wrap',
+            }}
+          >
+            <div style={{ fontWeight: 600, color: '#a8643d', marginBottom: 4 }}>
+              מדיניות החזרים
+            </div>
+            {context.refundPolicyText}
+          </div>
+        )}
+        {blockedByPunches && (
+          <div
+            role="alert"
+            style={{
+              marginBottom: 14,
+              padding: '10px 14px',
+              background: '#fbecec',
+              color: '#a23a3a',
+              borderRadius: 10,
+              fontSize: 13.5,
+              fontWeight: 600,
+            }}
+          >
+            ההגדרות אוסרות ביטול לאחר ניקוב ראשון. השרת ידחה את הבקשה.
+          </div>
+        )}
         <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <span style={{ fontSize: 13.5, color: MUTED }}>סיבת ביטול *</span>
+          <span style={{ fontSize: 13.5, color: MUTED }}>
+            סיבת ביטול * {minLen > 1 ? `(לפחות ${minLen} תווים)` : ''}
+          </span>
           <textarea
             value={reason}
             onChange={(e) => setReason(e.target.value)}
@@ -1006,7 +1059,7 @@ function CancelCardModal({
           <button
             type="button"
             onClick={() => onConfirm(trimmed)}
-            disabled={submitting || trimmed.length === 0}
+            disabled={submitting || reasonTooShort || blockedByPunches}
             style={{
               border: 'none',
               background: '#c25a5a',
@@ -1014,8 +1067,9 @@ function CancelCardModal({
               borderRadius: 10,
               padding: '10px 18px',
               fontWeight: 600,
-              cursor: submitting || trimmed.length === 0 ? 'not-allowed' : 'pointer',
-              opacity: submitting || trimmed.length === 0 ? 0.6 : 1,
+              cursor:
+                submitting || reasonTooShort || blockedByPunches ? 'not-allowed' : 'pointer',
+              opacity: submitting || reasonTooShort || blockedByPunches ? 0.6 : 1,
             }}
           >
             {submitting ? 'מבטל…' : 'אישור ביטול'}
@@ -2474,266 +2528,6 @@ function Reports() {
         />
       )}
     </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Settings — admin-editable defaults applied to new cards only.
-// ---------------------------------------------------------------------------
-
-// Field-level errors map server validation codes to Hebrew text below the input.
-function humanizeSettingsError(code: string): string {
-  if (code === 'price_out_of_range') return 'מחיר חייב להיות בין 0 ל-10,000';
-  if (code === 'validity_out_of_range') return 'תוקף חייב להיות בין 1 ל-3,650 ימים';
-  if (code === 'entries_out_of_range') return 'כניסות חייב להיות בין 1 ל-100';
-  if (code === 'pitch_length') return 'טקסט שיווקי חייב לכלול בין תו אחד ל-200 תווים';
-  if (code === 'no_changes') return 'לא בוצעו שינויים';
-  if (code === 'invalid_body') return 'נתונים לא תקינים. בדקו ונסו שוב.';
-  if (code === 'forbidden') return 'רק אדמין יכול לערוך הגדרות.';
-  return 'לא ניתן לשמור את ההגדרות. נסו שוב בעוד רגע.';
-}
-
-function Settings() {
-  const [loaded, setLoaded] = useState<CardSettings | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
-
-  // Form state, kept as strings so the inputs are controlled cleanly while the
-  // user is editing (an in-progress empty number field would otherwise jump to 0).
-  const [priceStr, setPriceStr] = useState('');
-  const [validityStr, setValidityStr] = useState('');
-  const [entriesStr, setEntriesStr] = useState('');
-  const [pitch, setPitch] = useState('');
-
-  const [submitting, setSubmitting] = useState(false);
-  const [topError, setTopError] = useState<string | null>(null);
-  const [savedFlash, setSavedFlash] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      console.info('[web admin settings] load');
-      const res = await getCardSettings();
-      if (cancelled) return;
-      if (res.ok) {
-        setLoaded(res.data.settings);
-        setPriceStr(String(res.data.settings.priceShekels));
-        setValidityStr(String(res.data.settings.validityDays));
-        setEntriesStr(String(res.data.settings.totalEntries));
-        setPitch(res.data.settings.pitchLabel);
-      } else {
-        console.warn('[web admin settings] load failed', { error: res.error });
-        setLoadError(res.error);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const dirty =
-    loaded !== null &&
-    (priceStr !== String(loaded.priceShekels) ||
-      validityStr !== String(loaded.validityDays) ||
-      entriesStr !== String(loaded.totalEntries) ||
-      pitch !== loaded.pitchLabel);
-
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
-    if (!loaded || !dirty || submitting) return;
-
-    // Build a patch containing only fields whose displayed value actually
-    // changed. Lets the server return `no_changes` on a no-op submit.
-    const patch: CardSettingsPatch = {};
-    const price = Number(priceStr);
-    const validity = Number(validityStr);
-    const entries = Number(entriesStr);
-    if (!Number.isInteger(price) || price < 0) {
-      setTopError('מחיר חייב להיות מספר שלם חיובי');
-      return;
-    }
-    if (!Number.isInteger(validity) || validity < 1) {
-      setTopError('תוקף חייב להיות מספר שלם של ימים');
-      return;
-    }
-    if (!Number.isInteger(entries) || entries < 1) {
-      setTopError('כניסות חייב להיות מספר שלם חיובי');
-      return;
-    }
-    if (price !== loaded.priceShekels) patch.priceShekels = price;
-    if (validity !== loaded.validityDays) patch.validityDays = validity;
-    if (entries !== loaded.totalEntries) patch.totalEntries = entries;
-    if (pitch.trim() !== loaded.pitchLabel) patch.pitchLabel = pitch.trim();
-
-    setSubmitting(true);
-    setTopError(null);
-    console.info('[web admin settings] save', { fields: Object.keys(patch) });
-    const res = await updateCardSettings(patch);
-    setSubmitting(false);
-    if (!res.ok) {
-      console.warn('[web admin settings] save failed', { error: res.error });
-      setTopError(humanizeSettingsError(res.error));
-      return;
-    }
-    console.info('[web admin settings] saved', { diff: res.data.diff });
-    setLoaded(res.data.settings);
-    setSavedFlash('הגדרות נשמרו');
-    setTimeout(() => setSavedFlash(null), 2500);
-  };
-
-  if (loadError) {
-    return (
-      <div style={card}>
-        <div style={{ fontSize: 18, fontWeight: 600, marginBottom: 8 }}>הגדרות</div>
-        <div style={{ color: '#a23a3a', fontSize: 14 }}>
-          לא ניתן לטעון הגדרות.{' '}
-          {loadError === 'forbidden' ? 'רק אדמין יכול לפתוח מסך זה.' : 'רעננו את הדף.'}
-        </div>
-      </div>
-    );
-  }
-  if (!loaded) {
-    return (
-      <div style={card}>
-        <div style={{ fontSize: 18, fontWeight: 600, marginBottom: 8 }}>הגדרות</div>
-        <div style={{ color: MUTED, fontSize: 14 }}>טוען…</div>
-      </div>
-    );
-  }
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div style={card}>
-        <div style={{ fontSize: 18, fontWeight: 600 }}>הגדרות כרטיסייה</div>
-        <div style={{ color: MUTED, fontSize: 13.5, marginTop: 4 }}>
-          ערכים אלה חלים על כרטיסיות חדשות בלבד. כרטיסיות שכבר נמכרו שומרות את הערכים המקוריים.
-        </div>
-
-        <form onSubmit={submit} style={{ marginTop: 18 }}>
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))',
-              gap: 14,
-            }}
-          >
-            <SettingsField
-              label="מחיר (₪)"
-              value={priceStr}
-              onChange={setPriceStr}
-              type="number"
-              disabled={submitting}
-              inputMode="numeric"
-            />
-            <SettingsField
-              label="תוקף כרטיסייה (ימים)"
-              value={validityStr}
-              onChange={setValidityStr}
-              type="number"
-              disabled={submitting}
-              inputMode="numeric"
-            />
-            <SettingsField
-              label="כניסות בכרטיסייה"
-              value={entriesStr}
-              onChange={setEntriesStr}
-              type="number"
-              disabled={submitting}
-              inputMode="numeric"
-            />
-          </div>
-
-          <label style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 14 }}>
-            <span style={{ fontSize: 13.5, color: MUTED }}>טקסט שיווקי בקופה</span>
-            <input
-              style={inputStyle}
-              value={pitch}
-              onChange={(e) => setPitch(e.target.value)}
-              disabled={submitting}
-              maxLength={200}
-            />
-            <span style={{ fontSize: 12.5, color: MUTED }}>
-              נראה ללקוח במסך מכירת הכרטיסייה בקופה.
-            </span>
-          </label>
-
-          {topError && (
-            <div
-              role="alert"
-              style={{
-                marginTop: 14,
-                padding: '10px 14px',
-                background: '#fbecec',
-                color: '#a23a3a',
-                borderRadius: 10,
-                fontSize: 14,
-              }}
-            >
-              {topError}
-            </div>
-          )}
-          {savedFlash && (
-            <div
-              role="status"
-              style={{
-                marginTop: 14,
-                padding: '10px 14px',
-                background: '#f0f5e3',
-                color: '#6f8f37',
-                borderRadius: 10,
-                fontSize: 14,
-                fontWeight: 600,
-              }}
-            >
-              ✓ {savedFlash}
-            </div>
-          )}
-
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 18 }}>
-            <button
-              type="submit"
-              disabled={submitting || !dirty}
-              style={{
-                ...primaryBtn,
-                opacity: submitting || !dirty ? 0.5 : 1,
-                cursor: submitting || !dirty ? 'default' : 'pointer',
-              }}
-            >
-              {submitting ? 'שומר…' : 'שמור'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-}
-
-function SettingsField({
-  label,
-  value,
-  onChange,
-  type,
-  disabled,
-  inputMode,
-}: {
-  label: string;
-  value: string;
-  onChange: (next: string) => void;
-  type?: 'text' | 'number';
-  disabled?: boolean;
-  inputMode?: 'numeric' | 'text';
-}) {
-  return (
-    <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-      <span style={{ fontSize: 13.5, color: MUTED }}>{label}</span>
-      <input
-        style={inputStyle}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        type={type ?? 'text'}
-        {...(inputMode !== undefined && { inputMode })}
-        disabled={disabled}
-      />
-    </label>
   );
 }
 

@@ -1,10 +1,19 @@
 import { createHash } from 'node:crypto';
-import { db, punchCard, punchCards, scanAttempts, scanCardLookup } from '@memesh/db';
+import {
+  customers,
+  db,
+  getCardSettings,
+  punchCard,
+  punchCards,
+  scanAttempts,
+  scanCardLookup,
+} from '@memesh/db';
 import { isVerifyFailure, verifyToken } from '@memesh/qr-engine';
 import { eq } from 'drizzle-orm';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { requireRoleHook } from '../lib/auth-guards.js';
+import { sendMarketingSms } from '../lib/sms.js';
 import { envKeyResolver } from '../qr.js';
 
 const STAFF = ['cashier', 'manager', 'admin'] as const;
@@ -33,12 +42,16 @@ const lookupBodySchema = z
     message: 'token or serial is required',
   });
 
-// Failures map to HTTP: 404 for unknown, 409 for a card that exists but cannot be punched.
+// Failures map to HTTP: 404 for unknown, 409 for a card that exists but cannot
+// be punched, 400 for a malformed request (out-of-range companions), 429 for
+// a settings-driven rate limit (same-day lockout).
 const reasonStatus: Record<string, number> = {
   not_found: 404,
   inactive: 409,
   expired: 409,
   exhausted: 409,
+  locked_out: 429,
+  companions_out_of_range: 400,
 };
 
 const hashToken = (token: string): string => createHash('sha256').update(token).digest('hex');
@@ -110,16 +123,63 @@ export const punchRoutes: FastifyPluginAsync = async (fastify) => {
       });
 
       if (!result.ok) {
-        return reply
-          .code(reasonStatus[result.reason] ?? 409)
-          .send({ ok: false, error: result.reason });
+        const body: Record<string, unknown> = { ok: false, error: result.reason };
+        if (result.reason === 'locked_out' && result.retryAfterMinutes !== undefined) {
+          body.retryAfterMinutes = result.retryAfterMinutes;
+        }
+        if (result.reason === 'companions_out_of_range' && result.allowedRange) {
+          body.allowedRange = result.allowedRange;
+        }
+        return reply.code(reasonStatus[result.reason] ?? 409).send(body);
       }
+
+      // Fire-and-log marketing SMS when remaining ≤ threshold. The wrapper
+      // enforces the setting, consent, and quiet hours. Skips for replays so
+      // a network retry doesn't trigger a duplicate SMS.
+      if (!result.replay) {
+        void (async () => {
+          try {
+            const settings = await getCardSettings(db);
+            if (
+              settings.smsLowEntriesThreshold > 0 &&
+              result.remaining <= settings.smsLowEntriesThreshold &&
+              result.remaining > 0
+            ) {
+              const custRows = await db
+                .select({
+                  phone: customers.phone,
+                  marketingConsentAt: customers.marketingConsentAt,
+                  firstName: customers.firstName,
+                })
+                .from(customers)
+                .leftJoin(punchCards, eq(punchCards.customerId, customers.id))
+                .where(eq(punchCards.id, punchCardId!))
+                .limit(1);
+              const cust = custRows[0];
+              if (cust) {
+                await sendMarketingSms({
+                  to: cust.phone,
+                  body: `${cust.firstName} שלום, נותרו ${result.remaining} כניסות בכרטיסייה שלך ב-Memesh. נשמח לראות אותך שוב!`,
+                  marketingConsentAt: cust.marketingConsentAt,
+                  kind: 'low_entries',
+                  log: request.log,
+                  settings,
+                });
+              }
+            }
+          } catch (err) {
+            request.log.warn({ err }, '[punch] low-entries SMS failed silently');
+          }
+        })();
+      }
+
       return {
         ok: true,
         replay: result.replay,
         remaining: result.remaining,
         usedEntries: result.usedEntries,
         totalEntries: result.totalEntries,
+        grace: result.grace,
       };
     },
   );

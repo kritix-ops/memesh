@@ -1,4 +1,11 @@
-import { createCustomer, customerDetail, customers, db, deleteCustomer } from '@memesh/db';
+import {
+  createCustomer,
+  customerDetail,
+  customers,
+  db,
+  deleteCustomer,
+  getCardSettings,
+} from '@memesh/db';
 import { desc, ilike, or } from 'drizzle-orm';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
@@ -38,6 +45,21 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
     if (!parsed.success) {
       return reply.code(400).send({ error: 'invalid_body', issues: parsed.error.issues });
     }
+
+    // Settings-driven required fields: email and/or ≥1 child can be made
+    // required for new customers. Returns granular error codes so the
+    // frontend can highlight the right inputs.
+    const settings = await getCardSettings(db);
+    if (settings.requireEmailOnNewCustomer && !parsed.data.email) {
+      return reply.code(400).send({ error: 'email_required' });
+    }
+    if (
+      settings.requireChildOnNewCustomer &&
+      (!parsed.data.children || parsed.data.children.length === 0)
+    ) {
+      return reply.code(400).send({ error: 'child_required' });
+    }
+
     try {
       const customer = await createCustomer(db, {
         firstName: parsed.data.firstName,

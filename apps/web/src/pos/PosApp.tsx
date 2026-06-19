@@ -1,7 +1,14 @@
 import { Scanner, type IDetectedBarcode, type IScannerError } from '@yudiel/react-qr-scanner';
 import { type CSSProperties, useEffect, useRef, useState } from 'react';
 import { FauxQr, PunchCard, Sun } from '../brand';
-import { getCardPricing, type CardPricing } from '../lib/api/card-settings';
+import {
+  getCardPricing,
+  getCompanionLimits,
+  getCustomerFormRules,
+  type CardPricing,
+  type CompanionLimits,
+  type CustomerFormRules,
+} from '../lib/api/card-settings';
 import { sellCard, type SellCardResponse } from '../lib/api/cards';
 import {
   createCustomer,
@@ -169,6 +176,8 @@ const FALLBACK_PRICING: CardPricing = {
   priceShekels: 320,
   pitchLabel: 'משלמים על 10, מקבלים 12 · תקף לשנה',
 };
+const FALLBACK_COMPANION_LIMITS: CompanionLimits = { min: 1, max: 4 };
+const FALLBACK_FORM_RULES: CustomerFormRules = { requireEmail: false, requireChild: false };
 
 export function PosApp() {
   const { state: sessionState } = useStaffSession();
@@ -181,20 +190,39 @@ export function PosApp() {
   const [query, setQuery] = useState('');
   const [sellStep, setSellStep] = useState<SellStep>('choose');
 
-  // Card price + pitch text come from /pos/card-pricing (admin-editable in the
-  // 'הגדרות' tab). Fetched once on mount; falls back to the hardcoded defaults
-  // if the call fails so the cashier can still ring up a sale.
+  // Card price + pitch text + companion bounds + customer-form rules all come
+  // from /pos/* endpoints (admin-editable in 'הגדרות'). Fetched together on
+  // mount; each independently falls back to hardcoded defaults if its call
+  // fails so the cashier is never blocked from working.
   const [pricing, setPricing] = useState<CardPricing>(FALLBACK_PRICING);
+  const [companionLimits, setCompanionLimits] = useState<CompanionLimits>(FALLBACK_COMPANION_LIMITS);
+  const [formRules, setFormRules] = useState<CustomerFormRules>(FALLBACK_FORM_RULES);
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const res = await getCardPricing();
+      const [p, c, r] = await Promise.all([
+        getCardPricing(),
+        getCompanionLimits(),
+        getCustomerFormRules(),
+      ]);
       if (cancelled) return;
-      if (res.ok) {
-        console.info('[web pos pricing] fetched', { priceShekels: res.data.priceShekels });
-        setPricing(res.data);
+      if (p.ok) {
+        console.info('[web pos pricing] fetched', { priceShekels: p.data.priceShekels });
+        setPricing(p.data);
       } else {
-        console.warn('[web pos pricing] fallback', { error: res.error });
+        console.warn('[web pos pricing] fallback', { error: p.error });
+      }
+      if (c.ok) {
+        console.info('[web pos companion-limits] fetched', c.data);
+        setCompanionLimits(c.data);
+      } else {
+        console.warn('[web pos companion-limits] fallback', { error: c.error });
+      }
+      if (r.ok) {
+        console.info('[web pos form-rules] fetched', r.data);
+        setFormRules(r.data);
+      } else {
+        console.warn('[web pos form-rules] fallback', { error: r.error });
       }
     })();
     return () => {
@@ -248,7 +276,12 @@ export function PosApp() {
 
   // Optional marketing fields (Yanai feedback item 2). All hidden under an
   // expandable section so the basic walk-in flow stays one-tap.
+  // Default-open the optional extras when a child is required by settings —
+  // otherwise the cashier never sees the children section without scrolling.
   const [newExtrasOpen, setNewExtrasOpen] = useState(false);
+  useEffect(() => {
+    if (formRules.requireChild) setNewExtrasOpen(true);
+  }, [formRules.requireChild]);
   const [newSource, setNewSource] = useState<CustomerSourceValue | ''>('');
   const [newMarketingConsent, setNewMarketingConsent] = useState(false);
   const [newChildren, setNewChildren] = useState<ChildRecord[]>([]);
@@ -284,6 +317,10 @@ export function PosApp() {
     if (!trimmedPhone) errors.phone = 'שדה חובה';
     if (trimmedEmail && !/^\S+@\S+\.\S+$/.test(trimmedEmail)) errors.email = 'כתובת מייל לא תקינה';
 
+    // Settings-driven required fields. Mirror the server validation client-side
+    // so the cashier sees the inline error instead of round-tripping a 400.
+    if (formRules.requireEmail && !trimmedEmail) errors.email = 'מייל חובה לפי ההגדרות';
+
     // Trim + validate child rows (only those the cashier added). A row with
     // a name MUST have a valid DOB; we don't allow half-filled rows to
     // silently land in the DB.
@@ -298,6 +335,9 @@ export function PosApp() {
         break;
       }
       cleanChildren.push({ name: cname, dob: cdob });
+    }
+    if (formRules.requireChild && cleanChildren.length === 0) {
+      errors.children = 'חובה להוסיף לפחות ילד אחד לפי ההגדרות';
     }
 
     if (Object.keys(errors).length > 0) {
@@ -326,6 +366,10 @@ export function PosApp() {
       console.warn('[web newcustomer] error', { status: res.status, error: res.error });
       if (res.error === 'phone_taken') {
         setNewFieldErrors({ phone: 'מספר הטלפון כבר רשום במערכת' });
+      } else if (res.error === 'email_required') {
+        setNewFieldErrors({ email: 'מייל חובה לפי ההגדרות' });
+      } else if (res.error === 'child_required') {
+        setNewFieldErrors({ children: 'חובה להוסיף לפחות ילד אחד לפי ההגדרות' });
       } else if (res.error === 'invalid_body') {
         setNewTopError('אחד השדות לא תקין. בדקו ונסו שוב.');
       } else {
@@ -897,6 +941,7 @@ export function PosApp() {
             onClose={() => setAskPunch(false)}
             onConfirm={confirmPunch}
             submitting={punching}
+            companionRange={companionLimits}
           />
         )}
       </div>
@@ -960,7 +1005,8 @@ export function PosApp() {
               />
               <NewCustomerField
                 label="מייל"
-                badge="מומלץ"
+                required={formRules.requireEmail}
+                badge={formRules.requireEmail ? undefined : 'מומלץ'}
                 value={newEmail}
                 onChange={setNewEmail}
                 error={newFieldErrors.email}
@@ -1662,6 +1708,7 @@ export function PosApp() {
             }}
             onConfirm={confirmPunch}
             submitting={phase === 'submitting'}
+            companionRange={companionLimits}
             {...(preview !== null && { preview })}
           />
         )}

@@ -1,12 +1,16 @@
-import { eq } from 'drizzle-orm';
+import { desc, eq } from 'drizzle-orm';
 import type { PgDatabase } from 'drizzle-orm/pg-core';
+import { getCardSettings } from './card-settings';
 import { punchCardEntries, punchCards, scanAttempts } from './schema/index';
 
 export type PunchMethod = 'qr_scan' | 'serial' | 'phone' | 'manual';
-export type PunchFailureReason = 'not_found' | 'inactive' | 'expired' | 'exhausted';
-
-const COMPANION_MIN = 1;
-const COMPANION_MAX = 4;
+export type PunchFailureReason =
+  | 'not_found'
+  | 'inactive'
+  | 'expired'
+  | 'exhausted'
+  | 'locked_out'
+  | 'companions_out_of_range';
 
 export interface PunchAudit {
   qrTokenHash?: string;
@@ -33,19 +37,32 @@ export type PunchResult =
       usedEntries: number;
       totalEntries: number;
       remaining: number;
+      /** True when the card was past expiresAt but within the configured grace window. */
+      grace: boolean;
     }
-  | { ok: false; reason: PunchFailureReason };
+  | {
+      ok: false;
+      reason: PunchFailureReason;
+      /** Present for `locked_out`: how many minutes until the next punch is allowed. */
+      retryAfterMinutes?: number;
+      /** Present for `companions_out_of_range`: the active min/max range from settings. */
+      allowedRange?: { min: number; max: number };
+    };
 
 // Accept any PostgreSQL Drizzle database (node-postgres in prod, PGlite in tests).
 // The function references schema tables directly, so the schema generic is not needed here.
 type AnyPgDatabase = PgDatabase<any, any, any>;
 
-type AuditResult = 'success' | PunchFailureReason;
-
-const clampCompanions = (n: number): number => {
-  if (!Number.isFinite(n)) return COMPANION_MIN;
-  return Math.min(COMPANION_MAX, Math.max(COMPANION_MIN, Math.trunc(n)));
-};
+// The scan_attempts.result enum is narrower than PunchFailureReason — some
+// failure modes (companions_out_of_range) don't get audited at all, and
+// locked_out maps to the existing 'rate_limited' enum value.
+type AuditResult =
+  | 'success'
+  | 'not_found'
+  | 'inactive'
+  | 'expired'
+  | 'exhausted'
+  | 'rate_limited';
 
 /**
  * Atomically punch one entry on a card.
@@ -57,9 +74,13 @@ const clampCompanions = (n: number): number => {
  */
 export async function punchCard(db: AnyPgDatabase, input: PunchInput): Promise<PunchResult> {
   const now = input.now ?? new Date();
-  const companionCount = clampCompanions(input.companionCount ?? COMPANION_MIN);
 
   return db.transaction(async (tx) => {
+    // Settings drive companion limits, lockout window, and grace period. Read
+    // once per call (inside the tx so a concurrent settings update is consistent).
+    const settings = await getCardSettings(tx);
+    const requestedCompanions = Math.trunc(input.companionCount ?? settings.minCompanions);
+
     const writeAudit = async (result: AuditResult): Promise<void> => {
       await tx.insert(scanAttempts).values({
         qrTokenHash: input.audit?.qrTokenHash ?? null,
@@ -79,6 +100,22 @@ export async function punchCard(db: AnyPgDatabase, input: PunchInput): Promise<P
         .limit(1);
       return rows[0];
     };
+
+    // Companion validation against the configured range. Fail fast — no point
+    // even reading the card if the cashier picked an out-of-range count.
+    // Not audited to scan_attempts: this is a cashier-side UX validation, not
+    // a security event.
+    if (
+      !Number.isFinite(requestedCompanions) ||
+      requestedCompanions < settings.minCompanions ||
+      requestedCompanions > settings.maxCompanions
+    ) {
+      return {
+        ok: false,
+        reason: 'companions_out_of_range',
+        allowedRange: { min: settings.minCompanions, max: settings.maxCompanions },
+      };
+    }
 
     // Idempotent replay: this key already punched, so do not punch again.
     if (input.idempotencyKey) {
@@ -104,6 +141,7 @@ export async function punchCard(db: AnyPgDatabase, input: PunchInput): Promise<P
           usedEntries: card.usedEntries,
           totalEntries: card.totalEntries,
           remaining: card.totalEntries - card.usedEntries,
+          grace: false,
         };
       }
     }
@@ -117,13 +155,47 @@ export async function punchCard(db: AnyPgDatabase, input: PunchInput): Promise<P
       await writeAudit('inactive');
       return { ok: false, reason: 'inactive' };
     }
-    if (card.expiresAt.getTime() <= now.getTime()) {
-      await writeAudit('expired');
-      return { ok: false, reason: 'expired' };
+
+    // Expiry with grace: card is past expiresAt → if within grace, accept and
+    // flag `grace: true` on the success result. Past grace → hard fail.
+    const expiresMs = card.expiresAt.getTime();
+    const graceCutoffMs = expiresMs + settings.gracePeriodDays * 24 * 60 * 60 * 1000;
+    let inGrace = false;
+    if (expiresMs <= now.getTime()) {
+      if (now.getTime() <= graceCutoffMs) {
+        inGrace = true;
+      } else {
+        await writeAudit('expired');
+        return { ok: false, reason: 'expired' };
+      }
     }
+
     if (card.usedEntries >= card.totalEntries) {
       await writeAudit('exhausted');
       return { ok: false, reason: 'exhausted' };
+    }
+
+    // Same-day lockout: if the most recent successful entry on this card is
+    // within `sameDayLockoutMinutes`, refuse. Disabled (0) skips the query.
+    if (settings.sameDayLockoutMinutes > 0) {
+      const lastRows = await tx
+        .select({ punchedAt: punchCardEntries.punchedAt })
+        .from(punchCardEntries)
+        .where(eq(punchCardEntries.punchCardId, card.id))
+        .orderBy(desc(punchCardEntries.punchedAt))
+        .limit(1);
+      const last = lastRows[0];
+      if (last) {
+        const elapsedMin = (now.getTime() - last.punchedAt.getTime()) / 60000;
+        if (elapsedMin < settings.sameDayLockoutMinutes) {
+          await writeAudit('rate_limited');
+          return {
+            ok: false,
+            reason: 'locked_out',
+            retryAfterMinutes: Math.ceil(settings.sameDayLockoutMinutes - elapsedMin),
+          };
+        }
+      }
     }
 
     const nextUsed = card.usedEntries + 1;
@@ -135,7 +207,7 @@ export async function punchCard(db: AnyPgDatabase, input: PunchInput): Promise<P
         punchCardId: card.id,
         punchedBy: input.punchedBy ?? null,
         method: input.method,
-        companionCount,
+        companionCount: requestedCompanions,
         idempotencyKey: input.idempotencyKey ?? null,
         notes: input.notes ?? null,
         punchedAt: now,
@@ -161,6 +233,7 @@ export async function punchCard(db: AnyPgDatabase, input: PunchInput): Promise<P
       usedEntries: nextUsed,
       totalEntries: card.totalEntries,
       remaining: card.totalEntries - nextUsed,
+      grace: inGrace,
     };
   });
 }

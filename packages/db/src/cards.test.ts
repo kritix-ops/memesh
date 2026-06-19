@@ -172,10 +172,11 @@ test('cancelCard deactivates a card, records the reason, and logs an action', as
   const card = await createPunchCard(db, resolver, { customerId: cust.id });
 
   const cancelled = await cancelCard(db, { cardId: card.id, reason: 'בקשת לקוח' });
-  assert.ok(cancelled);
-  assert.equal(cancelled.isActive, false);
-  assert.equal(cancelled.cancelReason, 'בקשת לקוח');
-  assert.ok(cancelled.cancelledAt);
+  assert.equal(cancelled.ok, true);
+  if (!cancelled.ok) return;
+  assert.equal(cancelled.card.isActive, false);
+  assert.equal(cancelled.card.cancelReason, 'בקשת לקוח');
+  assert.ok(cancelled.card.cancelledAt);
 
   const actions = await listStaffActions(db);
   assert.ok(actions.some((a) => a.action === 'cancel_card'));
@@ -187,10 +188,11 @@ test('cancelCard refuses to re-cancel an already-cancelled card (no duplicate au
   const card = await createPunchCard(db, resolver, { customerId: cust.id });
 
   const first = await cancelCard(db, { cardId: card.id, reason: 'בקשת לקוח' });
-  assert.ok(first);
+  assert.equal(first.ok, true);
 
   const second = await cancelCard(db, { cardId: card.id, reason: 'ניסיון נוסף' });
-  assert.equal(second, undefined);
+  assert.equal(second.ok, false);
+  if (!second.ok) assert.equal(second.reason, 'not_found');
 
   // Only one cancel_card action was logged.
   const actions = await listStaffActions(db);
@@ -202,7 +204,7 @@ test('a cancelled card cannot be punched', async () => {
   const db = await freshDb();
   const cust = await makeCustomer(db);
   const card = await createPunchCard(db, resolver, { customerId: cust.id });
-  await cancelCard(db, { cardId: card.id, reason: 'בדיקה' });
+  await cancelCard(db, { cardId: card.id, reason: 'בדיקה לבדיקה' });
 
   const res = await punchCard(db, { punchCardId: card.id, method: 'qr_scan' });
   assert.equal(res.ok, false);
@@ -412,4 +414,180 @@ test('scanCardLookup returns undefined for an unknown card id', async () => {
   const db = await freshDb();
   const missing = await scanCardLookup(db, '00000000-0000-0000-0000-000000000000');
   assert.equal(missing, undefined);
+});
+
+test('scanCardLookup returns status=grace when expired but within gracePeriodDays', async () => {
+  const db = await freshDb();
+  await updateCardSettings(db, { gracePeriodDays: 14 });
+  const cust = await makeCustomer(db);
+  const created = new Date('2024-01-01T00:00:00.000Z');
+  // Card validity is 365 days by default, so it expires 2025-01-01.
+  // Query 5 days after expiry → still within 14d grace.
+  const card = await createPunchCard(db, resolver, { customerId: cust.id, now: created });
+  const queryAt = new Date(card.expiresAt.getTime() + 5 * 24 * 60 * 60 * 1000);
+  const preview = await scanCardLookup(db, card.id, queryAt);
+  assert.ok(preview);
+  assert.equal(preview.status, 'grace');
+  // expiresInDays is negative when past expiry.
+  assert.ok(preview.expiresInDays <= 0);
+});
+
+test('scanCardLookup status=expired once past grace window', async () => {
+  const db = await freshDb();
+  await updateCardSettings(db, { gracePeriodDays: 5 });
+  const cust = await makeCustomer(db);
+  const created = new Date('2024-01-01T00:00:00.000Z');
+  const card = await createPunchCard(db, resolver, { customerId: cust.id, now: created });
+  const queryAt = new Date(card.expiresAt.getTime() + 30 * 24 * 60 * 60 * 1000);
+  const preview = await scanCardLookup(db, card.id, queryAt);
+  assert.ok(preview);
+  assert.equal(preview.status, 'expired');
+});
+
+test('scanCardLookup echoes expiryBadgeThresholdDays from settings', async () => {
+  const db = await freshDb();
+  await updateCardSettings(db, { expiryBadgeThresholdDays: 7 });
+  const cust = await makeCustomer(db);
+  const card = await createPunchCard(db, resolver, { customerId: cust.id });
+  const preview = await scanCardLookup(db, card.id);
+  assert.ok(preview);
+  assert.equal(preview.expiryBadgeThresholdDays, 7);
+});
+
+// ---------------------------------------------------------------------------
+// punchCard — companion limits, lockout, grace acceptance
+// ---------------------------------------------------------------------------
+
+test('punchCard rejects companions below the configured minimum', async () => {
+  const db = await freshDb();
+  await updateCardSettings(db, { minCompanions: 2, maxCompanions: 4 });
+  const cust = await makeCustomer(db);
+  const card = await createPunchCard(db, resolver, { customerId: cust.id });
+
+  const res = await punchCard(db, {
+    punchCardId: card.id,
+    method: 'qr_scan',
+    companionCount: 1,
+  });
+  assert.equal(res.ok, false);
+  if (!res.ok) {
+    assert.equal(res.reason, 'companions_out_of_range');
+    assert.deepEqual(res.allowedRange, { min: 2, max: 4 });
+  }
+});
+
+test('punchCard rejects companions above the configured maximum', async () => {
+  const db = await freshDb();
+  await updateCardSettings(db, { minCompanions: 1, maxCompanions: 3 });
+  const cust = await makeCustomer(db);
+  const card = await createPunchCard(db, resolver, { customerId: cust.id });
+
+  const res = await punchCard(db, {
+    punchCardId: card.id,
+    method: 'qr_scan',
+    companionCount: 5,
+  });
+  assert.equal(res.ok, false);
+  if (!res.ok) assert.equal(res.reason, 'companions_out_of_range');
+});
+
+test('punchCard enforces sameDayLockoutMinutes between successful punches', async () => {
+  const db = await freshDb();
+  await updateCardSettings(db, { sameDayLockoutMinutes: 30 });
+  const cust = await makeCustomer(db);
+  const card = await createPunchCard(db, resolver, { customerId: cust.id });
+
+  const first = new Date('2026-06-20T10:00:00.000Z');
+  const r1 = await punchCard(db, { punchCardId: card.id, method: 'qr_scan', now: first });
+  assert.equal(r1.ok, true);
+
+  // 10 minutes later — should be locked out (lockout is 30 minutes).
+  const r2 = await punchCard(db, {
+    punchCardId: card.id,
+    method: 'qr_scan',
+    now: new Date(first.getTime() + 10 * 60_000),
+  });
+  assert.equal(r2.ok, false);
+  if (!r2.ok) {
+    assert.equal(r2.reason, 'locked_out');
+    assert.ok(r2.retryAfterMinutes && r2.retryAfterMinutes <= 30 && r2.retryAfterMinutes > 0);
+  }
+
+  // 31 minutes later — past the lockout, should succeed.
+  const r3 = await punchCard(db, {
+    punchCardId: card.id,
+    method: 'qr_scan',
+    now: new Date(first.getTime() + 31 * 60_000),
+  });
+  assert.equal(r3.ok, true);
+});
+
+test('punchCard accepts a punch within grace period and flags grace:true', async () => {
+  const db = await freshDb();
+  await updateCardSettings(db, { gracePeriodDays: 10 });
+  const cust = await makeCustomer(db);
+  const created = new Date('2024-01-01T00:00:00.000Z');
+  const card = await createPunchCard(db, resolver, { customerId: cust.id, now: created });
+  const queryAt = new Date(card.expiresAt.getTime() + 3 * 24 * 60 * 60 * 1000); // 3d past expiry, within 10d grace
+
+  const res = await punchCard(db, { punchCardId: card.id, method: 'serial', now: queryAt });
+  assert.equal(res.ok, true);
+  if (res.ok) assert.equal(res.grace, true);
+});
+
+test('punchCard rejects a punch past the grace cutoff', async () => {
+  const db = await freshDb();
+  await updateCardSettings(db, { gracePeriodDays: 3 });
+  const cust = await makeCustomer(db);
+  const created = new Date('2024-01-01T00:00:00.000Z');
+  const card = await createPunchCard(db, resolver, { customerId: cust.id, now: created });
+  const queryAt = new Date(card.expiresAt.getTime() + 30 * 24 * 60 * 60 * 1000);
+
+  const res = await punchCard(db, { punchCardId: card.id, method: 'serial', now: queryAt });
+  assert.equal(res.ok, false);
+  if (!res.ok) assert.equal(res.reason, 'expired');
+});
+
+// ---------------------------------------------------------------------------
+// cancelCard — settings-driven rules
+// ---------------------------------------------------------------------------
+
+test('cancelCard refuses reason shorter than minCancelReasonLength', async () => {
+  const db = await freshDb();
+  await updateCardSettings(db, { minCancelReasonLength: 10 });
+  const cust = await makeCustomer(db);
+  const card = await createPunchCard(db, resolver, { customerId: cust.id });
+
+  const res = await cancelCard(db, { cardId: card.id, reason: 'קצר' });
+  assert.equal(res.ok, false);
+  if (!res.ok) {
+    assert.equal(res.reason, 'reason_too_short');
+    assert.equal(res.minLength, 10);
+  }
+});
+
+test('cancelCard blocks when allowCancelAfterFirstPunch=false and card has punches', async () => {
+  const db = await freshDb();
+  await updateCardSettings(db, { allowCancelAfterFirstPunch: false });
+  const cust = await makeCustomer(db);
+  const card = await createPunchCard(db, resolver, { customerId: cust.id });
+  await punchCard(db, { punchCardId: card.id, method: 'serial' });
+
+  const res = await cancelCard(db, { cardId: card.id, reason: 'בקשת לקוח לבדיקה' });
+  assert.equal(res.ok, false);
+  if (!res.ok) {
+    assert.equal(res.reason, 'cancel_blocked_after_punch');
+    assert.equal(res.usedEntries, 1);
+  }
+});
+
+test('cancelCard with allowCancelAfterFirstPunch=true allows cancel even after punches', async () => {
+  const db = await freshDb();
+  // Default is true.
+  const cust = await makeCustomer(db);
+  const card = await createPunchCard(db, resolver, { customerId: cust.id });
+  await punchCard(db, { punchCardId: card.id, method: 'serial' });
+
+  const res = await cancelCard(db, { cardId: card.id, reason: 'בקשת לקוח לבדיקה' });
+  assert.equal(res.ok, true);
 });

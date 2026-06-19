@@ -4,7 +4,15 @@ import { and, desc, eq, isNotNull, isNull, sql } from 'drizzle-orm';
 import type { PgDatabase } from 'drizzle-orm/pg-core';
 import { logStaffAction } from './actions';
 import { getCardSettings } from './card-settings';
-import { customers, punchCardEntries, punchCards, staff, type ChildRecord } from './schema/index';
+import {
+  customers,
+  punchCardEntries,
+  punchCards,
+  staff,
+  type ChildRecord,
+} from './schema/index';
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 // Accept any PostgreSQL Drizzle database (node-postgres in prod, PGlite in tests).
 type AnyPgDatabase = PgDatabase<any, any, any>;
@@ -214,15 +222,24 @@ export const cardDetail = async (db: AnyPgDatabase, cardId: string) => {
 /**
  * Same card row used by the POS scan-preview screen. Returns the customer's
  * marketing children alongside the card + entry history, and derives a single
- * `status` flag the cashier sees as a red banner when the card cannot be
- * punched. Cancellation wins over exhaustion/expiry — it is the most actionable
- * thing to tell the customer at the counter.
+ * `status` flag the cashier sees as a coloured banner.
+ *
+ * Status precedence: cancellation > exhaustion > expiry > grace > ok.
+ * - `cancelled` wins over `exhausted`/`expired` because the cancel reason is
+ *   the most actionable thing to tell the customer at the counter.
+ * - `grace` lights up when the card is past its hard expiry but within the
+ *   configured `gracePeriodDays` window — punch is still allowed with a
+ *   warning banner.
+ * - `expiresInDays` is included so the POS can render an "expiring soon"
+ *   badge when within `expiryBadgeThresholdDays` (frontend renders that).
  */
 export const scanCardLookup = async (
   db: AnyPgDatabase,
   cardId: string,
   now: Date = new Date(),
 ) => {
+  const settings = await getCardSettings(db);
+
   const cardRows = await db
     .select({
       id: punchCards.id,
@@ -263,17 +280,23 @@ export const scanCardLookup = async (
     .where(eq(punchCardEntries.punchCardId, cardId))
     .orderBy(desc(punchCardEntries.punchedAt));
 
-  // Status precedence: cancellation > exhaustion > expiry > ok. A cancelled
-  // card may also be exhausted or expired — the cancel reason is more
-  // actionable than a generic "expired".
-  let status: 'ok' | 'cancelled' | 'exhausted' | 'expired';
+  const expiresMs = row.expiresAt.getTime();
+  const graceCutoffMs = expiresMs + settings.gracePeriodDays * MS_PER_DAY;
+  const expiresInDays = Math.ceil((expiresMs - now.getTime()) / MS_PER_DAY);
+
+  let status: 'ok' | 'cancelled' | 'exhausted' | 'expired' | 'grace';
   if (row.cancelledAt) status = 'cancelled';
   else if (row.usedEntries >= row.totalEntries) status = 'exhausted';
-  else if (row.expiresAt.getTime() <= now.getTime()) status = 'expired';
+  else if (expiresMs <= now.getTime() && now.getTime() <= graceCutoffMs && settings.gracePeriodDays > 0) {
+    status = 'grace';
+  } else if (expiresMs <= now.getTime()) status = 'expired';
   else status = 'ok';
 
   return {
     status,
+    expiresInDays,
+    /** Echoed from settings so the frontend can render "expiring soon" without a second roundtrip. */
+    expiryBadgeThresholdDays: settings.expiryBadgeThresholdDays,
     card: {
       id: row.id,
       serialNumber: row.serialNumber,
@@ -351,23 +374,64 @@ export const listCards = async (db: AnyPgDatabase, input: ListCardsInput = {}) =
   return query.orderBy(desc(punchCards.createdAt)).limit(limit);
 };
 
+export type CancelCardFailure =
+  | 'not_found'
+  | 'cancel_blocked_after_punch'
+  | 'reason_too_short';
+
+export type CancelCardResult =
+  | { ok: true; card: typeof punchCards.$inferSelect }
+  | { ok: false; reason: CancelCardFailure; minLength?: number; usedEntries?: number };
+
 /**
  * Cancel a card: deactivate it, record who/why, and log a staff action.
- * Returns undefined if the card does not exist OR if it is already cancelled
- * (we never overwrite an existing cancel audit row — the API surfaces this as
- * a clean 404 on a second cancel attempt).
+ *
+ * Returns `{ ok:false, reason:'not_found' }` if the card does not exist OR if
+ * it is already cancelled (we never overwrite an existing cancel audit row —
+ * the API surfaces this as a clean 404 on a second cancel attempt).
+ *
+ * Enforces settings-driven rules:
+ * - `allowCancelAfterFirstPunch=false` → `cancel_blocked_after_punch` when
+ *   the card has any usedEntries.
+ * - `minCancelReasonLength` → `reason_too_short` when reason.trim() is
+ *   shorter than the configured length.
  */
-export const cancelCard = async (db: AnyPgDatabase, input: CancelCardInput) => {
+export const cancelCard = async (
+  db: AnyPgDatabase,
+  input: CancelCardInput,
+): Promise<CancelCardResult> => {
   const now = input.now ?? new Date();
   return db.transaction(async (tx) => {
-    // Guard: refuse to re-cancel an already-cancelled card.
+    const settings = await getCardSettings(tx);
+
+    const trimmedReason = input.reason.trim();
+    if (trimmedReason.length < settings.minCancelReasonLength) {
+      return {
+        ok: false,
+        reason: 'reason_too_short',
+        minLength: settings.minCancelReasonLength,
+      };
+    }
+
     const existing = await tx
-      .select({ id: punchCards.id, cancelledAt: punchCards.cancelledAt })
+      .select({
+        id: punchCards.id,
+        cancelledAt: punchCards.cancelledAt,
+        usedEntries: punchCards.usedEntries,
+      })
       .from(punchCards)
       .where(eq(punchCards.id, input.cardId))
       .limit(1);
     const found = existing[0];
-    if (!found || found.cancelledAt) return undefined;
+    if (!found || found.cancelledAt) return { ok: false, reason: 'not_found' };
+
+    if (!settings.allowCancelAfterFirstPunch && found.usedEntries > 0) {
+      return {
+        ok: false,
+        reason: 'cancel_blocked_after_punch',
+        usedEntries: found.usedEntries,
+      };
+    }
 
     const rows = await tx
       .update(punchCards)
@@ -375,19 +439,19 @@ export const cancelCard = async (db: AnyPgDatabase, input: CancelCardInput) => {
         isActive: false,
         cancelledAt: now,
         cancelledBy: input.staffId ?? null,
-        cancelReason: input.reason,
+        cancelReason: trimmedReason,
         updatedAt: now,
       })
       .where(eq(punchCards.id, input.cardId))
       .returning();
     const card = rows[0];
-    if (!card) return undefined;
+    if (!card) return { ok: false, reason: 'not_found' };
     await logStaffAction(tx, {
       action: 'cancel_card',
       summary: `ביטול כרטיסייה · ${card.serialNumber}`,
       now,
       ...(input.staffId !== undefined ? { staffId: input.staffId } : {}),
     });
-    return card;
+    return { ok: true, card };
   });
 };
