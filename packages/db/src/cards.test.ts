@@ -13,6 +13,7 @@ import {
   createCustomer,
   createPunchCard,
   listCards,
+  scanCardLookup,
 } from './cards';
 import { punchCard } from './punch';
 
@@ -317,4 +318,98 @@ test('createPunchCard uses validityDays from card_settings for expiresAt', async
   const card = await createPunchCard(db, resolver, { customerId: cust.id, now: fixedNow });
   const expected = new Date(fixedNow.getTime() + 30 * 24 * 60 * 60 * 1000);
   assert.equal(card.expiresAt.getTime(), expected.getTime());
+});
+
+// ---------------------------------------------------------------------------
+// scanCardLookup — POS scan preview
+// ---------------------------------------------------------------------------
+
+test('scanCardLookup returns status=ok for a fresh card with no entries', async () => {
+  const db = await freshDb();
+  const cust = await makeCustomer(db);
+  const card = await createPunchCard(db, resolver, { customerId: cust.id });
+
+  const preview = await scanCardLookup(db, card.id);
+  assert.ok(preview);
+  assert.equal(preview.status, 'ok');
+  assert.equal(preview.card.id, card.id);
+  assert.equal(preview.card.usedEntries, 0);
+  assert.equal(preview.customer.firstName, 'Noa');
+  assert.equal(preview.customer.lastName, 'Cohen');
+  assert.deepEqual(preview.customer.children, []);
+  assert.equal(preview.entries.length, 0);
+});
+
+test('scanCardLookup returns customer children and the full entry history newest-first', async () => {
+  const db = await freshDb();
+  seq += 1;
+  const cust = await createCustomer(db, {
+    firstName: 'Tamar',
+    lastName: 'Levi',
+    phone: `052-000-${String(seq).padStart(4, '0')}`,
+    children: [{ name: 'Itamar', dob: '2021-04-12' }],
+  });
+  const card = await createPunchCard(db, resolver, { customerId: cust.id });
+  await punchCard(db, { punchCardId: card.id, method: 'qr_scan', companionCount: 2 });
+  await punchCard(db, { punchCardId: card.id, method: 'serial', companionCount: 1 });
+
+  const preview = await scanCardLookup(db, card.id);
+  assert.ok(preview);
+  assert.equal(preview.customer.children.length, 1);
+  assert.equal(preview.customer.children[0]?.name, 'Itamar');
+  assert.equal(preview.entries.length, 2);
+  assert.equal(preview.entries[0]?.method, 'serial');
+  assert.equal(preview.entries[1]?.method, 'qr_scan');
+});
+
+test('scanCardLookup returns status=exhausted for a fully-punched card', async () => {
+  const db = await freshDb();
+  const cust = await makeCustomer(db);
+  const card = await createPunchCard(db, resolver, { customerId: cust.id });
+  for (let i = 0; i < 12; i += 1) {
+    await punchCard(db, { punchCardId: card.id, method: 'serial' });
+  }
+  const preview = await scanCardLookup(db, card.id);
+  assert.ok(preview);
+  assert.equal(preview.status, 'exhausted');
+  assert.equal(preview.card.usedEntries, 12);
+});
+
+test('scanCardLookup returns status=expired when expiresAt has passed', async () => {
+  const db = await freshDb();
+  const cust = await makeCustomer(db);
+  // Settings default validity is 365 days; create at a fixed past date so we
+  // can run scan against a future `now` that is past the expiry.
+  const cardCreatedAt = new Date('2024-01-01T00:00:00.000Z');
+  const card = await createPunchCard(db, resolver, {
+    customerId: cust.id,
+    now: cardCreatedAt,
+  });
+  const queryAt = new Date('2026-06-19T12:00:00.000Z');
+  const preview = await scanCardLookup(db, card.id, queryAt);
+  assert.ok(preview);
+  assert.equal(preview.status, 'expired');
+});
+
+test('scanCardLookup returns status=cancelled even if the card is also exhausted', async () => {
+  const db = await freshDb();
+  const cust = await makeCustomer(db);
+  const card = await createPunchCard(db, resolver, { customerId: cust.id });
+  // Exhaust then cancel — cancel-status should win (more actionable for the
+  // cashier to tell the customer why this card cannot be used).
+  for (let i = 0; i < 12; i += 1) {
+    await punchCard(db, { punchCardId: card.id, method: 'serial' });
+  }
+  await cancelCard(db, { cardId: card.id, reason: 'בקשת לקוח' });
+
+  const preview = await scanCardLookup(db, card.id);
+  assert.ok(preview);
+  assert.equal(preview.status, 'cancelled');
+  assert.equal(preview.card.cancelReason, 'בקשת לקוח');
+});
+
+test('scanCardLookup returns undefined for an unknown card id', async () => {
+  const db = await freshDb();
+  const missing = await scanCardLookup(db, '00000000-0000-0000-0000-000000000000');
+  assert.equal(missing, undefined);
 });

@@ -13,7 +13,13 @@ import {
   type CustomerSourceValue,
   type PunchCard as ApiPunchCard,
 } from '../lib/api/customers';
-import { punchBySerial, punchByToken } from '../lib/api/punch';
+import {
+  lookupBySerial,
+  lookupByToken,
+  punchBySerial,
+  punchByToken,
+  type ScanLookupResponse,
+} from '../lib/api/punch';
 import { useStaffSession } from '../lib/staff-session';
 import { companionLabel, fmtDate } from '../mock';
 import { PunchConfirmModal } from './PunchConfirmModal';
@@ -1434,7 +1440,17 @@ export function PosApp() {
   }
 
   function Scan() {
-    type ScanPhase = 'camera' | 'serial' | 'confirming' | 'submitting' | 'success' | 'error';
+    // 'loading-preview' fetches /scan/lookup before the modal opens, so the
+    // cashier sees customer + card context (and a red banner for problem
+    // cards) instead of a blank companion picker.
+    type ScanPhase =
+      | 'camera'
+      | 'serial'
+      | 'loading-preview'
+      | 'confirming'
+      | 'submitting'
+      | 'success'
+      | 'error';
     type Source = { mode: 'token'; token: string } | { mode: 'serial'; serial: string };
 
     const [phase, setPhase] = useState<ScanPhase>('camera');
@@ -1445,6 +1461,7 @@ export function PosApp() {
     const [punchErrorMsg, setPunchErrorMsg] = useState<string | null>(null);
     const [serialInput, setSerialInput] = useState('');
     const [serialFieldError, setSerialFieldError] = useState<string | null>(null);
+    const [preview, setPreview] = useState<ScanLookupResponse | null>(null);
 
     useEffect(() => {
       console.info('[web scan] mounted');
@@ -1459,6 +1476,29 @@ export function PosApp() {
       setSerialInput('');
       setSerialFieldError(null);
       setCameraError(null);
+      setPreview(null);
+    };
+
+    // Fetch /scan/lookup using the captured source, then transition to the
+    // confirming phase whether the card is punchable or not. The modal itself
+    // decides whether to show the companion picker or the red banner based on
+    // preview.status.
+    const fetchPreview = async (nextSource: Source) => {
+      setPhase('loading-preview');
+      console.info('[web scan] preview fetch', { mode: nextSource.mode });
+      const res =
+        nextSource.mode === 'token'
+          ? await lookupByToken(nextSource.token)
+          : await lookupBySerial(nextSource.serial);
+      if (res.ok) {
+        console.info('[web scan] preview ok', { status: res.data.status });
+        setPreview(res.data);
+        setPhase('confirming');
+        return;
+      }
+      console.warn('[web scan] preview error', { status: res.status, error: res.error });
+      setPunchErrorMsg(humanizePunchError(res.error));
+      setPhase('error');
     };
 
     const onScannerDetect = (codes: IDetectedBarcode[]) => {
@@ -1466,9 +1506,10 @@ export function PosApp() {
       const first = codes[0];
       if (!first?.rawValue) return;
       console.info('[web scan] detected', { tokenPrefix: first.rawValue.slice(0, 8) });
-      setSource({ mode: 'token', token: first.rawValue });
+      const nextSource: Source = { mode: 'token', token: first.rawValue };
+      setSource(nextSource);
       setScanKey(crypto.randomUUID());
-      setPhase('confirming');
+      void fetchPreview(nextSource);
     };
 
     const onScannerError = (err: unknown) => {
@@ -1484,9 +1525,10 @@ export function PosApp() {
         return;
       }
       setSerialFieldError(null);
-      setSource({ mode: 'serial', serial: trimmed });
+      const nextSource: Source = { mode: 'serial', serial: trimmed };
+      setSource(nextSource);
       setScanKey(crypto.randomUUID());
-      setPhase('confirming');
+      void fetchPreview(nextSource);
     };
 
     const confirmPunch = async (companions: number) => {
@@ -1606,6 +1648,12 @@ export function PosApp() {
           </div>
         )}
 
+        {phase === 'loading-preview' && (
+          <div style={{ ...card, textAlign: 'center', color: MUTED }}>
+            טוען פרטי כרטיסייה…
+          </div>
+        )}
+
         {(phase === 'confirming' || phase === 'submitting') && (
           <PunchConfirmModal
             onClose={() => {
@@ -1614,6 +1662,7 @@ export function PosApp() {
             }}
             onConfirm={confirmPunch}
             submitting={phase === 'submitting'}
+            {...(preview !== null && { preview })}
           />
         )}
 

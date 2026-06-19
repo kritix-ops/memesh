@@ -211,6 +211,92 @@ export const cardDetail = async (db: AnyPgDatabase, cardId: string) => {
   return { card, entries };
 };
 
+/**
+ * Same card row used by the POS scan-preview screen. Returns the customer's
+ * marketing children alongside the card + entry history, and derives a single
+ * `status` flag the cashier sees as a red banner when the card cannot be
+ * punched. Cancellation wins over exhaustion/expiry — it is the most actionable
+ * thing to tell the customer at the counter.
+ */
+export const scanCardLookup = async (
+  db: AnyPgDatabase,
+  cardId: string,
+  now: Date = new Date(),
+) => {
+  const cardRows = await db
+    .select({
+      id: punchCards.id,
+      serialNumber: punchCards.serialNumber,
+      totalEntries: punchCards.totalEntries,
+      usedEntries: punchCards.usedEntries,
+      isActive: punchCards.isActive,
+      expiresAt: punchCards.expiresAt,
+      cancelledAt: punchCards.cancelledAt,
+      cancelReason: punchCards.cancelReason,
+      createdAt: punchCards.createdAt,
+      customerId: customers.id,
+      customerNumber: customers.customerNumber,
+      customerFirstName: customers.firstName,
+      customerLastName: customers.lastName,
+      customerPhone: customers.phone,
+      customerChildren: customers.children,
+    })
+    .from(punchCards)
+    .leftJoin(customers, eq(customers.id, punchCards.customerId))
+    .where(eq(punchCards.id, cardId))
+    .limit(1);
+
+  const row = cardRows[0];
+  if (!row) return undefined;
+
+  const entries = await db
+    .select({
+      id: punchCardEntries.id,
+      punchedAt: punchCardEntries.punchedAt,
+      method: punchCardEntries.method,
+      companionCount: punchCardEntries.companionCount,
+      staffFirstName: staff.firstName,
+      staffLastName: staff.lastName,
+    })
+    .from(punchCardEntries)
+    .leftJoin(staff, eq(staff.id, punchCardEntries.punchedBy))
+    .where(eq(punchCardEntries.punchCardId, cardId))
+    .orderBy(desc(punchCardEntries.punchedAt));
+
+  // Status precedence: cancellation > exhaustion > expiry > ok. A cancelled
+  // card may also be exhausted or expired — the cancel reason is more
+  // actionable than a generic "expired".
+  let status: 'ok' | 'cancelled' | 'exhausted' | 'expired';
+  if (row.cancelledAt) status = 'cancelled';
+  else if (row.usedEntries >= row.totalEntries) status = 'exhausted';
+  else if (row.expiresAt.getTime() <= now.getTime()) status = 'expired';
+  else status = 'ok';
+
+  return {
+    status,
+    card: {
+      id: row.id,
+      serialNumber: row.serialNumber,
+      totalEntries: row.totalEntries,
+      usedEntries: row.usedEntries,
+      isActive: row.isActive,
+      expiresAt: row.expiresAt,
+      cancelledAt: row.cancelledAt,
+      cancelReason: row.cancelReason,
+      createdAt: row.createdAt,
+    },
+    customer: {
+      id: row.customerId,
+      customerNumber: row.customerNumber,
+      firstName: row.customerFirstName,
+      lastName: row.customerLastName,
+      phone: row.customerPhone,
+      children: row.customerChildren ?? [],
+    },
+    entries,
+  };
+};
+
 export type CardListStatus = 'active' | 'expired' | 'cancelled';
 
 export interface ListCardsInput {

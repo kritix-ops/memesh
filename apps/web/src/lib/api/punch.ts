@@ -66,3 +66,79 @@ export const punchByToken = (
       ...(opts.terminalId !== undefined && { terminalId: opts.terminalId }),
     },
   });
+
+// ---------------------------------------------------------------------------
+// /scan/lookup — preview the card + customer before punching.
+// ---------------------------------------------------------------------------
+// Mirrors apps/api/src/routes/punch.ts /scan/lookup response shape. Same
+// verify-and-resolve as /punch (HMAC + serial fallback) but does not consume
+// an entry; powers the rich PunchConfirmModal so the cashier can confirm
+// "is this the right person?" before committing.
+
+export type ScanLookupStatus = 'ok' | 'cancelled' | 'exhausted' | 'expired';
+
+export interface ScanLookupCard {
+  id: string;
+  serialNumber: string;
+  totalEntries: number;
+  usedEntries: number;
+  isActive: boolean;
+  expiresAt: string;
+  cancelledAt: string | null;
+  cancelReason: string | null;
+  createdAt: string;
+}
+
+// Mirrors ChildRecord from @memesh/db.
+export interface ScanLookupChild {
+  name: string;
+  dob: string;
+  notes?: string;
+}
+
+export interface ScanLookupCustomer {
+  id: string | null;
+  customerNumber: string | null;
+  firstName: string | null;
+  lastName: string | null;
+  phone: string | null;
+  children: ScanLookupChild[];
+}
+
+export interface ScanLookupEntry {
+  id: string;
+  punchedAt: string;
+  method: 'qr_scan' | 'serial' | 'phone' | 'manual';
+  companionCount: number;
+  staffFirstName: string | null;
+  staffLastName: string | null;
+}
+
+export interface ScanLookupResponse {
+  status: ScanLookupStatus;
+  card: ScanLookupCard;
+  customer: ScanLookupCustomer;
+  entries: ScanLookupEntry[];
+}
+
+export interface LookupByTokenOptions {
+  terminalId?: string;
+}
+
+export const lookupByToken = (
+  token: string,
+  opts: LookupByTokenOptions = {},
+): Promise<ApiResult<ScanLookupResponse>> =>
+  apiRequest('/scan/lookup', {
+    method: 'POST',
+    body: { token, ...(opts.terminalId !== undefined && { terminalId: opts.terminalId }) },
+  });
+
+export const lookupBySerial = (
+  serial: string,
+  opts: LookupByTokenOptions = {},
+): Promise<ApiResult<ScanLookupResponse>> =>
+  apiRequest('/scan/lookup', {
+    method: 'POST',
+    body: { serial, ...(opts.terminalId !== undefined && { terminalId: opts.terminalId }) },
+  });
