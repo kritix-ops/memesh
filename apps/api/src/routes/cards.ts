@@ -6,7 +6,11 @@ import {
   getCardSettings,
   getCustomerById,
   listCards,
+  refundEntry,
+  staff,
 } from '@memesh/db';
+import { verifyPassword } from '@memesh/auth';
+import { and, eq, isNotNull } from 'drizzle-orm';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { requireRoleHook } from '../lib/auth-guards.js';
@@ -22,6 +26,12 @@ const createBodySchema = z.object({
 });
 
 const cancelBodySchema = z.object({ reason: z.string().min(1).max(500) });
+
+const refundBodySchema = z.object({
+  reason: z.string().min(1).max(500),
+  /** Required when the initiating user's role is not admin. */
+  adminPassword: z.string().min(1).max(200).optional(),
+});
 
 const listQuerySchema = z.object({
   status: z.enum(['active', 'expired', 'cancelled']).optional(),
@@ -150,4 +160,102 @@ export const cardsRoutes: FastifyPluginAsync = async (fastify) => {
     // Defensive: every branch above returns.
     return reply.code(500).send({ error: 'unknown' });
   });
+
+  // Refund a single punched entry.
+  // - Any signed-in staff (cashier+) may INITIATE the refund.
+  // - Admins acting alone authorize themselves (no extra password prompt).
+  // - Cashier/manager MUST supply a current admin user's password — server
+  //   bcrypt-compares it against every active admin and records that admin
+  //   as approvedBy. Mismatch → 403 admin_password_invalid.
+  fastify.post(
+    '/cards/:cardId/entries/:entryId/refund',
+    { preHandler: requireRoleHook(...STAFF) },
+    async (request, reply) => {
+      if (!request.user) return reply.code(401).send({ error: 'unauthorized' });
+      const { cardId, entryId } = request.params as { cardId: string; entryId: string };
+      if (!z.string().uuid().safeParse(cardId).success || !z.string().uuid().safeParse(entryId).success) {
+        return reply.code(400).send({ error: 'invalid_id' });
+      }
+      const parsed = refundBodySchema.safeParse(request.body);
+      if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
+
+      // Resolve approvedBy. Admins approve themselves; cashier/manager need a
+      // matching admin password.
+      let approvedBy: string;
+      if (request.user.role === 'admin') {
+        approvedBy = request.user.id;
+      } else {
+        if (!parsed.data.adminPassword) {
+          return reply.code(400).send({ error: 'admin_password_required' });
+        }
+        const admins = await db
+          .select({ id: staff.id, passwordHash: staff.passwordHash })
+          .from(staff)
+          .where(and(eq(staff.role, 'admin'), eq(staff.isActive, true), isNotNull(staff.passwordHash)));
+        let matched: string | undefined;
+        for (const a of admins) {
+          if (!a.passwordHash) continue;
+          // verifyPassword is constant-time per-hash; iterating is fine for
+          // the realistic admin count (1–3).
+          if (await verifyPassword(parsed.data.adminPassword, a.passwordHash)) {
+            matched = a.id;
+            break;
+          }
+        }
+        if (!matched) {
+          request.log.info(
+            { initiatedBy: request.user.id, role: request.user.role },
+            '[refund] admin password invalid',
+          );
+          return reply.code(403).send({ error: 'admin_password_invalid' });
+        }
+        approvedBy = matched;
+      }
+
+      const result = await refundEntry(db, {
+        entryId,
+        refundedBy: request.user.id,
+        approvedBy,
+        reason: parsed.data.reason,
+      });
+      if (!result.ok) {
+        if (result.reason === 'entry_not_found')
+          return reply.code(404).send({ error: 'entry_not_found' });
+        if (result.reason === 'already_refunded')
+          return reply.code(409).send({ error: 'already_refunded' });
+        if (result.reason === 'card_cancelled')
+          return reply.code(409).send({ error: 'card_cancelled' });
+      } else {
+        // Cheap sanity check: the refunded entry should belong to the cardId
+        // in the URL. Mismatch is almost certainly a stale UI calling a wrong
+        // path, not an attack — server still applied the refund correctly
+        // because we trust the entryId, but log it.
+        if (result.cardId !== cardId) {
+          request.log.warn(
+            { paramCardId: cardId, entryCardId: result.cardId },
+            '[refund] cardId/entryId mismatch in URL — refund applied to the entry-owning card',
+          );
+        }
+        request.log.info(
+          {
+            entryId,
+            cardId: result.cardId,
+            reactivated: result.reactivated,
+            initiatedBy: request.user.id,
+            approvedBy,
+          },
+          '[refund] applied',
+        );
+        return reply.send({
+          entryId: result.entryId,
+          cardId: result.cardId,
+          usedEntries: result.usedEntries,
+          totalEntries: result.totalEntries,
+          remaining: result.remaining,
+          reactivated: result.reactivated,
+        });
+      }
+      return reply.code(500).send({ error: 'unknown' });
+    },
+  );
 };

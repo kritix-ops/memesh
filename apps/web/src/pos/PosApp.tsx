@@ -9,7 +9,7 @@ import {
   type CompanionLimits,
   type CustomerFormRules,
 } from '../lib/api/card-settings';
-import { sellCard, type SellCardResponse } from '../lib/api/cards';
+import { refundEntry, sellCard, type SellCardResponse } from '../lib/api/cards';
 import {
   createCustomer,
   getCustomerDetail,
@@ -30,6 +30,7 @@ import {
 import { useStaffSession } from '../lib/staff-session';
 import { companionLabel, fmtDate } from '../mock';
 import { PunchConfirmModal } from './PunchConfirmModal';
+import { RefundEntryModal } from './RefundEntryModal';
 
 const ORANGE = '#ffa983';
 const INK = '#2d3436';
@@ -153,6 +154,19 @@ function humanizeSellError(code: string): string {
   return 'שגיאה במכירת הכרטיסייה. נסו שוב.';
 }
 
+function humanizeRefundError(code: string): string {
+  if (code === 'admin_password_required') return 'נדרשת סיסמת אדמין.';
+  if (code === 'admin_password_invalid')
+    return 'סיסמת אדמין שגויה. ודאו שמדובר באדמין פעיל ונסו שוב.';
+  if (code === 'entry_not_found') return 'הכניסה לא נמצאה. ייתכן שכבר הוחזרה.';
+  if (code === 'already_refunded') return 'הכניסה כבר הוחזרה.';
+  if (code === 'card_cancelled')
+    return 'לא ניתן להחזיר כניסות בכרטיסייה מבוטלת.';
+  if (code === 'invalid_body') return 'נתונים לא תקינים. בדקו ונסו שוב.';
+  if (code === 'forbidden') return 'אין לך הרשאה לבצע החזר.';
+  return 'תקלה זמנית. נסו שוב בעוד רגע.';
+}
+
 // Maps @yudiel/react-qr-scanner's IScannerError.kind to Hebrew. Order matches
 // the typed union so a future addition surfaces as 'unknown' instead of slipping.
 function humanizeScanError(kind: IScannerError['kind']): string {
@@ -256,6 +270,18 @@ export function PosApp() {
     setPunchStatus(next);
     clearTimeout(punchStatusTimer.current);
     punchStatusTimer.current = setTimeout(() => setPunchStatus(null), ms);
+  };
+
+  // Refund-entry state. refundEntryId targets a specific entry in the
+  // currently-loaded customer detail. refundError surfaces server validation
+  // errors (wrong admin password, etc.) inside the modal.
+  const [refundEntryId, setRefundEntryId] = useState<string | null>(null);
+  const [refundSubmitting, setRefundSubmitting] = useState(false);
+  const [refundError, setRefundError] = useState<string | null>(null);
+  const closeRefundModal = () => {
+    if (refundSubmitting) return;
+    setRefundEntryId(null);
+    setRefundError(null);
   };
 
   // New-customer form state. fieldErrors tracks per-field validation messages
@@ -525,6 +551,42 @@ export function PosApp() {
   const openCustomer = (id: string) => {
     setSelectedId(id);
     setScreen('customer');
+  };
+
+  // Refund a single entry. Cashier+manager require an admin password (the
+  // modal collects it); admin users self-approve and pass `undefined`.
+  // Always re-fetches the customer detail on success so the entries list +
+  // pebbles reflect the decremented usedEntries.
+  const submitRefund = async (
+    cardId: string,
+    entryId: string,
+    reason: string,
+    adminPassword: string | undefined,
+  ) => {
+    setRefundSubmitting(true);
+    setRefundError(null);
+    console.info('[web refund] submit', { entryId, hasAdminPassword: Boolean(adminPassword) });
+    const res = await refundEntry(cardId, entryId, {
+      reason,
+      ...(adminPassword !== undefined && { adminPassword }),
+    });
+    setRefundSubmitting(false);
+    if (!res.ok) {
+      console.warn('[web refund] error', { status: res.status, error: res.error });
+      setRefundError(humanizeRefundError(res.error));
+      return;
+    }
+    console.info('[web refund] success', {
+      entryId,
+      reactivated: res.data.reactivated,
+      remaining: res.data.remaining,
+    });
+    setRefundEntryId(null);
+    flashStatus({ kind: 'success', remaining: res.data.remaining });
+    if (selectedId) {
+      const refreshed = await getCustomerDetail(selectedId);
+      if (refreshed.ok) setDetail(refreshed.data);
+    }
   };
 
   return (
@@ -893,23 +955,64 @@ export function PosApp() {
           {entries.length === 0 && (
             <div style={{ color: MUTED, fontSize: 14 }}>אין כניסות עדיין.</div>
           )}
-          {entries.map((h, i) => (
-            <div
-              key={h.id}
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                padding: '8px 0',
-                borderTop: i ? '1px solid #f3efea' : 'none',
-                fontSize: 14,
-              }}
-            >
-              <span>
-                {fmtDate(yyyyMmDd(h.punchedAt))} · {hhMm(h.punchedAt)}
-              </span>
-              <span style={{ color: MUTED }}>{companionLabel(h.companionCount)}</span>
-            </div>
-          ))}
+          {entries.map((h, i) => {
+            const refunded = h.refundedAt !== null;
+            return (
+              <div
+                key={h.id}
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  gap: 10,
+                  padding: '8px 0',
+                  borderTop: i ? '1px solid #f3efea' : 'none',
+                  fontSize: 14,
+                  opacity: refunded ? 0.55 : 1,
+                }}
+              >
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div
+                    style={{
+                      textDecoration: refunded ? 'line-through' : 'none',
+                    }}
+                  >
+                    {fmtDate(yyyyMmDd(h.punchedAt))} · {hhMm(h.punchedAt)}
+                    <span style={{ color: MUTED, marginInlineStart: 8 }}>
+                      · {companionLabel(h.companionCount)}
+                    </span>
+                  </div>
+                  {refunded && (
+                    <div style={{ fontSize: 12.5, color: '#a23a3a', marginTop: 2 }}>
+                      הוחזר{h.refundReason ? ` · ${h.refundReason}` : ''}
+                    </div>
+                  )}
+                </div>
+                {!refunded && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRefundError(null);
+                      setRefundEntryId(h.id);
+                    }}
+                    style={{
+                      border: '1.5px solid #e9e0d9',
+                      background: '#fff',
+                      color: MUTED,
+                      borderRadius: 8,
+                      padding: '5px 10px',
+                      fontWeight: 600,
+                      fontSize: 12.5,
+                      cursor: 'pointer',
+                      flexShrink: 0,
+                    }}
+                  >
+                    החזר
+                  </button>
+                )}
+              </div>
+            );
+          })}
         </div>
 
         <div style={{ ...card, marginTop: 16 }}>
@@ -946,6 +1049,27 @@ export function PosApp() {
             companionRange={companionLimits}
           />
         )}
+
+        {refundEntryId &&
+          (() => {
+            const target = entries.find((e) => e.id === refundEntryId);
+            if (!target) return null;
+            const summary = `${fmtDate(yyyyMmDd(target.punchedAt))} · ${hhMm(target.punchedAt)} · ${companionLabel(
+              target.companionCount,
+            )}`;
+            return (
+              <RefundEntryModal
+                entrySummary={summary}
+                selfApprove={sessionUser?.role === 'admin'}
+                submitting={refundSubmitting}
+                error={refundError}
+                onClose={closeRefundModal}
+                onConfirm={(reason, password) =>
+                  void submitRefund(target.punchCardId, target.id, reason, password)
+                }
+              />
+            );
+          })()}
       </div>
     );
   }

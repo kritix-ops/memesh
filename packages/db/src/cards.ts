@@ -214,6 +214,8 @@ export const cardDetail = async (db: AnyPgDatabase, cardId: string) => {
       punchedBy: punchCardEntries.punchedBy,
       staffFirstName: staff.firstName,
       staffLastName: staff.lastName,
+      refundedAt: punchCardEntries.refundedAt,
+      refundReason: punchCardEntries.refundReason,
     })
     .from(punchCardEntries)
     .leftJoin(staff, eq(staff.id, punchCardEntries.punchedBy))
@@ -278,6 +280,8 @@ export const scanCardLookup = async (
       companionCount: punchCardEntries.companionCount,
       staffFirstName: staff.firstName,
       staffLastName: staff.lastName,
+      refundedAt: punchCardEntries.refundedAt,
+      refundReason: punchCardEntries.refundReason,
     })
     .from(punchCardEntries)
     .leftJoin(staff, eq(staff.id, punchCardEntries.punchedBy))

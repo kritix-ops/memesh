@@ -15,6 +15,14 @@ export const punchCardEntries = pgTable('punch_card_entries', {
   idempotencyKey: varchar('idempotency_key', { length: 64 }).unique(), // safe retry / double-tap guard
   notes: text('notes'),
   punchedAt: timestamp('punched_at', { withTimezone: true }).notNull().defaultNow(),
+  // Refund metadata. When refundedAt is non-null the entry no longer counts
+  // toward usedEntries on the card. refundedBy is the cashier who initiated
+  // the refund; approvedBy is the admin whose password authorized it
+  // (same person when the admin self-served).
+  refundedAt: timestamp('refunded_at', { withTimezone: true }),
+  refundedBy: uuid('refunded_by').references(() => staff.id),
+  approvedBy: uuid('approved_by').references(() => staff.id),
+  refundReason: text('refund_reason'),
 });
 
 export type PunchCardEntry = typeof punchCardEntries.$inferSelect;

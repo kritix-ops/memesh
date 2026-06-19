@@ -37,6 +37,7 @@ export type StaffActionType =
   | 'register_customer'
   | 'create_staff'
   | 'update_card_settings'
+  | 'refund_entry'
   | 'other';
 
 export interface StaffActionRow {

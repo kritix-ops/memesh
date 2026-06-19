@@ -15,7 +15,9 @@ import {
   listCards,
   scanCardLookup,
 } from './cards';
-import { punchCard } from './punch';
+import { punchCard, refundEntry } from './punch';
+import { punchCardEntries } from './schema/index';
+import { eq, sql } from 'drizzle-orm';
 
 async function freshDb() {
   const client = new PGlite();
@@ -668,4 +670,167 @@ test('updateCardSettings accepts validityDays=0 (forever mode)', async () => {
   const db = await freshDb();
   const res = await updateCardSettings(db, { validityDays: 0 });
   assert.equal(res.ok, true);
+});
+
+// ---------------------------------------------------------------------------
+// refundEntry — admin-approved reversal of a single punch
+// ---------------------------------------------------------------------------
+
+// Test helper: spin up a staff row so refundedBy/approvedBy FK constraints
+// have a target.
+async function makeStaff(db: TestDb, role: 'admin' | 'manager' | 'cashier' = 'cashier') {
+  seq += 1;
+  const id = crypto.randomUUID();
+  await db.execute(sql`
+    INSERT INTO staff (id, first_name, last_name, phone, role, is_active)
+    VALUES (${id}, 'Test', 'Staff', ${'052-100-' + String(seq).padStart(4, '0')}, ${role}, true)
+  `);
+  return id;
+}
+
+test('refundEntry refunds a single entry and decrements usedEntries', async () => {
+  const db = await freshDb();
+  const cust = await makeCustomer(db);
+  const card = await createPunchCard(db, resolver, { customerId: cust.id });
+  const cashier = await makeStaff(db, 'cashier');
+  const admin = await makeStaff(db, 'admin');
+
+  const p = await punchCard(db, { punchCardId: card.id, method: 'serial' });
+  assert.equal(p.ok, true);
+  if (!p.ok) return;
+
+  const res = await refundEntry(db, {
+    entryId: p.entryId,
+    refundedBy: cashier,
+    approvedBy: admin,
+    reason: 'הלקוח עזב מיד אחרי הניקוב',
+  });
+  assert.equal(res.ok, true);
+  if (!res.ok) return;
+  assert.equal(res.usedEntries, 0);
+  assert.equal(res.remaining, card.totalEntries);
+  assert.equal(res.reactivated, false);
+
+  // Entry row was soft-deleted with audit fields populated.
+  const rows = await db
+    .select()
+    .from(punchCardEntries)
+    .where(eq(punchCardEntries.id, p.entryId))
+    .limit(1);
+  const entry = rows[0];
+  assert.ok(entry);
+  assert.ok(entry!.refundedAt);
+  assert.equal(entry!.refundedBy, cashier);
+  assert.equal(entry!.approvedBy, admin);
+  assert.match(entry!.refundReason ?? '', /הלקוח עזב/);
+});
+
+test('refundEntry reactivates an exhausted card', async () => {
+  const db = await freshDb();
+  const cust = await makeCustomer(db);
+  const card = await createPunchCard(db, resolver, { customerId: cust.id });
+  const admin = await makeStaff(db, 'admin');
+
+  // Punch the card to exhaustion. The 12th punch flips isActive=false.
+  let lastEntryId = '';
+  for (let i = 0; i < 12; i += 1) {
+    const r = await punchCard(db, { punchCardId: card.id, method: 'serial' });
+    assert.equal(r.ok, true);
+    if (r.ok) lastEntryId = r.entryId;
+  }
+
+  const res = await refundEntry(db, {
+    entryId: lastEntryId,
+    refundedBy: admin,
+    approvedBy: admin,
+    reason: 'טעות בניקוב האחרון לבדיקה',
+  });
+  assert.equal(res.ok, true);
+  if (!res.ok) return;
+  assert.equal(res.reactivated, true);
+  assert.equal(res.usedEntries, 11);
+  assert.equal(res.remaining, 1);
+});
+
+test('refundEntry refuses to refund the same entry twice', async () => {
+  const db = await freshDb();
+  const cust = await makeCustomer(db);
+  const card = await createPunchCard(db, resolver, { customerId: cust.id });
+  const admin = await makeStaff(db, 'admin');
+  const p = await punchCard(db, { punchCardId: card.id, method: 'serial' });
+  assert.equal(p.ok, true);
+  if (!p.ok) return;
+
+  const r1 = await refundEntry(db, {
+    entryId: p.entryId,
+    refundedBy: admin,
+    approvedBy: admin,
+    reason: 'בדיקה ראשונה',
+  });
+  assert.equal(r1.ok, true);
+
+  const r2 = await refundEntry(db, {
+    entryId: p.entryId,
+    refundedBy: admin,
+    approvedBy: admin,
+    reason: 'נסיון נוסף',
+  });
+  assert.equal(r2.ok, false);
+  if (!r2.ok) assert.equal(r2.reason, 'already_refunded');
+});
+
+test('refundEntry refuses for an unknown entry id', async () => {
+  const db = await freshDb();
+  const admin = await makeStaff(db, 'admin');
+  const r = await refundEntry(db, {
+    entryId: '00000000-0000-0000-0000-000000000000',
+    refundedBy: admin,
+    approvedBy: admin,
+    reason: 'test',
+  });
+  assert.equal(r.ok, false);
+  if (!r.ok) assert.equal(r.reason, 'entry_not_found');
+});
+
+test('refundEntry refuses to refund entries on a cancelled card', async () => {
+  const db = await freshDb();
+  const cust = await makeCustomer(db);
+  const card = await createPunchCard(db, resolver, { customerId: cust.id });
+  const admin = await makeStaff(db, 'admin');
+  const p = await punchCard(db, { punchCardId: card.id, method: 'serial' });
+  assert.equal(p.ok, true);
+  if (!p.ok) return;
+  await cancelCard(db, { cardId: card.id, reason: 'בקשת לקוח לבדיקה' });
+
+  const r = await refundEntry(db, {
+    entryId: p.entryId,
+    refundedBy: admin,
+    approvedBy: admin,
+    reason: 'בדיקה',
+  });
+  assert.equal(r.ok, false);
+  if (!r.ok) assert.equal(r.reason, 'card_cancelled');
+});
+
+test('refundEntry logs a staff action with cashier+admin context', async () => {
+  const db = await freshDb();
+  const cust = await makeCustomer(db);
+  const card = await createPunchCard(db, resolver, { customerId: cust.id });
+  const cashier = await makeStaff(db, 'cashier');
+  const admin = await makeStaff(db, 'admin');
+  const p = await punchCard(db, { punchCardId: card.id, method: 'serial' });
+  if (!p.ok) return;
+
+  await refundEntry(db, {
+    entryId: p.entryId,
+    refundedBy: cashier,
+    approvedBy: admin,
+    reason: 'בדיקה',
+  });
+
+  const actions = await listStaffActions(db);
+  const entry = actions.find((a) => a.action === 'refund_entry');
+  assert.ok(entry);
+  assert.match(entry!.summary, /החזר כניסה/);
+  assert.match(entry!.summary, /אושר ע"י אדמין/);
 });

@@ -63,6 +63,9 @@ export interface PunchCardEntry {
   idempotencyKey: string | null;
   notes: string | null;
   punchedAt: string;
+  /** Non-null when the entry has been refunded. */
+  refundedAt: string | null;
+  refundReason: string | null;
 }
 
 export interface CustomerSearchResponse {

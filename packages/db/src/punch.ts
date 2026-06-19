@@ -1,5 +1,6 @@
 import { desc, eq } from 'drizzle-orm';
 import type { PgDatabase } from 'drizzle-orm/pg-core';
+import { logStaffAction } from './actions';
 import { getCardSettings } from './card-settings';
 import { punchCardEntries, punchCards, scanAttempts } from './schema/index';
 
@@ -237,6 +238,120 @@ export async function punchCard(db: AnyPgDatabase, input: PunchInput): Promise<P
       totalEntries: card.totalEntries,
       remaining: card.totalEntries - nextUsed,
       grace: inGrace,
+    };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// refundEntry — reverse a single punch, decrementing usedEntries and
+// reactivating the card if it had been deactivated by exhaustion.
+// ---------------------------------------------------------------------------
+
+export type RefundEntryFailure =
+  | 'entry_not_found'
+  | 'already_refunded'
+  | 'card_cancelled';
+
+export interface RefundEntryInput {
+  entryId: string;
+  /** Cashier (or admin) who initiated the refund. */
+  refundedBy: string;
+  /** Admin whose password authorized it. Same as refundedBy when admin self-served. */
+  approvedBy: string;
+  reason: string;
+  now?: Date;
+}
+
+export type RefundEntryResult =
+  | {
+      ok: true;
+      entryId: string;
+      cardId: string;
+      usedEntries: number;
+      totalEntries: number;
+      remaining: number;
+      reactivated: boolean;
+    }
+  | { ok: false; reason: RefundEntryFailure };
+
+/**
+ * Refund an entry: mark it refunded, decrement usedEntries on the card, and
+ * reactivate the card if it had been auto-deactivated by exhaustion. Runs in
+ * a single transaction with a row lock on the card so two concurrent refunds
+ * cannot under-draw the counter.
+ *
+ * Refusals:
+ * - entry_not_found: no entry with that id
+ * - already_refunded: refundedAt already set
+ * - card_cancelled: the underlying card was cancelled — refunding entries on a
+ *   cancelled card doesn't make business sense (cashier should cancel/refund
+ *   the whole card or contact the customer)
+ */
+export async function refundEntry(
+  db: AnyPgDatabase,
+  input: RefundEntryInput,
+): Promise<RefundEntryResult> {
+  const now = input.now ?? new Date();
+  return db.transaction(async (tx) => {
+    const entryRows = await tx
+      .select()
+      .from(punchCardEntries)
+      .where(eq(punchCardEntries.id, input.entryId))
+      .limit(1);
+    const entry = entryRows[0];
+    if (!entry) return { ok: false, reason: 'entry_not_found' };
+    if (entry.refundedAt) return { ok: false, reason: 'already_refunded' };
+
+    // Lock the card row to serialize with concurrent punches/refunds.
+    const cardRows = await tx
+      .select()
+      .from(punchCards)
+      .where(eq(punchCards.id, entry.punchCardId))
+      .for('update')
+      .limit(1);
+    const card = cardRows[0];
+    if (!card) return { ok: false, reason: 'entry_not_found' };
+    if (card.cancelledAt) return { ok: false, reason: 'card_cancelled' };
+
+    const nextUsed = Math.max(0, card.usedEntries - 1);
+    // Reactivate if exhaustion was the reason the card went inactive (no
+    // cancelledAt). Refunding an already-active card just leaves it active.
+    const reactivated = !card.isActive && card.cancelledAt === null;
+
+    await tx
+      .update(punchCardEntries)
+      .set({
+        refundedAt: now,
+        refundedBy: input.refundedBy,
+        approvedBy: input.approvedBy,
+        refundReason: input.reason,
+      })
+      .where(eq(punchCardEntries.id, entry.id));
+
+    await tx
+      .update(punchCards)
+      .set({
+        usedEntries: nextUsed,
+        ...(reactivated && { isActive: true }),
+        updatedAt: now,
+      })
+      .where(eq(punchCards.id, card.id));
+
+    await logStaffAction(tx, {
+      action: 'refund_entry',
+      summary: `החזר כניסה · ${card.serialNumber}${input.refundedBy !== input.approvedBy ? ' (אושר ע"י אדמין)' : ''} · סיבה: ${input.reason}`,
+      staffId: input.refundedBy,
+      now,
+    });
+
+    return {
+      ok: true,
+      entryId: entry.id,
+      cardId: card.id,
+      usedEntries: nextUsed,
+      totalEntries: card.totalEntries,
+      remaining: card.totalEntries - nextUsed,
+      reactivated,
     };
   });
 }

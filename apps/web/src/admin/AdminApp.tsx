@@ -18,7 +18,9 @@ import {
   type CardListStatus,
 } from '../lib/api/cards';
 import { getCancelContext, type CancelContext } from '../lib/api/card-settings';
+import { refundEntry } from '../lib/api/cards';
 import { Settings } from './settings/Settings';
+import { RefundEntryModal } from '../pos/RefundEntryModal';
 import {
   createCustomer,
   deleteCustomerById,
@@ -105,6 +107,7 @@ const actionLabel = (type: StaffActionType): string => {
   if (type === 'register_customer') return 'רישום לקוח';
   if (type === 'create_staff') return 'הוספת איש צוות';
   if (type === 'update_card_settings') return 'עדכון הגדרות כרטיסייה';
+  if (type === 'refund_entry') return 'החזר כניסה';
   return 'פעולה';
 };
 
@@ -683,6 +686,11 @@ function Cards() {
   const [detail, setDetail] = useState<CardDetailResponse | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
+  const [refundEntryId, setRefundEntryId] = useState<string | null>(null);
+  const [refundSubmitting, setRefundSubmitting] = useState(false);
+  const [refundError, setRefundError] = useState<string | null>(null);
+  const { state: cardsSessionState } = useStaffSession();
+  const cardsRole = cardsSessionState.status === 'signed-in' ? cardsSessionState.user.role : null;
 
   useEffect(() => {
     if (!detailFor) {
@@ -737,6 +745,39 @@ function Cards() {
   const head = showActions
     ? ['מספר סידורי', 'לקוח', 'ניצול', 'תוקף', 'סטטוס', '']
     : ['מספר סידורי', 'לקוח', 'ניצול', 'תוקף', 'סטטוס'];
+
+  const submitRefund = async (
+    cardId: string,
+    entryId: string,
+    reason: string,
+    adminPassword: string | undefined,
+  ) => {
+    setRefundSubmitting(true);
+    setRefundError(null);
+    console.info('[web admin refund] submit', { entryId });
+    const res = await refundEntry(cardId, entryId, {
+      reason,
+      ...(adminPassword !== undefined && { adminPassword }),
+    });
+    setRefundSubmitting(false);
+    if (!res.ok) {
+      console.warn('[web admin refund] error', { status: res.status, error: res.error });
+      setRefundError(humanizeAdminRefundError(res.error));
+      return;
+    }
+    console.info('[web admin refund] success', {
+      entryId,
+      reactivated: res.data.reactivated,
+    });
+    setRefundEntryId(null);
+    // Refetch the card detail so the entries list + usage reflects the refund.
+    if (detailFor) {
+      const refreshed = await getCardDetail(detailFor);
+      if (refreshed.ok) setDetail(refreshed.data);
+    }
+    // Also reload the cards list so the active/expired buckets update.
+    await reload();
+  };
 
   const confirmCancel = async (reason: string) => {
     if (!askCancel) return;
@@ -902,10 +943,52 @@ function Cards() {
           error={detailError}
           detail={detail}
           onClose={() => setDetailFor(null)}
+          onRefundEntry={(entryId) => {
+            setRefundError(null);
+            setRefundEntryId(entryId);
+          }}
         />
       )}
+      {refundEntryId &&
+        detail &&
+        (() => {
+          const target = detail.entries.find((e) => e.id === refundEntryId);
+          if (!target) return null;
+          const summary = `${fmtDateTime(target.punchedAt)} · ${
+            target.companionCount === 1 ? 'מלווה אחד' : `${target.companionCount} מלווים`
+          }`;
+          return (
+            <RefundEntryModal
+              entrySummary={summary}
+              selfApprove={cardsRole === 'admin'}
+              submitting={refundSubmitting}
+              error={refundError}
+              onClose={() => {
+                if (!refundSubmitting) {
+                  setRefundEntryId(null);
+                  setRefundError(null);
+                }
+              }}
+              onConfirm={(reason, password) =>
+                void submitRefund(detail.card.id, target.id, reason, password)
+              }
+            />
+          );
+        })()}
     </div>
   );
+}
+
+function humanizeAdminRefundError(code: string): string {
+  if (code === 'admin_password_required') return 'נדרשת סיסמת אדמין.';
+  if (code === 'admin_password_invalid')
+    return 'סיסמת אדמין שגויה. ודאו שמדובר באדמין פעיל ונסו שוב.';
+  if (code === 'entry_not_found') return 'הכניסה לא נמצאה. ייתכן שכבר הוחזרה.';
+  if (code === 'already_refunded') return 'הכניסה כבר הוחזרה.';
+  if (code === 'card_cancelled') return 'לא ניתן להחזיר כניסות בכרטיסייה מבוטלת.';
+  if (code === 'invalid_body') return 'נתונים לא תקינים. בדקו ונסו שוב.';
+  if (code === 'forbidden') return 'אין לך הרשאה לבצע החזר.';
+  return 'תקלה זמנית. נסו שוב בעוד רגע.';
 }
 
 function humanizeCancelError(code: string): string {
@@ -1104,11 +1187,13 @@ function CardDetailModal({
   error,
   detail,
   onClose,
+  onRefundEntry,
 }: {
   loading: boolean;
   error: string | null;
   detail: CardDetailResponse | null;
   onClose: () => void;
+  onRefundEntry: (entryId: string) => void;
 }) {
   return (
     <div
@@ -1169,14 +1254,21 @@ function CardDetailModal({
             לא ניתן לטעון את פרטי הכרטיסייה. סגרו וננסו שוב.
           </div>
         )}
-        {detail && <CardDetailBody detail={detail} />}
+        {detail && <CardDetailBody detail={detail} onRefundEntry={onRefundEntry} />}
       </div>
     </div>
   );
 }
 
-function CardDetailBody({ detail }: { detail: CardDetailResponse }) {
+function CardDetailBody({
+  detail,
+  onRefundEntry,
+}: {
+  detail: CardDetailResponse;
+  onRefundEntry: (entryId: string) => void;
+}) {
   const { card, entries } = detail;
+  const refundsAllowed = !card.cancelledAt;
   const customerLabel =
     card.customerFirstName || card.customerLastName
       ? `${card.customerFirstName ?? ''} ${card.customerLastName ?? ''}`.trim()
@@ -1255,26 +1347,56 @@ function CardDetailBody({ detail }: { detail: CardDetailResponse }) {
             e.staffFirstName || e.staffLastName
               ? `${e.staffFirstName ?? ''} ${e.staffLastName ?? ''}`.trim()
               : 'לא ידוע';
+          const refunded = e.refundedAt !== null;
           return (
             <div
               key={e.id}
               style={{
                 display: 'flex',
                 justifyContent: 'space-between',
+                alignItems: 'center',
                 gap: 12,
                 padding: '8px 0',
                 borderTop: i ? '1px solid #f3efea' : 'none',
                 fontSize: 14,
+                opacity: refunded ? 0.55 : 1,
               }}
             >
-              <div>
-                <div>{fmtDateTime(e.punchedAt)}</div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ textDecoration: refunded ? 'line-through' : 'none' }}>
+                  {fmtDateTime(e.punchedAt)}
+                </div>
                 <div style={{ fontSize: 12.5, color: MUTED, marginTop: 2 }}>
                   {methodLabel(e.method)} · {who}
                 </div>
+                {refunded && (
+                  <div style={{ fontSize: 12.5, color: '#a23a3a', marginTop: 4 }}>
+                    הוחזר{e.refundReason ? ` · ${e.refundReason}` : ''}
+                  </div>
+                )}
               </div>
-              <div style={{ color: MUTED, whiteSpace: 'nowrap' }}>
-                {e.companionCount === 1 ? 'מלווה אחד' : `${e.companionCount} מלווים`}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+                <div style={{ color: MUTED, whiteSpace: 'nowrap' }}>
+                  {e.companionCount === 1 ? 'מלווה אחד' : `${e.companionCount} מלווים`}
+                </div>
+                {!refunded && refundsAllowed && (
+                  <button
+                    type="button"
+                    onClick={() => onRefundEntry(e.id)}
+                    style={{
+                      border: '1.5px solid #e9e0d9',
+                      background: '#fff',
+                      color: MUTED,
+                      borderRadius: 8,
+                      padding: '5px 10px',
+                      fontWeight: 600,
+                      fontSize: 12.5,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    החזר
+                  </button>
+                )}
               </div>
             </div>
           );

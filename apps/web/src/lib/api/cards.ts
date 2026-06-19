@@ -97,6 +97,9 @@ export interface CardDetailEntry {
   punchedBy: string | null;
   staffFirstName: string | null;
   staffLastName: string | null;
+  /** Non-null when the entry has been refunded. */
+  refundedAt: string | null;
+  refundReason: string | null;
 }
 
 export interface CardDetailResponse {
@@ -124,3 +127,33 @@ export const cancelCardForAdmin = (
   reason: string,
 ): Promise<ApiResult<CancelCardResponse>> =>
   apiRequest(`/cards/${id}/cancel`, { method: 'POST', body: { reason } });
+
+// ---------------------------------------------------------------------------
+// Refund a single entry. Admin can refund alone; cashier+manager must supply
+// adminPassword which the server bcrypt-compares to active admins.
+// ---------------------------------------------------------------------------
+
+export interface RefundEntryResponse {
+  entryId: string;
+  cardId: string;
+  usedEntries: number;
+  totalEntries: number;
+  remaining: number;
+  reactivated: boolean;
+}
+
+export interface RefundEntryInput {
+  reason: string;
+  /** Required when the signed-in user is not admin. */
+  adminPassword?: string;
+}
+
+export const refundEntry = (
+  cardId: string,
+  entryId: string,
+  input: RefundEntryInput,
+): Promise<ApiResult<RefundEntryResponse>> =>
+  apiRequest(`/cards/${cardId}/entries/${entryId}/refund`, {
+    method: 'POST',
+    body: input,
+  });

@@ -113,6 +113,9 @@ export interface ScanLookupEntry {
   companionCount: number;
   staffFirstName: string | null;
   staffLastName: string | null;
+  /** Non-null when the entry has been refunded. */
+  refundedAt: string | null;
+  refundReason: string | null;
 }
 
 export interface ScanLookupResponse {
