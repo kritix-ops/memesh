@@ -1,0 +1,13 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "buildCommand": "if [ \"$VERCEL_ENV\" = \"production\" ]; then (cd ../../packages/db && pnpm db:migrate); fi && node scripts/build-api-bundle.mjs",
+  "rewrites": [{ "source": "/(.*)", "destination": "/api/server" }],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [{ "key": "X-Robots-Tag", "value": "noindex, nofollow" }]
+    }
+  ],
+  "crons": [{ "path": "/cron/wc-reconcile", "schedule": "0 * * * *" }]
+}

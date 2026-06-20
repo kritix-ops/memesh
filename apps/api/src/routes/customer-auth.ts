@@ -12,6 +12,7 @@ import type { FastifyPluginAsync, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { customerAuthConfig } from '../auth.js';
 import { env } from '../config.js';
+import { clearCookieScope, cookieScope } from '../lib/cookie-scope.js';
 import { emailProvider } from '../lib/email.js';
 import { phoneSchema } from '../lib/phone-schema.js';
 import { smsProvider } from '../lib/sms.js';
@@ -33,11 +34,10 @@ const emailVerifySchema = z.object({
 });
 
 const setCustomerCookie = (reply: FastifyReply, token: string): void => {
+  // cookieScope() handles HttpOnly, Secure, SameSite, Path, and the optional
+  // Domain attribute. We only need to add the customer-specific max-age here.
   reply.setCookie('customer_token', token, {
-    httpOnly: true,
-    secure: env.NODE_ENV === 'production',
-    sameSite: 'lax',
-    path: '/',
+    ...cookieScope(),
     maxAge: CUSTOMER_SESSION_MAX_AGE_SEC,
   });
 };
@@ -160,7 +160,7 @@ export const customerAuthRoutes: FastifyPluginAsync = async (fastify) => {
   // so this endpoint exists specifically to let the customer truly sign out
   // before the 7-day cookie expires.
   fastify.post('/auth/customer/logout', async (_request, reply) => {
-    reply.clearCookie('customer_token', { path: '/' });
+    reply.clearCookie('customer_token', clearCookieScope());
     return { ok: true };
   });
 };

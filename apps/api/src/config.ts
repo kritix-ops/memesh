@@ -11,6 +11,17 @@ const envSchema = z.object({
   JWT_ISSUER: z.string().default('memesh'),
   JWT_AUDIENCE: z.string().default('memesh-api'),
   JWT_CUSTOMER_AUDIENCE: z.string().default('memesh-customer'),
+  // Cross-origin frontends allowlist for the split-subdomain topology. Comma-
+  // separated absolute origins, e.g.
+  //   "https://staff.memesh.co.il,https://admin.memesh.co.il,https://my.memesh.co.il"
+  // Unset means: same-origin deploy (apps/web today), CORS falls back to
+  // `origin: false` in production and `origin: true` in development.
+  CORS_ALLOWED_ORIGINS: z.string().optional(),
+  // Cookie scope for the split-subdomain topology. When set (e.g. ".memesh.co.il"),
+  // the auth + customer cookies include a Domain attribute so they survive the
+  // cross-subdomain hop from frontend to api.memesh.co.il. Unset means cookies
+  // stay origin-scoped (current single-origin behaviour, safe for dev).
+  COOKIE_DOMAIN: z.string().optional(),
   // WordPress one-way sync (optional). When unset, sync is disabled and customer
   // creation simply skips it.
   WP_BASE_URL: z.string().url().optional(),

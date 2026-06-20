@@ -280,3 +280,27 @@ test('POST /auth/customer/verify-email-otp rejects an invalid body with 400', as
   });
   assert.equal(res.statusCode, 400);
 });
+
+// ---------------------------------------------------------------------------
+// noindex header: the API must never be search-indexable. The onSend hook in
+// securityPlugin applies the X-Robots-Tag globally, so every response — 200,
+// 400, 401 — carries it. We sample one of each.
+// ---------------------------------------------------------------------------
+
+test('every response carries X-Robots-Tag: noindex, nofollow (200)', async () => {
+  const res = await app.inject({ method: 'GET', url: '/health' });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.headers['x-robots-tag'], 'noindex, nofollow');
+});
+
+test('every response carries X-Robots-Tag: noindex, nofollow (400)', async () => {
+  const res = await app.inject({ method: 'POST', url: '/auth/login', payload: { phone: '' } });
+  assert.equal(res.statusCode, 400);
+  assert.equal(res.headers['x-robots-tag'], 'noindex, nofollow');
+});
+
+test('every response carries X-Robots-Tag: noindex, nofollow (401)', async () => {
+  const res = await app.inject({ method: 'GET', url: '/me' });
+  assert.equal(res.statusCode, 401);
+  assert.equal(res.headers['x-robots-tag'], 'noindex, nofollow');
+});

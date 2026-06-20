@@ -79,6 +79,25 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
+  apps/api-deploy:
+    dependencies:
+      '@memesh/api':
+        specifier: workspace:*
+        version: link:../api
+    devDependencies:
+      '@types/node':
+        specifier: ^24.0.0
+        version: 24.12.4
+      esbuild:
+        specifier: ^0.24.0
+        version: 0.24.2
+      fastify:
+        specifier: ^5.2.0
+        version: 5.8.5
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
   apps/web:
     dependencies:
       '@memesh/api':
