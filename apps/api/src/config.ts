@@ -16,6 +16,14 @@ const envSchema = z.object({
   WP_BASE_URL: z.string().url().optional(),
   WP_SYNC_USER: z.string().optional(),
   WP_SYNC_APP_PASSWORD: z.string().optional(),
+  // WooCommerce → Memesh integration. Required in production for the webhook
+  // route to start; left optional so dev/test boots without the secret. WC
+  // signs each delivery with HMAC-SHA256 over the raw body using this string
+  // (configured in WooCommerce → Settings → Advanced → Webhooks).
+  WC_WEBHOOK_SECRET: z.string().min(32).optional(),
+  // Reconciliation cron auth (PR 3 wires the cron itself). Bearer token must
+  // match Authorization header on /cron/* requests.
+  CRON_SECRET: z.string().min(32).optional(),
   // SMS provider selection. 'console' is the safe default and logs each
   // message to stdout. 'pulseem' is the production provider (the account
   // Yanai signed up for at pulseem.co.il); requires PULSEEM_API_KEY +

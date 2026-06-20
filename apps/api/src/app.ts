@@ -15,6 +15,7 @@ import { meRoutes } from './routes/me.js';
 import { punchRoutes } from './routes/punch.js';
 import { reportsRoutes } from './routes/reports.js';
 import { staffRoutes } from './routes/staff.js';
+import { webhooksWcRoutes } from './routes/webhooks-wc.js';
 
 /** Build the Fastify app without listening, so it can be driven by tests via inject(). */
 export const buildApp = async (): Promise<FastifyInstance> => {
@@ -54,6 +55,7 @@ export const buildApp = async (): Promise<FastifyInstance> => {
   await fastify.register(staffRoutes);
   await fastify.register(adminRoutes);
   await fastify.register(reportsRoutes);
+  await fastify.register(webhooksWcRoutes);
 
   fastify.get('/health', async () => ({
     status: 'ok',

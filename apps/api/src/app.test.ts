@@ -156,3 +156,29 @@ test('DELETE /customers/:id without auth returns 401', async () => {
   });
   assert.equal(res.statusCode, 401);
 });
+
+// ---------------------------------------------------------------------------
+// /webhooks/woocommerce/order — structural HTTP gates only. The full
+// processor flow is covered in src/lib/wc-order-processor.test.ts against
+// PGlite. These tests just confirm the route refuses traffic that doesn't
+// look like a signed WC delivery.
+// ---------------------------------------------------------------------------
+
+test('GET /webhooks/woocommerce/health returns ok (smoke endpoint)', async () => {
+  const res = await app.inject({ method: 'GET', url: '/webhooks/woocommerce/health' });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.json().ok, true);
+});
+
+test('POST /webhooks/woocommerce/order without headers returns 503 in tests (no WC_WEBHOOK_SECRET)', async () => {
+  // WC_WEBHOOK_SECRET is intentionally unset in the test env, so the route
+  // hits the production guard first and 503s. Once the secret is set,
+  // missing headers move the response to 401 — covered manually + by the
+  // processor tests indirectly.
+  const res = await app.inject({
+    method: 'POST',
+    url: '/webhooks/woocommerce/order',
+    payload: { id: 1, status: 'completed', line_items: [] },
+  });
+  assert.equal(res.statusCode, 503);
+});
