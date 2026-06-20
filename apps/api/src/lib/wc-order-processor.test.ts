@@ -425,6 +425,53 @@ test('processWcOrderWebhook records a failure for a phone that cannot be normali
 });
 
 // ---------------------------------------------------------------------------
+// Email-required failure (Yanay 2026-06-20) — web orders MUST have an email
+// so the email-OTP fallback works later. WC checkout enforces this by
+// default but we defense-in-depth here so a misconfig surfaces as a clean
+// failure row instead of a customer with no email on file.
+// ---------------------------------------------------------------------------
+
+test('processWcOrderWebhook records a failure when billing email is missing', async () => {
+  const db = await freshDb();
+  const deliveryId = nextDeliveryId();
+  const result = await processWcOrderWebhook(db, {
+    deliveryId,
+    topic: 'order.updated',
+    payload: wcPayload({
+      id: 1250,
+      // phone is valid; email is omitted — should hit the new email_required gate
+      billing: { phone: '054-555-1212', email: '' },
+    }),
+    resolver,
+  });
+  assert.equal(result.status, 'failure');
+  if (result.status !== 'failure') return;
+  assert.equal(result.reason, 'email_required');
+
+  const cards = await db.select().from(punchCards);
+  assert.equal(cards.length, 0);
+  const custs = await db.select().from(customers);
+  assert.equal(custs.length, 0);
+  const failures = await db.select().from(wcWebhookFailures);
+  assert.equal(failures.length, 1);
+  assert.equal(failures[0]?.reason, 'email_required');
+  assert.equal(failures[0]?.wcOrderId, '1250');
+});
+
+test('processWcOrderWebhook accepts an order with a whitespace-only email as email_required', async () => {
+  const db = await freshDb();
+  const result = await processWcOrderWebhook(db, {
+    deliveryId: nextDeliveryId(),
+    topic: 'order.updated',
+    payload: wcPayload({ id: 1251, billing: { phone: '054-555-9999', email: '   ' } }),
+    resolver,
+  });
+  assert.equal(result.status, 'failure');
+  if (result.status !== 'failure') return;
+  assert.equal(result.reason, 'email_required');
+});
+
+// ---------------------------------------------------------------------------
 // Marketing consent
 // ---------------------------------------------------------------------------
 

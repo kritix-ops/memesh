@@ -45,6 +45,47 @@ export const cardSettings = pgTable('card_settings', {
   /** If true, at least one child row is required on the new-customer form. */
   requireChildOnNewCustomer: boolean('require_child_on_new_customer').notNull().default(false),
 
+  // --- Cashier anti-fraud controls (Yanay 2026-06-20) ---
+  /** If true, every POS sale must record a receipt number from the till. */
+  requireReceiptNumberOnPos: boolean('require_receipt_number_on_pos').notNull().default(true),
+  /** If true, every POS sale prompts the cashier for their attribution PIN. */
+  requireSellerPin: boolean('require_seller_pin').notNull().default(true),
+  /** Configurable so we can tighten security later without a migration. */
+  pinLength: integer('pin_length').notNull().default(3),
+  /** How long the entered PIN is remembered in the device tab between sales. */
+  pinMemoryMinutes: integer('pin_memory_minutes').notNull().default(15),
+  /** Consecutive wrong PIN tries before the cashier's PIN is locked. */
+  pinMaxFailures: integer('pin_max_failures').notNull().default(5),
+  /** Lockout duration after pin_max_failures. Manager can unlock earlier. */
+  pinLockoutMinutes: integer('pin_lockout_minutes').notNull().default(15),
+
+  // --- Editable customer-facing copy (Yanay can polish from Settings) ---
+  /** Label on the mandatory "I wrote the name on the receipt" checkbox at the till. */
+  posNameOnReceiptLabel: text('pos_name_on_receipt_label')
+    .notNull()
+    .default('רשמתי את שם הלקוח על הקבלה במעמד התשלום'),
+  /** Helper text under the optional email input on the new-customer form. */
+  posEmailNudgeText: text('pos_email_nudge_text')
+    .notNull()
+    .default(
+      'האימייל לא חובה אך מומלץ — מאפשר ללקוח להיכנס לאזור האישי גם אם החליף מספר טלפון או אם ה-SMS לא יגיע.',
+    ),
+  /** Subject line for the customer email-OTP message. */
+  emailOtpSubject: text('email_otp_subject')
+    .notNull()
+    .default('קוד הכניסה שלך לאזור האישי בממש'),
+  /**
+   * Body template for the email-OTP message. Placeholders: {{firstName}}
+   * (falls back to "לקוח/ה" when missing) and {{code}}. The renderer rejects
+   * unknown placeholders at admin-save time so a typo cannot silently break
+   * OTPs in production.
+   */
+  emailOtpBodyTemplate: text('email_otp_body_template')
+    .notNull()
+    .default(
+      'שלום {{firstName}},\n\nקוד הכניסה שלך הוא: {{code}}\n\nהקוד תקף ל-10 דקות.\nאם לא ביקשת קוד זה, אפשר להתעלם מההודעה.\n\nצוות ממש',
+    ),
+
   updatedBy: uuid('updated_by').references(() => staff.id),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });

@@ -227,3 +227,47 @@ test('isQuietHourNow: zero-width window is always off', () => {
   assert.equal(isQuietHourNow(600, 600, jerusalemInstant(10, 0)), false);
   assert.equal(isQuietHourNow(0, 0, jerusalemInstant(0, 0)), false);
 });
+
+// ---------------------------------------------------------------------------
+// Cashier anti-fraud + editable copy (Yanay 2026-06-20)
+// ---------------------------------------------------------------------------
+
+test('getCardSettings ships with anti-fraud defaults all on and Hebrew copy filled in', async () => {
+  const db = await freshDb();
+  const s = await getCardSettings(db);
+  assert.equal(s.requireReceiptNumberOnPos, true);
+  assert.equal(s.requireSellerPin, true);
+  assert.equal(s.pinLength, 3);
+  assert.equal(s.pinMemoryMinutes, 15);
+  assert.equal(s.pinMaxFailures, 5);
+  assert.equal(s.pinLockoutMinutes, 15);
+  assert.match(s.posNameOnReceiptLabel, /שם הלקוח/);
+  assert.match(s.posEmailNudgeText, /אימייל/);
+  assert.match(s.emailOtpSubject, /קוד/);
+  assert.match(s.emailOtpBodyTemplate, /\{\{code\}\}/);
+});
+
+test('updateCardSettings validates PIN ranges + rejects unknown email template placeholders', async () => {
+  const db = await freshDb();
+  const a = await updateCardSettings(db, { pinLength: 1 });
+  assert.equal(a.ok, false);
+  if (!a.ok) assert.equal(a.error, 'pin_length_out_of_range');
+
+  const b = await updateCardSettings(db, { pinMaxFailures: 11 });
+  assert.equal(b.ok, false);
+  if (!b.ok) assert.equal(b.error, 'pin_max_failures_out_of_range');
+
+  // {{name}} is not a known placeholder — refuse rather than silently break OTPs.
+  const c = await updateCardSettings(db, {
+    emailOtpBodyTemplate: 'שלום {{name}}, הקוד הוא {{code}}',
+  });
+  assert.equal(c.ok, false);
+  if (!c.ok) assert.equal(c.error, 'email_otp_body_template_unknown_placeholder');
+
+  // Valid edit goes through.
+  const d = await updateCardSettings(db, {
+    emailOtpBodyTemplate: 'שלום {{firstName}}, הקוד הוא {{code}}',
+    pinLength: 4,
+  });
+  assert.equal(d.ok, true);
+});

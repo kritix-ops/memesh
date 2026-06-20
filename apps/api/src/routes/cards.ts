@@ -18,6 +18,7 @@ import { z } from 'zod';
 import { requireRoleHook } from '../lib/auth-guards.js';
 import { envKeyResolver } from '../qr.js';
 import { sendMarketingSms } from '../lib/sms.js';
+import { verifyStaffPin } from '../lib/staff-pin-repo.js';
 
 const STAFF = ['cashier', 'manager', 'admin'] as const;
 
@@ -25,6 +26,14 @@ const createBodySchema = z.object({
   customerId: z.string().uuid(),
   totalEntries: z.number().int().positive().max(100).optional(),
   source: z.enum(['pos', 'online', 'manual']).optional(),
+  // Receipt number from the AccuPOS register. Enforced as required at this
+  // route when settings.requireReceiptNumberOnPos is true AND the effective
+  // source resolves to 'pos'. Always required to be 1..64 chars when present
+  // so a stray empty string can't slip past the DB unique constraint.
+  receiptNumber: z.string().trim().min(1).max(64).optional(),
+  // Cashier attribution PIN (digits). Enforced when
+  // settings.requireSellerPin is true. The route never echoes this back.
+  sellerPin: z.string().regex(/^\d+$/).min(3).max(12).optional(),
 });
 
 const cancelBodySchema = z.object({ reason: z.string().min(1).max(500) });
@@ -72,12 +81,93 @@ export const cardsRoutes: FastifyPluginAsync = async (fastify) => {
     if (!parsed.success) {
       return reply.code(400).send({ error: 'invalid_body', issues: parsed.error.issues });
     }
-    const card = await createPunchCard(db, envKeyResolver, {
-      customerId: parsed.data.customerId,
-      ...(parsed.data.totalEntries !== undefined && { totalEntries: parsed.data.totalEntries }),
-      ...(parsed.data.source !== undefined && { source: parsed.data.source }),
-    });
-    request.log.info({ cardId: card.id, serial: card.serialNumber }, '[cards] created');
+    if (!request.user) return reply.code(401).send({ error: 'unauthorized' });
+
+    const settings = await getCardSettings(db);
+    const effectiveSource = parsed.data.source ?? 'pos';
+    const isPos = effectiveSource === 'pos';
+
+    // Anti-fraud gates apply to over-the-counter sales only. Admin-issued
+    // gift cards go through /admin/cards and bypass both.
+    if (isPos && settings.requireReceiptNumberOnPos && !parsed.data.receiptNumber) {
+      return reply.code(400).send({ error: 'receipt_number_required' });
+    }
+    if (isPos && settings.requireSellerPin) {
+      if (!parsed.data.sellerPin) {
+        return reply.code(400).send({ error: 'pin_required' });
+      }
+      const verdict = await verifyStaffPin(request.user.id, parsed.data.sellerPin);
+      if (!verdict.ok) {
+        if (verdict.reason === 'no_pin') {
+          request.log.info(
+            { staffId: request.user.id },
+            '[pos sell] pin_not_set — manager must set this cashier a PIN first',
+          );
+          return reply.code(412).send({ error: 'pin_not_set' });
+        }
+        if (verdict.reason === 'locked') {
+          const retryAfterSec = Math.max(
+            1,
+            Math.ceil((verdict.lockedUntil.getTime() - Date.now()) / 1000),
+          );
+          request.log.warn(
+            { staffId: request.user.id, retryAfterSec },
+            '[pos sell] pin_locked',
+          );
+          return reply.code(423).send({ error: 'pin_locked', retryAfterSec });
+        }
+        // invalid_pin — surface "now locked" so the UI can show the right
+        // message. We deliberately do NOT echo failedCount so a remote
+        // attacker can't tell exactly how close they are to lockout.
+        request.log.info(
+          { staffId: request.user.id, lockedAfter: verdict.locked },
+          '[pos sell] invalid_pin',
+        );
+        return reply.code(401).send({
+          error: verdict.locked ? 'pin_locked_now' : 'invalid_pin',
+        });
+      }
+    }
+
+    let card;
+    try {
+      card = await createPunchCard(db, envKeyResolver, {
+        customerId: parsed.data.customerId,
+        ...(parsed.data.totalEntries !== undefined && { totalEntries: parsed.data.totalEntries }),
+        ...(parsed.data.source !== undefined && { source: parsed.data.source }),
+        ...(parsed.data.receiptNumber !== undefined && {
+          receiptNumber: parsed.data.receiptNumber,
+        }),
+        // Always stamp soldBy when a cashier is at the keyboard, even if the
+        // settings have the PIN gate disabled — the audit trail is the point.
+        soldBy: request.user.id,
+      });
+    } catch (err) {
+      // 23505 = unique_violation. Only happens when the receipt number was
+      // already used by another card — the lazy version of cashier fraud.
+      const code =
+        err && typeof err === 'object' && 'code' in err
+          ? String((err as { code?: unknown }).code)
+          : '';
+      if (code === '23505') {
+        request.log.warn(
+          { receiptNumber: parsed.data.receiptNumber, staffId: request.user.id },
+          '[pos sell] receipt_number_duplicate',
+        );
+        return reply.code(409).send({ error: 'receipt_number_duplicate' });
+      }
+      throw err;
+    }
+    request.log.info(
+      {
+        cardId: card.id,
+        serial: card.serialNumber,
+        soldBy: request.user.id,
+        receiptNumber: parsed.data.receiptNumber ?? null,
+        source: effectiveSource,
+      },
+      '[pos sell] created',
+    );
 
     // Fire-and-log marketing SMS after the sale. The wrapper enforces the
     // smsOnPurchase setting, customer consent, and quiet hours. Failures

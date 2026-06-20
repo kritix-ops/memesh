@@ -1,0 +1,20 @@
+{
+  "name": "@memesh/api-deploy",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:api-bundle": "node scripts/build-api-bundle.mjs",
+    "build": "node scripts/build-api-bundle.mjs",
+    "typecheck": "node scripts/build-api-bundle.mjs && tsc --noEmit"
+  },
+  "dependencies": {
+    "@memesh/api": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "esbuild": "^0.24.0",
+    "fastify": "^5.2.0",
+    "typescript": "^5.7.0"
+  }
+}

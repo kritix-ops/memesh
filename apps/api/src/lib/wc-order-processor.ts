@@ -193,6 +193,24 @@ export const processWcOrderWebhook = async (
       return { status: 'failure', reason: 'phone_missing', orderId: orderIdStr };
     }
 
+    // Email is required for web orders (Yanay 2026-06-20) — web customers
+    // are already online so capturing it is friction-free, and it's what
+    // unlocks the email-OTP login fallback when SMS later fails or the
+    // customer's phone number changes. Defense-in-depth: WC checkout
+    // already requires email by default, but we enforce here so a misconfig
+    // upstream surfaces as a clean failure row instead of silently
+    // creating a customer with no email on file.
+    const rawEmail = order.billing?.email?.trim() ?? '';
+    if (!rawEmail) {
+      await recordWcWebhookFailure(tx, {
+        deliveryId: input.deliveryId,
+        wcOrderId: orderIdStr,
+        reason: 'email_required',
+        payload: input.payload,
+      });
+      return { status: 'failure', reason: 'email_required', orderId: orderIdStr };
+    }
+
     const wpUserId =
       typeof order.customer_id === 'number' && order.customer_id > 0
         ? order.customer_id
@@ -202,7 +220,7 @@ export const processWcOrderWebhook = async (
       phone: phoneParsed.data,
       firstName: order.billing?.first_name?.trim() || 'WooCommerce',
       lastName: order.billing?.last_name?.trim() || 'Customer',
-      email: order.billing?.email?.trim() || null,
+      email: rawEmail,
       wpUserId,
       marketingConsent: input.marketingConsent ?? false,
       ...(input.now && { now: input.now }),

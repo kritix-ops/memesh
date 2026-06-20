@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { generateSerial, signToken, type KeyResolver } from '@memesh/qr-engine';
 import { and, desc, eq, ilike, isNotNull, isNull, or, sql } from 'drizzle-orm';
-import type { PgDatabase } from 'drizzle-orm/pg-core';
+import { alias, type PgDatabase } from 'drizzle-orm/pg-core';
 import { logStaffAction } from './actions';
 import { getCardSettings } from './card-settings';
 import {
@@ -11,6 +11,12 @@ import {
   staff,
   type ChildRecord,
 } from './schema/index';
+
+// Aliased view of `staff` for joining the "selling cashier" on punch_cards.
+// Using an alias keeps the join unambiguous in queries that also reference
+// staff for other reasons (e.g. cancelledBy in the future) and reads cleanly
+// in the select shape (sellerFirstName vs. staffFirstName).
+const seller = alias(staff, 'seller');
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -115,6 +121,15 @@ export interface CreatePunchCardInput {
    */
   validityDays?: number | null;
   wcOrderId?: string;
+  /**
+   * AccuPOS receipt number recorded at the till. Required by the API for
+   * `source='pos'` (settings-driven). The DB enforces uniqueness — passing a
+   * duplicate raises a Postgres unique-violation that the route layer maps
+   * to a 409 receipt_number_duplicate.
+   */
+  receiptNumber?: string;
+  /** Cashier who issued the card (attribution PIN at the till). */
+  soldBy?: string;
   now?: Date;
 }
 
@@ -165,6 +180,8 @@ export const createPunchCard = async (
       expiresAt,
       source: input.source ?? 'pos',
       wcOrderId: input.wcOrderId ?? null,
+      ...(input.receiptNumber !== undefined && { receiptNumber: input.receiptNumber }),
+      ...(input.soldBy !== undefined && { soldBy: input.soldBy }),
       // When the caller injects `now` (tests, backfill), honor it for
       // createdAt too — otherwise the row default Now() would diverge
       // from expiresAt arithmetic.
@@ -201,6 +218,10 @@ export const cardDetail = async (db: AnyPgDatabase, cardId: string) => {
       expiresAt: punchCards.expiresAt,
       source: punchCards.source,
       wcOrderId: punchCards.wcOrderId,
+      receiptNumber: punchCards.receiptNumber,
+      soldBy: punchCards.soldBy,
+      soldByFirstName: seller.firstName,
+      soldByLastName: seller.lastName,
       cancelledAt: punchCards.cancelledAt,
       cancelledBy: punchCards.cancelledBy,
       cancelReason: punchCards.cancelReason,
@@ -214,6 +235,7 @@ export const cardDetail = async (db: AnyPgDatabase, cardId: string) => {
     })
     .from(punchCards)
     .leftJoin(customers, eq(customers.id, punchCards.customerId))
+    .leftJoin(seller, eq(seller.id, punchCards.soldBy))
     .where(eq(punchCards.id, cardId))
     .limit(1);
 
@@ -391,6 +413,9 @@ export const listCards = async (db: AnyPgDatabase, input: ListCardsInput = {}) =
     const pattern = `%${q}%`;
     const qCondition = or(
       ilike(punchCards.serialNumber, pattern),
+      // Receipt number search lets Yanay drill into a suspect AccuPOS receipt
+      // and find the matching punch card directly.
+      ilike(punchCards.receiptNumber, pattern),
       ilike(customers.firstName, pattern),
       ilike(customers.lastName, pattern),
       ilike(customers.phone, pattern),
@@ -412,6 +437,10 @@ export const listCards = async (db: AnyPgDatabase, input: ListCardsInput = {}) =
       cancelledAt: punchCards.cancelledAt,
       cancelReason: punchCards.cancelReason,
       source: punchCards.source,
+      receiptNumber: punchCards.receiptNumber,
+      soldBy: punchCards.soldBy,
+      soldByFirstName: seller.firstName,
+      soldByLastName: seller.lastName,
       createdAt: punchCards.createdAt,
       customerFirstName: customers.firstName,
       customerLastName: customers.lastName,
@@ -420,6 +449,7 @@ export const listCards = async (db: AnyPgDatabase, input: ListCardsInput = {}) =
     })
     .from(punchCards)
     .leftJoin(customers, eq(customers.id, punchCards.customerId))
+    .leftJoin(seller, eq(seller.id, punchCards.soldBy))
     .$dynamic();
   if (where) query = query.where(where);
   return query.orderBy(desc(punchCards.createdAt)).limit(limit);

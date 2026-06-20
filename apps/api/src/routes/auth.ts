@@ -11,6 +11,7 @@ import { z } from 'zod';
 import { authConfig } from '../auth.js';
 import { env } from '../config.js';
 import { requireAuthHook } from '../lib/auth-guards.js';
+import { clearCookieScope, cookieScope } from '../lib/cookie-scope.js';
 import { phoneSchema } from '../lib/phone-schema.js';
 import { verifyStaffLogin } from '../lib/staff-repo.js';
 
@@ -34,27 +35,18 @@ const refreshBodySchema = z
   .optional();
 
 const setAuthCookies = (reply: FastifyReply, accessToken: string, refreshToken: string): void => {
-  const isProd = env.NODE_ENV === 'production';
   // Both cookies use path '/'. The previous scoping of refresh_token to
   // '/auth/refresh' broke under any /api/* proxy (Vite dev proxy or the
   // production reverse proxy) because the browser stores the cookie at the
   // path the server sent, while the actual refresh request is /api/auth/refresh
   // — paths mismatch, cookie not sent. The cookies are HttpOnly + sameSite=lax
   // (+ Secure in prod), so path scoping never gated a real attack.
-  reply.setCookie('access_token', accessToken, {
-    httpOnly: true,
-    secure: isProd,
-    sameSite: 'lax',
-    path: '/',
-    maxAge: ACCESS_MAX_AGE_SEC,
-  });
-  reply.setCookie('refresh_token', refreshToken, {
-    httpOnly: true,
-    secure: isProd,
-    sameSite: 'lax',
-    path: '/',
-    maxAge: REFRESH_MAX_AGE_SEC,
-  });
+  //
+  // cookieScope() also adds Domain=.memesh.co.il when COOKIE_DOMAIN is set,
+  // so the cookies survive the cross-subdomain hop from staff./admin. to api.
+  const scope = cookieScope();
+  reply.setCookie('access_token', accessToken, { ...scope, maxAge: ACCESS_MAX_AGE_SEC });
+  reply.setCookie('refresh_token', refreshToken, { ...scope, maxAge: REFRESH_MAX_AGE_SEC });
 };
 
 export const authRoutes: FastifyPluginAsync = async (fastify) => {
@@ -151,8 +143,9 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
   });
 
   fastify.post('/auth/logout', async (_request, reply) => {
-    reply.clearCookie('access_token', { path: '/' });
-    reply.clearCookie('refresh_token', { path: '/' });
+    const clear = clearCookieScope();
+    reply.clearCookie('access_token', clear);
+    reply.clearCookie('refresh_token', clear);
     return { ok: true };
   });
 };

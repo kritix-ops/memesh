@@ -1,6 +1,7 @@
 import { eq } from 'drizzle-orm';
 import type { PgDatabase } from 'drizzle-orm/pg-core';
 import { logStaffAction } from './actions';
+import { validateEmailOtpTemplate } from './email-otp';
 import { cardSettings, type CardSettingsRow } from './schema/index';
 
 type AnyPgDatabase = PgDatabase<any, any, any>;
@@ -24,6 +25,16 @@ export const CARD_SETTINGS_LIMITS = {
   smsLowEntriesThreshold: { min: 0, max: 100 },
   smsQuietMinutes: { min: 0, max: 1439 },
   expiryBadgeThresholdDays: { min: 0, max: 365 },
+  // 3 ≤ PIN ≤ 12 digits; 6 is plenty for high-security setups, 3 keeps the
+  // till fast when many sales fly past.
+  pinLength: { min: 3, max: 12 },
+  pinMemoryMinutes: { min: 1, max: 60 },
+  pinMaxFailures: { min: 1, max: 10 },
+  pinLockoutMinutes: { min: 1, max: 60 },
+  posNameOnReceiptLabel: { minLength: 1, maxLength: 200 },
+  posEmailNudgeText: { minLength: 1, maxLength: 500 },
+  emailOtpSubject: { minLength: 1, maxLength: 200 },
+  emailOtpBodyTemplate: { minLength: 1, maxLength: 2000 },
 } as const;
 
 export type CardSettingsValidationError =
@@ -42,6 +53,15 @@ export type CardSettingsValidationError =
   | 'sms_low_entries_out_of_range'
   | 'sms_quiet_minutes_out_of_range'
   | 'expiry_badge_out_of_range'
+  | 'pin_length_out_of_range'
+  | 'pin_memory_out_of_range'
+  | 'pin_max_failures_out_of_range'
+  | 'pin_lockout_out_of_range'
+  | 'pos_name_on_receipt_label_length'
+  | 'pos_email_nudge_text_length'
+  | 'email_otp_subject_length'
+  | 'email_otp_body_template_length'
+  | 'email_otp_body_template_unknown_placeholder'
   | 'no_changes';
 
 /**
@@ -84,6 +104,18 @@ export interface UpdateCardSettingsInput {
   expiryBadgeThresholdDays?: number | undefined;
   requireEmailOnNewCustomer?: boolean | undefined;
   requireChildOnNewCustomer?: boolean | undefined;
+  // Cashier anti-fraud controls
+  requireReceiptNumberOnPos?: boolean | undefined;
+  requireSellerPin?: boolean | undefined;
+  pinLength?: number | undefined;
+  pinMemoryMinutes?: number | undefined;
+  pinMaxFailures?: number | undefined;
+  pinLockoutMinutes?: number | undefined;
+  // Editable customer-facing copy
+  posNameOnReceiptLabel?: string | undefined;
+  posEmailNudgeText?: string | undefined;
+  emailOtpSubject?: string | undefined;
+  emailOtpBodyTemplate?: string | undefined;
 
   /** Staff member making the change; recorded on the row and in the action log. */
   staffId?: string | undefined;
@@ -160,6 +192,47 @@ export const updateCardSettings = async (
   if (input.expiryBadgeThresholdDays !== undefined && !within(input.expiryBadgeThresholdDays, L.expiryBadgeThresholdDays.min, L.expiryBadgeThresholdDays.max)) {
     return { ok: false, error: 'expiry_badge_out_of_range' };
   }
+  if (input.pinLength !== undefined && !within(input.pinLength, L.pinLength.min, L.pinLength.max)) {
+    return { ok: false, error: 'pin_length_out_of_range' };
+  }
+  if (input.pinMemoryMinutes !== undefined && !within(input.pinMemoryMinutes, L.pinMemoryMinutes.min, L.pinMemoryMinutes.max)) {
+    return { ok: false, error: 'pin_memory_out_of_range' };
+  }
+  if (input.pinMaxFailures !== undefined && !within(input.pinMaxFailures, L.pinMaxFailures.min, L.pinMaxFailures.max)) {
+    return { ok: false, error: 'pin_max_failures_out_of_range' };
+  }
+  if (input.pinLockoutMinutes !== undefined && !within(input.pinLockoutMinutes, L.pinLockoutMinutes.min, L.pinLockoutMinutes.max)) {
+    return { ok: false, error: 'pin_lockout_out_of_range' };
+  }
+  if (input.posNameOnReceiptLabel !== undefined) {
+    const trimmed = input.posNameOnReceiptLabel.trim();
+    if (trimmed.length < L.posNameOnReceiptLabel.minLength || trimmed.length > L.posNameOnReceiptLabel.maxLength) {
+      return { ok: false, error: 'pos_name_on_receipt_label_length' };
+    }
+  }
+  if (input.posEmailNudgeText !== undefined) {
+    const trimmed = input.posEmailNudgeText.trim();
+    if (trimmed.length < L.posEmailNudgeText.minLength || trimmed.length > L.posEmailNudgeText.maxLength) {
+      return { ok: false, error: 'pos_email_nudge_text_length' };
+    }
+  }
+  if (input.emailOtpSubject !== undefined) {
+    const trimmed = input.emailOtpSubject.trim();
+    if (trimmed.length < L.emailOtpSubject.minLength || trimmed.length > L.emailOtpSubject.maxLength) {
+      return { ok: false, error: 'email_otp_subject_length' };
+    }
+  }
+  if (input.emailOtpBodyTemplate !== undefined) {
+    // Length check first (cheap), then placeholder validation (refuses
+    // unknown tokens so a typo can't silently break OTPs in production).
+    if (input.emailOtpBodyTemplate.length < L.emailOtpBodyTemplate.minLength || input.emailOtpBodyTemplate.length > L.emailOtpBodyTemplate.maxLength) {
+      return { ok: false, error: 'email_otp_body_template_length' };
+    }
+    const placeholderCheck = validateEmailOtpTemplate(input.emailOtpBodyTemplate);
+    if (!placeholderCheck.ok) {
+      return { ok: false, error: 'email_otp_body_template_unknown_placeholder' };
+    }
+  }
 
   const now = input.now ?? new Date();
   const current = await getCardSettings(db);
@@ -221,6 +294,18 @@ export const updateCardSettings = async (
   assignNumber('expiryBadgeThresholdDays', input.expiryBadgeThresholdDays);
   assignBool('requireEmailOnNewCustomer', input.requireEmailOnNewCustomer);
   assignBool('requireChildOnNewCustomer', input.requireChildOnNewCustomer);
+  assignBool('requireReceiptNumberOnPos', input.requireReceiptNumberOnPos);
+  assignBool('requireSellerPin', input.requireSellerPin);
+  assignNumber('pinLength', input.pinLength);
+  assignNumber('pinMemoryMinutes', input.pinMemoryMinutes);
+  assignNumber('pinMaxFailures', input.pinMaxFailures);
+  assignNumber('pinLockoutMinutes', input.pinLockoutMinutes);
+  assignString('posNameOnReceiptLabel', input.posNameOnReceiptLabel);
+  assignString('posEmailNudgeText', input.posEmailNudgeText);
+  assignString('emailOtpSubject', input.emailOtpSubject);
+  // Body template uses assignStringRaw to preserve user newlines + leading
+  // whitespace inside the email body.
+  assignStringRaw('emailOtpBodyTemplate', input.emailOtpBodyTemplate);
 
   if (Object.keys(diff).length === 0) return { ok: false, error: 'no_changes' };
 
@@ -268,6 +353,16 @@ const FIELD_LABELS: Record<string, string> = {
   expiryBadgeThresholdDays: 'תג פג תוקף',
   requireEmailOnNewCustomer: 'מייל חובה',
   requireChildOnNewCustomer: 'ילד חובה',
+  requireReceiptNumberOnPos: 'מספר קבלה חובה',
+  requireSellerPin: 'קוד קופאי חובה',
+  pinLength: 'אורך קוד קופאי',
+  pinMemoryMinutes: 'זיכרון קוד קופאי',
+  pinMaxFailures: 'כשלים מותרים',
+  pinLockoutMinutes: 'משך נעילה',
+  posNameOnReceiptLabel: 'טקסט וי שם הלקוח',
+  posEmailNudgeText: 'טקסט המלצת אימייל',
+  emailOtpSubject: 'נושא מייל OTP',
+  emailOtpBodyTemplate: 'תבנית מייל OTP',
 };
 
 const summarizeDiff = (diff: Record<string, [unknown, unknown]>): string => {
