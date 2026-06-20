@@ -1,7 +1,7 @@
 import { jwtVerify, SignJWT } from 'jose';
 import { randomUUID } from 'node:crypto';
 import type { AuthVerifyError, AuthVerifyResult } from './errors';
-import type { AccessClaims, RefreshClaims, UserRole } from './types';
+import type { AccessClaims, RefreshClaims, StaffRole } from './types';
 
 export interface AuthConfig {
   secret: string;
@@ -13,12 +13,12 @@ export interface AuthConfig {
 
 export interface TokenPayload {
   sub: string;
-  role: UserRole;
+  role: StaffRole;
 }
 
 const toKey = (secret: string): Uint8Array => new TextEncoder().encode(secret);
 
-const mapJoseError = (err: unknown): AuthVerifyError => {
+export const mapJoseError = (err: unknown): AuthVerifyError => {
   if (!(err instanceof Error)) return 'invalid_format';
   switch (err.name) {
     case 'JWTExpired':
@@ -35,10 +35,7 @@ const mapJoseError = (err: unknown): AuthVerifyError => {
   }
 };
 
-export const signAccessToken = async (
-  payload: TokenPayload,
-  config: AuthConfig,
-): Promise<string> =>
+export const signAccessToken = async (payload: TokenPayload, config: AuthConfig): Promise<string> =>
   new SignJWT({ role: payload.role })
     .setProtectedHeader({ alg: 'HS256' })
     .setSubject(payload.sub)

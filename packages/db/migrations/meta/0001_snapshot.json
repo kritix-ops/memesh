@@ -1,11 +1,11 @@
 {
-  "id": "7dff9f13-52b4-42e1-a662-f04fbfdc3acb",
-  "prevId": "7b8bad3d-8594-4fd6-afa0-106494dc3e37",
+  "id": "953461df-6d42-4d9c-a9bc-d9b8991b94cb",
+  "prevId": "e946fb47-6591-4bb3-8526-12cbbf26f289",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
-    "public.users": {
-      "name": "users",
+    "public.staff": {
+      "name": "staff",
       "schema": "",
       "columns": {
         "id": {
@@ -14,12 +14,6 @@
           "primaryKey": true,
           "notNull": true,
           "default": "gen_random_uuid()"
-        },
-        "wp_user_id": {
-          "name": "wp_user_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
         },
         "first_name": {
           "name": "first_name",
@@ -33,148 +27,31 @@
           "primaryKey": false,
           "notNull": true
         },
+        "phone": {
+          "name": "phone",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": true
+        },
         "email": {
           "name": "email",
           "type": "varchar(255)",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
         },
-        "phone": {
-          "name": "phone",
-          "type": "varchar(32)",
+        "password_hash": {
+          "name": "password_hash",
+          "type": "varchar(255)",
           "primaryKey": false,
           "notNull": false
         },
         "role": {
           "name": "role",
-          "type": "user_role",
+          "type": "staff_role",
           "typeSchema": "public",
           "primaryKey": false,
           "notNull": true,
-          "default": "'customer'"
-        },
-        "children": {
-          "name": "children",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "children_consent_at": {
-          "name": "children_consent_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "users_email_unique": {
-          "name": "users_email_unique",
-          "nullsNotDistinct": false,
-          "columns": [
-            "email"
-          ]
-        }
-      },
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.tickets": {
-      "name": "tickets",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "owner_id": {
-          "name": "owner_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "ticket_type": {
-          "name": "ticket_type",
-          "type": "ticket_type",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "qr_token": {
-          "name": "qr_token",
-          "type": "varchar(512)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "serial_number": {
-          "name": "serial_number",
-          "type": "varchar(32)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "total_entries": {
-          "name": "total_entries",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "used_entries": {
-          "name": "used_entries",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "expires_at": {
-          "name": "expires_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "wc_order_id": {
-          "name": "wc_order_id",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "wc_product_id": {
-          "name": "wc_product_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "companion_ticket_id": {
-          "name": "companion_ticket_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "source": {
-          "name": "source",
-          "type": "ticket_source",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
+          "default": "'cashier'"
         },
         "is_active": {
           "name": "is_active",
@@ -199,26 +76,139 @@
         }
       },
       "indexes": {},
-      "foreignKeys": {
-        "tickets_owner_id_users_id_fk": {
-          "name": "tickets_owner_id_users_id_fk",
-          "tableFrom": "tickets",
-          "tableTo": "users",
-          "columnsFrom": [
-            "owner_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "staff_phone_unique": {
+          "name": "staff_phone_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "phone"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.customers": {
+      "name": "customers",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
         },
-        "tickets_companion_ticket_id_tickets_id_fk": {
-          "name": "tickets_companion_ticket_id_tickets_id_fk",
-          "tableFrom": "tickets",
-          "tableTo": "tickets",
+        "customer_number": {
+          "name": "customer_number",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "wp_user_id": {
+          "name": "wp_user_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "first_name": {
+          "name": "first_name",
+          "type": "varchar(80)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "last_name": {
+          "name": "last_name",
+          "type": "varchar(80)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "phone": {
+          "name": "phone",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "email": {
+          "name": "email",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "preferred_channel": {
+          "name": "preferred_channel",
+          "type": "preferred_channel",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'sms'"
+        },
+        "children": {
+          "name": "children",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
+        },
+        "internal_notes": {
+          "name": "internal_notes",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "source": {
+          "name": "source",
+          "type": "customer_source",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "customer_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'active'"
+        },
+        "marketing_consent_at": {
+          "name": "marketing_consent_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "registered_by": {
+          "name": "registered_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "customers_registered_by_staff_id_fk": {
+          "name": "customers_registered_by_staff_id_fk",
+          "tableFrom": "customers",
+          "tableTo": "staff",
           "columnsFrom": [
-            "companion_ticket_id"
+            "registered_by"
           ],
           "columnsTo": [
             "id"
@@ -229,18 +219,18 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
-        "tickets_qr_token_unique": {
-          "name": "tickets_qr_token_unique",
+        "customers_customer_number_unique": {
+          "name": "customers_customer_number_unique",
           "nullsNotDistinct": false,
           "columns": [
-            "qr_token"
+            "customer_number"
           ]
         },
-        "tickets_serial_number_unique": {
-          "name": "tickets_serial_number_unique",
+        "customers_phone_unique": {
+          "name": "customers_phone_unique",
           "nullsNotDistinct": false,
           "columns": [
-            "serial_number"
+            "phone"
           ]
         }
       },
@@ -248,8 +238,8 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.redemptions": {
-      "name": "redemptions",
+    "public.punch_cards": {
+      "name": "punch_cards",
       "schema": "",
       "columns": {
         "id": {
@@ -259,27 +249,180 @@
           "notNull": true,
           "default": "gen_random_uuid()"
         },
-        "ticket_id": {
-          "name": "ticket_id",
+        "customer_id": {
+          "name": "customer_id",
           "type": "uuid",
           "primaryKey": false,
           "notNull": true
         },
-        "redeemed_by": {
-          "name": "redeemed_by",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "pos_terminal_id": {
-          "name": "pos_terminal_id",
+        "wc_order_id": {
+          "name": "wc_order_id",
           "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "serial_number": {
+          "name": "serial_number",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "qr_token": {
+          "name": "qr_token",
+          "type": "varchar(512)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "key_id": {
+          "name": "key_id",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "total_entries": {
+          "name": "total_entries",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 12
+        },
+        "used_entries": {
+          "name": "used_entries",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "is_active": {
+          "name": "is_active",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": true
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source": {
+          "name": "source",
+          "type": "punch_card_source",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'pos'"
+        },
+        "cancelled_at": {
+          "name": "cancelled_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "cancelled_by": {
+          "name": "cancelled_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "cancel_reason": {
+          "name": "cancel_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "punch_cards_customer_id_customers_id_fk": {
+          "name": "punch_cards_customer_id_customers_id_fk",
+          "tableFrom": "punch_cards",
+          "tableTo": "customers",
+          "columnsFrom": [
+            "customer_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "punch_cards_cancelled_by_staff_id_fk": {
+          "name": "punch_cards_cancelled_by_staff_id_fk",
+          "tableFrom": "punch_cards",
+          "tableTo": "staff",
+          "columnsFrom": [
+            "cancelled_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "punch_cards_serial_number_unique": {
+          "name": "punch_cards_serial_number_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "serial_number"
+          ]
+        },
+        "punch_cards_qr_token_unique": {
+          "name": "punch_cards_qr_token_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "qr_token"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.punch_card_entries": {
+      "name": "punch_card_entries",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "punch_card_id": {
+          "name": "punch_card_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "punched_by": {
+          "name": "punched_by",
+          "type": "uuid",
           "primaryKey": false,
           "notNull": false
         },
         "method": {
           "name": "method",
-          "type": "redemption_method",
+          "type": "punch_method",
           "typeSchema": "public",
           "primaryKey": false,
           "notNull": true
@@ -291,35 +434,34 @@
           "notNull": true,
           "default": 1
         },
-        "redeemed_at": {
-          "name": "redeemed_at",
-          "type": "timestamp with time zone",
+        "idempotency_key": {
+          "name": "idempotency_key",
+          "type": "varchar(64)",
           "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "is_offline_sync": {
-          "name": "is_offline_sync",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
+          "notNull": false
         },
         "notes": {
           "name": "notes",
           "type": "text",
           "primaryKey": false,
           "notNull": false
+        },
+        "punched_at": {
+          "name": "punched_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
         }
       },
       "indexes": {},
       "foreignKeys": {
-        "redemptions_ticket_id_tickets_id_fk": {
-          "name": "redemptions_ticket_id_tickets_id_fk",
-          "tableFrom": "redemptions",
-          "tableTo": "tickets",
+        "punch_card_entries_punch_card_id_punch_cards_id_fk": {
+          "name": "punch_card_entries_punch_card_id_punch_cards_id_fk",
+          "tableFrom": "punch_card_entries",
+          "tableTo": "punch_cards",
           "columnsFrom": [
-            "ticket_id"
+            "punch_card_id"
           ],
           "columnsTo": [
             "id"
@@ -327,12 +469,189 @@
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "redemptions_redeemed_by_users_id_fk": {
-          "name": "redemptions_redeemed_by_users_id_fk",
-          "tableFrom": "redemptions",
-          "tableTo": "users",
+        "punch_card_entries_punched_by_staff_id_fk": {
+          "name": "punch_card_entries_punched_by_staff_id_fk",
+          "tableFrom": "punch_card_entries",
+          "tableTo": "staff",
           "columnsFrom": [
-            "redeemed_by"
+            "punched_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "punch_card_entries_idempotency_key_unique": {
+          "name": "punch_card_entries_idempotency_key_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "idempotency_key"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.scan_attempts": {
+      "name": "scan_attempts",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "qr_token_hash": {
+          "name": "qr_token_hash",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "result": {
+          "name": "result",
+          "type": "scan_result",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ip_address": {
+          "name": "ip_address",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "terminal_id": {
+          "name": "terminal_id",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "attempted_at": {
+          "name": "attempted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.customer_otps": {
+      "name": "customer_otps",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "phone": {
+          "name": "phone",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "code_hash": {
+          "name": "code_hash",
+          "type": "varchar(128)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "attempts": {
+          "name": "attempts",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "consumed_at": {
+          "name": "consumed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.staff_actions": {
+      "name": "staff_actions",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "staff_id": {
+          "name": "staff_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "action": {
+          "name": "action",
+          "type": "varchar(40)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "summary": {
+          "name": "summary",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "staff_actions_staff_id_staff_id_fk": {
+          "name": "staff_actions_staff_id_staff_id_fk",
+          "tableFrom": "staff_actions",
+          "tableTo": "staff",
+          "columnsFrom": [
+            "staff_id"
           ],
           "columnsTo": [
             "id"
@@ -346,54 +665,184 @@
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
+    },
+    "public.card_settings": {
+      "name": "card_settings",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "singleton": {
+          "name": "singleton",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": true
+        },
+        "price_shekels": {
+          "name": "price_shekels",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 320
+        },
+        "validity_days": {
+          "name": "validity_days",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 365
+        },
+        "total_entries": {
+          "name": "total_entries",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 12
+        },
+        "pitch_label": {
+          "name": "pitch_label",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'משלמים על 10, מקבלים 12 · תקף לשנה'"
+        },
+        "updated_by": {
+          "name": "updated_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "card_settings_updated_by_staff_id_fk": {
+          "name": "card_settings_updated_by_staff_id_fk",
+          "tableFrom": "card_settings",
+          "tableTo": "staff",
+          "columnsFrom": [
+            "updated_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "card_settings_singleton_unique": {
+          "name": "card_settings_singleton_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "singleton"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
     }
   },
   "enums": {
-    "public.user_role": {
-      "name": "user_role",
+    "public.staff_role": {
+      "name": "staff_role",
       "schema": "public",
       "values": [
-        "customer",
-        "cashier",
-        "instructor",
+        "admin",
         "manager",
-        "admin"
+        "cashier"
       ]
     },
-    "public.ticket_source": {
-      "name": "ticket_source",
+    "public.customer_source": {
+      "name": "customer_source",
       "schema": "public",
       "values": [
-        "online",
+        "referral",
+        "social",
+        "walk_by",
+        "website",
+        "other"
+      ]
+    },
+    "public.customer_status": {
+      "name": "customer_status",
+      "schema": "public",
+      "values": [
+        "active",
+        "frozen",
+        "vip"
+      ]
+    },
+    "public.preferred_channel": {
+      "name": "preferred_channel",
+      "schema": "public",
+      "values": [
+        "sms",
+        "whatsapp",
+        "email"
+      ]
+    },
+    "public.punch_card_source": {
+      "name": "punch_card_source",
+      "schema": "public",
+      "values": [
         "pos",
+        "online",
         "manual"
       ]
     },
-    "public.ticket_type": {
-      "name": "ticket_type",
-      "schema": "public",
-      "values": [
-        "baby_single",
-        "child_single",
-        "companion",
-        "punch_card"
-      ]
-    },
-    "public.redemption_method": {
-      "name": "redemption_method",
+    "public.punch_method": {
+      "name": "punch_method",
       "schema": "public",
       "values": [
         "qr_scan",
         "serial",
-        "phone_lookup",
+        "phone",
         "manual"
+      ]
+    },
+    "public.scan_result": {
+      "name": "scan_result",
+      "schema": "public",
+      "values": [
+        "success",
+        "invalid_signature",
+        "expired",
+        "exhausted",
+        "not_found",
+        "inactive",
+        "rate_limited"
       ]
     }
   },
   "schemas": {},
   "sequences": {
-    "public.ticket_serial_seq": {
-      "name": "ticket_serial_seq",
+    "public.customer_number_seq": {
+      "name": "customer_number_seq",
+      "schema": "public",
+      "increment": "1",
+      "startWith": "1",
+      "minValue": "1",
+      "maxValue": "9223372036854775807",
+      "cache": "1",
+      "cycle": false
+    },
+    "public.punch_card_serial_seq": {
+      "name": "punch_card_serial_seq",
       "schema": "public",
       "increment": "1",
       "startWith": "1",

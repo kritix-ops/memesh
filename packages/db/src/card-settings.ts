@@ -1,0 +1,320 @@
+import { eq } from 'drizzle-orm';
+import type { PgDatabase } from 'drizzle-orm/pg-core';
+import { logStaffAction } from './actions';
+import { cardSettings, type CardSettingsRow } from './schema/index';
+
+type AnyPgDatabase = PgDatabase<any, any, any>;
+
+export type CancelRole = 'admin' | 'manager';
+
+// Range guards mirror the zod schema in apps/api/src/routes/card-settings.ts.
+// Server is the source of truth; the frontend's validation is a UX nicety.
+export const CARD_SETTINGS_LIMITS = {
+  priceShekels: { min: 0, max: 10000 },
+  // 0 = "forever" (cards created with no expiresAt). 1..3650 = limited.
+  validityDays: { min: 0, max: 3650 },
+  totalEntries: { min: 1, max: 100 },
+  pitchLabel: { minLength: 1, maxLength: 200 },
+  minCompanions: { min: 1, max: 10 },
+  maxCompanions: { min: 1, max: 10 },
+  sameDayLockoutMinutes: { min: 0, max: 1440 },
+  gracePeriodDays: { min: 0, max: 90 },
+  minCancelReasonLength: { min: 1, max: 500 },
+  refundPolicyText: { maxLength: 2000 },
+  smsLowEntriesThreshold: { min: 0, max: 100 },
+  smsQuietMinutes: { min: 0, max: 1439 },
+  expiryBadgeThresholdDays: { min: 0, max: 365 },
+} as const;
+
+export type CardSettingsValidationError =
+  | 'price_out_of_range'
+  | 'validity_out_of_range'
+  | 'entries_out_of_range'
+  | 'pitch_length'
+  | 'min_companions_out_of_range'
+  | 'max_companions_out_of_range'
+  | 'companion_range_invalid'
+  | 'lockout_out_of_range'
+  | 'grace_out_of_range'
+  | 'cancel_reason_length_out_of_range'
+  | 'refund_policy_too_long'
+  | 'cancel_role_invalid'
+  | 'sms_low_entries_out_of_range'
+  | 'sms_quiet_minutes_out_of_range'
+  | 'expiry_badge_out_of_range'
+  | 'no_changes';
+
+/**
+ * Read the singleton settings row. Lazy-init: if the migration seed somehow
+ * missed (fresh pglite test DB, manually-applied migration), insert defaults
+ * on the first read so callers always get a row back.
+ */
+export const getCardSettings = async (db: AnyPgDatabase): Promise<CardSettingsRow> => {
+  const rows = await db.select().from(cardSettings).limit(1);
+  const existing = rows[0];
+  if (existing) return existing;
+  const inserted = await db.insert(cardSettings).values({}).returning();
+  const row = inserted[0];
+  if (!row) throw new Error('[getCardSettings] insert returned no row');
+  return row;
+};
+
+export interface UpdateCardSettingsInput {
+  // Pricing + lifetime
+  priceShekels?: number | undefined;
+  validityDays?: number | undefined;
+  totalEntries?: number | undefined;
+  pitchLabel?: string | undefined;
+  // Mechanics
+  minCompanions?: number | undefined;
+  maxCompanions?: number | undefined;
+  sameDayLockoutMinutes?: number | undefined;
+  gracePeriodDays?: number | undefined;
+  // Cancellation & refunds
+  allowCancelAfterFirstPunch?: boolean | undefined;
+  minCancelReasonLength?: number | undefined;
+  refundPolicyText?: string | undefined;
+  cancelRole?: CancelRole | undefined;
+  // SMS
+  smsOnPurchase?: boolean | undefined;
+  smsLowEntriesThreshold?: number | undefined;
+  smsQuietStartMinutes?: number | undefined;
+  smsQuietEndMinutes?: number | undefined;
+  // Operational + customer rules
+  expiryBadgeThresholdDays?: number | undefined;
+  requireEmailOnNewCustomer?: boolean | undefined;
+  requireChildOnNewCustomer?: boolean | undefined;
+
+  /** Staff member making the change; recorded on the row and in the action log. */
+  staffId?: string | undefined;
+  /** Override `now` for tests. */
+  now?: Date;
+}
+
+export type UpdateCardSettingsResult =
+  | { ok: true; row: CardSettingsRow; diff: Record<string, [unknown, unknown]> }
+  | { ok: false; error: CardSettingsValidationError };
+
+const within = (v: number, min: number, max: number): boolean =>
+  Number.isInteger(v) && v >= min && v <= max;
+
+/**
+ * Update the singleton settings row. Validates ranges, records who changed
+ * what, and writes a staff_actions log entry with a human-readable diff.
+ *
+ * Returns `no_changes` if the patch leaves every value identical to current —
+ * the caller can surface that as a UX hint without writing to the audit log.
+ */
+export const updateCardSettings = async (
+  db: AnyPgDatabase,
+  input: UpdateCardSettingsInput,
+): Promise<UpdateCardSettingsResult> => {
+  const L = CARD_SETTINGS_LIMITS;
+
+  // Range guards first — fail fast before touching the row.
+  if (input.priceShekels !== undefined && !within(input.priceShekels, L.priceShekels.min, L.priceShekels.max)) {
+    return { ok: false, error: 'price_out_of_range' };
+  }
+  if (input.validityDays !== undefined && !within(input.validityDays, L.validityDays.min, L.validityDays.max)) {
+    return { ok: false, error: 'validity_out_of_range' };
+  }
+  if (input.totalEntries !== undefined && !within(input.totalEntries, L.totalEntries.min, L.totalEntries.max)) {
+    return { ok: false, error: 'entries_out_of_range' };
+  }
+  if (input.pitchLabel !== undefined) {
+    const trimmed = input.pitchLabel.trim();
+    if (trimmed.length < L.pitchLabel.minLength || trimmed.length > L.pitchLabel.maxLength) {
+      return { ok: false, error: 'pitch_length' };
+    }
+  }
+  if (input.minCompanions !== undefined && !within(input.minCompanions, L.minCompanions.min, L.minCompanions.max)) {
+    return { ok: false, error: 'min_companions_out_of_range' };
+  }
+  if (input.maxCompanions !== undefined && !within(input.maxCompanions, L.maxCompanions.min, L.maxCompanions.max)) {
+    return { ok: false, error: 'max_companions_out_of_range' };
+  }
+  if (input.sameDayLockoutMinutes !== undefined && !within(input.sameDayLockoutMinutes, L.sameDayLockoutMinutes.min, L.sameDayLockoutMinutes.max)) {
+    return { ok: false, error: 'lockout_out_of_range' };
+  }
+  if (input.gracePeriodDays !== undefined && !within(input.gracePeriodDays, L.gracePeriodDays.min, L.gracePeriodDays.max)) {
+    return { ok: false, error: 'grace_out_of_range' };
+  }
+  if (input.minCancelReasonLength !== undefined && !within(input.minCancelReasonLength, L.minCancelReasonLength.min, L.minCancelReasonLength.max)) {
+    return { ok: false, error: 'cancel_reason_length_out_of_range' };
+  }
+  if (input.refundPolicyText !== undefined && input.refundPolicyText.length > L.refundPolicyText.maxLength) {
+    return { ok: false, error: 'refund_policy_too_long' };
+  }
+  if (input.cancelRole !== undefined && input.cancelRole !== 'admin' && input.cancelRole !== 'manager') {
+    return { ok: false, error: 'cancel_role_invalid' };
+  }
+  if (input.smsLowEntriesThreshold !== undefined && !within(input.smsLowEntriesThreshold, L.smsLowEntriesThreshold.min, L.smsLowEntriesThreshold.max)) {
+    return { ok: false, error: 'sms_low_entries_out_of_range' };
+  }
+  if (input.smsQuietStartMinutes !== undefined && !within(input.smsQuietStartMinutes, L.smsQuietMinutes.min, L.smsQuietMinutes.max)) {
+    return { ok: false, error: 'sms_quiet_minutes_out_of_range' };
+  }
+  if (input.smsQuietEndMinutes !== undefined && !within(input.smsQuietEndMinutes, L.smsQuietMinutes.min, L.smsQuietMinutes.max)) {
+    return { ok: false, error: 'sms_quiet_minutes_out_of_range' };
+  }
+  if (input.expiryBadgeThresholdDays !== undefined && !within(input.expiryBadgeThresholdDays, L.expiryBadgeThresholdDays.min, L.expiryBadgeThresholdDays.max)) {
+    return { ok: false, error: 'expiry_badge_out_of_range' };
+  }
+
+  const now = input.now ?? new Date();
+  const current = await getCardSettings(db);
+
+  // Cross-field check: min ≤ max after applying both patch and current values.
+  const nextMin = input.minCompanions ?? current.minCompanions;
+  const nextMax = input.maxCompanions ?? current.maxCompanions;
+  if (nextMin > nextMax) return { ok: false, error: 'companion_range_invalid' };
+
+  const next: Partial<typeof cardSettings.$inferInsert> = {};
+  const diff: Record<string, [unknown, unknown]> = {};
+
+  const assignNumber = (key: keyof typeof current & keyof typeof next, value: number | undefined) => {
+    if (value === undefined) return;
+    if (value === (current[key] as number)) return;
+    (next as Record<string, unknown>)[key] = value;
+    diff[key as string] = [current[key], value];
+  };
+  const assignBool = (key: keyof typeof current & keyof typeof next, value: boolean | undefined) => {
+    if (value === undefined) return;
+    if (value === (current[key] as boolean)) return;
+    (next as Record<string, unknown>)[key] = value;
+    diff[key as string] = [current[key], value];
+  };
+  const assignString = (key: keyof typeof current & keyof typeof next, value: string | undefined) => {
+    if (value === undefined) return;
+    const trimmed = value.trim();
+    if (trimmed === (current[key] as string)) return;
+    (next as Record<string, unknown>)[key] = trimmed;
+    diff[key as string] = [current[key], trimmed];
+  };
+  const assignStringRaw = (key: keyof typeof current & keyof typeof next, value: string | undefined) => {
+    // For refund policy text — preserve user newlines/spaces, just compare raw.
+    if (value === undefined) return;
+    if (value === (current[key] as string)) return;
+    (next as Record<string, unknown>)[key] = value;
+    diff[key as string] = [current[key], value];
+  };
+
+  assignNumber('priceShekels', input.priceShekels);
+  assignNumber('validityDays', input.validityDays);
+  assignNumber('totalEntries', input.totalEntries);
+  assignString('pitchLabel', input.pitchLabel);
+  assignNumber('minCompanions', input.minCompanions);
+  assignNumber('maxCompanions', input.maxCompanions);
+  assignNumber('sameDayLockoutMinutes', input.sameDayLockoutMinutes);
+  assignNumber('gracePeriodDays', input.gracePeriodDays);
+  assignBool('allowCancelAfterFirstPunch', input.allowCancelAfterFirstPunch);
+  assignNumber('minCancelReasonLength', input.minCancelReasonLength);
+  assignStringRaw('refundPolicyText', input.refundPolicyText);
+  if (input.cancelRole !== undefined && input.cancelRole !== current.cancelRole) {
+    next.cancelRole = input.cancelRole;
+    diff.cancelRole = [current.cancelRole, input.cancelRole];
+  }
+  assignBool('smsOnPurchase', input.smsOnPurchase);
+  assignNumber('smsLowEntriesThreshold', input.smsLowEntriesThreshold);
+  assignNumber('smsQuietStartMinutes', input.smsQuietStartMinutes);
+  assignNumber('smsQuietEndMinutes', input.smsQuietEndMinutes);
+  assignNumber('expiryBadgeThresholdDays', input.expiryBadgeThresholdDays);
+  assignBool('requireEmailOnNewCustomer', input.requireEmailOnNewCustomer);
+  assignBool('requireChildOnNewCustomer', input.requireChildOnNewCustomer);
+
+  if (Object.keys(diff).length === 0) return { ok: false, error: 'no_changes' };
+
+  next.updatedAt = now;
+  if (input.staffId !== undefined) next.updatedBy = input.staffId;
+
+  const rows = await db
+    .update(cardSettings)
+    .set(next)
+    .where(eq(cardSettings.id, current.id))
+    .returning();
+  const row = rows[0];
+  if (!row) throw new Error('[updateCardSettings] update returned no row');
+
+  await logStaffAction(db, {
+    action: 'update_card_settings',
+    summary: summarizeDiff(diff),
+    now,
+    ...(input.staffId !== undefined ? { staffId: input.staffId } : {}),
+  });
+
+  return { ok: true, row, diff };
+};
+
+// Hebrew-facing summary line for the staff_actions log. We surface the
+// most-meaningful renames here; rarely-touched flags collapse into a count
+// to keep the line readable when many fields change at once.
+const FIELD_LABELS: Record<string, string> = {
+  priceShekels: 'מחיר',
+  validityDays: 'תוקף',
+  totalEntries: 'כניסות',
+  pitchLabel: 'טקסט שיווקי',
+  minCompanions: 'מינימום מלווים',
+  maxCompanions: 'מקסימום מלווים',
+  sameDayLockoutMinutes: 'נעילת רה-ניקוב',
+  gracePeriodDays: 'תקופת חסד',
+  allowCancelAfterFirstPunch: 'ביטול לאחר ניקוב',
+  minCancelReasonLength: 'אורך סיבת ביטול',
+  refundPolicyText: 'מדיניות החזרים',
+  cancelRole: 'הרשאת ביטול',
+  smsOnPurchase: 'SMS במכירה',
+  smsLowEntriesThreshold: 'SMS כניסות נמוכות',
+  smsQuietStartMinutes: 'התחלת שעות שקט',
+  smsQuietEndMinutes: 'סוף שעות שקט',
+  expiryBadgeThresholdDays: 'תג פג תוקף',
+  requireEmailOnNewCustomer: 'מייל חובה',
+  requireChildOnNewCustomer: 'ילד חובה',
+};
+
+const summarizeDiff = (diff: Record<string, [unknown, unknown]>): string => {
+  const parts: string[] = [];
+  for (const [key, [from, to]] of Object.entries(diff)) {
+    const label = FIELD_LABELS[key] ?? key;
+    if (typeof from === 'boolean' || typeof to === 'boolean') {
+      parts.push(`${label}: ${to ? 'הופעל' : 'בוטל'}`);
+    } else if (typeof from === 'string' && typeof to === 'string' && (from.length > 30 || to.length > 30)) {
+      parts.push(`${label} עודכן`);
+    } else {
+      parts.push(`${label} ${String(from)}→${String(to)}`);
+    }
+  }
+  return `עדכון הגדרות כרטיסייה · ${parts.join(' · ')}`;
+};
+
+// ---------------------------------------------------------------------------
+// Quiet-hours helper — used by the SMS marketing wrapper to decide whether
+// the current local time falls inside the configured quiet window.
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns true when `now` (interpreted in Asia/Jerusalem) falls inside the
+ * quiet window described by `startMinutes`–`endMinutes` (both 0–1439). The
+ * window can wrap midnight: e.g. 21:00 → 09:00 means "between 21:00 and
+ * 09:00 the next morning".
+ */
+export const isQuietHourNow = (
+  startMinutes: number,
+  endMinutes: number,
+  now: Date = new Date(),
+): boolean => {
+  if (startMinutes === endMinutes) return false; // zero-width window = always off
+  // Get hours/minutes in Israel timezone regardless of host TZ.
+  const fmt = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Jerusalem',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+  const parts = fmt.formatToParts(now);
+  const h = Number(parts.find((p) => p.type === 'hour')?.value ?? '0');
+  const m = Number(parts.find((p) => p.type === 'minute')?.value ?? '0');
+  const nowMin = h * 60 + m;
+  // Non-wrapping window (start < end): inside if start ≤ now < end.
+  if (startMinutes < endMinutes) return nowMin >= startMinutes && nowMin < endMinutes;
+  // Wrapping window (start > end): inside if now ≥ start OR now < end.
+  return nowMin >= startMinutes || nowMin < endMinutes;
+};

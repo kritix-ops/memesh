@@ -5,15 +5,43 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1779048227418,
-      "tag": "0000_careless_garia",
+      "when": 1781711568936,
+      "tag": "0000_tricky_northstar",
       "breakpoints": true
     },
     {
       "idx": 1,
       "version": "7",
-      "when": 1779050540295,
-      "tag": "0001_huge_patch",
+      "when": 1781900293094,
+      "tag": "0001_sweet_green_goblin",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1781902601460,
+      "tag": "0002_slim_zarek",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1781904858986,
+      "tag": "0003_naive_smiling_tiger",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1781905628949,
+      "tag": "0004_talented_genesis",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1781909661258,
+      "tag": "0005_dizzy_arclight",
       "breakpoints": true
     }
   ]

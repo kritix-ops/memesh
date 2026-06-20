@@ -9,8 +9,8 @@ const makeResolver = (keys: Record<string, string>, currentKeyId: string): KeyRe
 });
 
 const fixture = {
-  ticketId: '550e8400-e29b-41d4-a716-446655440000',
-  userId: '550e8400-e29b-41d4-a716-446655440001',
+  punchCardId: '550e8400-e29b-41d4-a716-446655440000',
+  customerId: '550e8400-e29b-41d4-a716-446655440001',
   createdTs: 1746000000,
   serial: 'M-20260517-0042',
 };
@@ -21,8 +21,8 @@ test('signToken + verifyToken roundtrips and returns the same payload', () => {
   const result = verifyToken(token, resolver);
   assert.equal(result.ok, true);
   if (result.ok) {
-    assert.equal(result.payload.ticketId, fixture.ticketId);
-    assert.equal(result.payload.userId, fixture.userId);
+    assert.equal(result.payload.punchCardId, fixture.punchCardId);
+    assert.equal(result.payload.customerId, fixture.customerId);
     assert.equal(result.payload.createdTs, fixture.createdTs);
     assert.equal(result.payload.serial, fixture.serial);
     assert.equal(result.payload.keyId, '1');
@@ -33,10 +33,7 @@ test('verifyToken rejects a tampered payload with bad_signature', () => {
   const resolver = makeResolver({ '1': 'secret-one' }, '1');
   const token = signToken(fixture, resolver);
   const parts = token.split('.');
-  const tamperedPayload = Buffer.from(
-    'a|b|123|M-20260517-9999|1',
-    'utf8',
-  ).toString('base64url');
+  const tamperedPayload = Buffer.from('a|b|123|M-20260517-9999|1', 'utf8').toString('base64url');
   const tamperedToken = [parts[0], tamperedPayload, parts[2]].join('.');
   const result = verifyToken(tamperedToken, resolver);
   assert.equal(result.ok, false);

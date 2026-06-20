@@ -1,10 +1,11 @@
-// Keep in sync with packages/db/src/schema/users.ts userRoleEnum.
-export const USER_ROLES = ['customer', 'cashier', 'instructor', 'manager', 'admin'] as const;
-export type UserRole = (typeof USER_ROLES)[number];
+// Keep in sync with packages/db/src/schema/staff.ts staffRoleEnum.
+// Customers do not get a staff role; they authenticate separately via phone + OTP.
+export const STAFF_ROLES = ['admin', 'manager', 'cashier'] as const;
+export type StaffRole = (typeof STAFF_ROLES)[number];
 
 export interface AccessClaims {
   sub: string;
-  role: UserRole;
+  role: StaffRole;
   iat: number;
   exp: number;
   jti?: string;
@@ -14,7 +15,7 @@ export interface AccessClaims {
 
 export interface RefreshClaims {
   sub: string;
-  role: UserRole;
+  role: StaffRole;
   typ: 'refresh';
   iat: number;
   exp: number;

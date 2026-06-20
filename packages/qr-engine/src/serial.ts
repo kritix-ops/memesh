@@ -14,11 +14,7 @@ export interface ParsedSerial {
 const SERIAL_PATTERN = /^M-(\d{4})(\d{2})(\d{2})-(\d{4,5})$/;
 
 export const generateSerial = ({ date, sequence }: SerialInput): string => {
-  if (
-    !Number.isInteger(sequence) ||
-    sequence < MIN_SEQUENCE ||
-    sequence > MAX_SEQUENCE
-  ) {
+  if (!Number.isInteger(sequence) || sequence < MIN_SEQUENCE || sequence > MAX_SEQUENCE) {
     throw new RangeError(
       `[qr-engine serial] sequence must be integer in [${MIN_SEQUENCE}, ${MAX_SEQUENCE}], got ${sequence}`,
     );

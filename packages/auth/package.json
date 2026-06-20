@@ -9,7 +9,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --test --import tsx src/jwt.test.ts"
+    "test": "node --test --import tsx src/jwt.test.ts src/password.test.ts src/customer-token.test.ts"
   },
   "dependencies": {
     "jose": "^5.9.0"

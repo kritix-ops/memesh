@@ -1,17 +1,18 @@
-import cookie from '@fastify/cookie';
 import { isAuthSuccess, verifyAccessToken } from '@memesh/auth';
-import type { UserRole } from '@memesh/auth';
+import type { StaffRole } from '@memesh/auth';
 import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
+import fp from 'fastify-plugin';
 import { authConfig } from '../auth.js';
 
 export interface RequestUser {
   id: string;
-  role: UserRole;
+  role: StaffRole;
 }
 
 declare module 'fastify' {
   interface FastifyRequest {
     user: RequestUser | null;
+    customer: { id: string } | null;
   }
 }
 
@@ -24,10 +25,11 @@ const extractToken = (req: FastifyRequest): string | undefined => {
   return fromCookie;
 };
 
-export const authPlugin: FastifyPluginAsync = async (fastify) => {
-  await fastify.register(cookie);
-
+const authPluginImpl: FastifyPluginAsync = async (fastify) => {
+  // @fastify/cookie is registered at the root in app.ts so reply.setCookie
+  // is available everywhere; we only attach request decorators here.
   fastify.decorateRequest('user', null);
+  fastify.decorateRequest('customer', null);
 
   fastify.addHook('onRequest', async (request) => {
     const token = extractToken(request);
@@ -46,3 +48,10 @@ export const authPlugin: FastifyPluginAsync = async (fastify) => {
 
   fastify.log.info('[api auth] auth plugin registered');
 };
+
+// fastify-plugin lifts the decorators and the onRequest hook out of this
+// plugin's encapsulation context so they apply to sibling plugins (the route
+// modules) too. Without fp, the bundled deploy left request.user undefined
+// inside the route handlers — every /auth/me, /punch, etc. returned 401 even
+// when the caller had a valid token, because the hook never ran for them.
+export const authPlugin = fp(authPluginImpl, { name: 'memesh-auth' });

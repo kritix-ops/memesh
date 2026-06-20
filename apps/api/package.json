@@ -4,12 +4,17 @@
   "private": true,
   "type": "module",
   "main": "./src/server.ts",
+  "exports": {
+    ".": "./src/server.ts",
+    "./app": "./src/app.ts"
+  },
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "build": "tsc",
-    "start": "node dist/server.js",
+    "start": "tsx src/server.ts",
     "typecheck": "tsc --noEmit",
-    "test": "node --test --import tsx src/lib/wc-webhook.test.ts"
+    "test": "node --test --import tsx src/app.test.ts src/lib/wp-sync.test.ts src/lib/wc-order-processor.test.ts scripts/seed-admin.test.ts",
+    "seed:admin": "tsx --env-file-if-exists=../../.env --env-file-if-exists=../../packages/db/.env.local scripts/seed-admin.ts",
+    "seed:normalize-phones": "tsx --env-file-if-exists=../../.env --env-file-if-exists=../../packages/db/.env.local scripts/normalize-phones.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.0",
@@ -19,15 +24,18 @@
     "@memesh/auth": "workspace:*",
     "@memesh/db": "workspace:*",
     "@memesh/qr-engine": "workspace:*",
+    "@memesh/sms": "workspace:*",
     "drizzle-orm": "^0.36.0",
     "fastify": "^5.2.0",
+    "fastify-plugin": "^5.0.0",
     "pino": "^9.5.0",
     "pino-pretty": "^13.0.0",
+    "tsx": "^4.19.0",
     "zod": "^3.24.0"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.2.12",
     "@types/node": "^24.0.0",
-    "tsx": "^4.19.0",
     "typescript": "^5.7.0"
   }
 }

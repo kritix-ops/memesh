@@ -1,0 +1,31 @@
+# Workspace-wide .dockerignore. Compose builds with the repo root as the build
+# context (so `pnpm install` can see the whole workspace tree); this file keeps
+# the context small and free of secrets.
+
+**/node_modules
+**/dist
+**/build
+**/.next
+**/.turbo
+**/.cache
+**/coverage
+**/*.log
+**/*.tsbuildinfo
+**/.DS_Store
+**/Thumbs.db
+
+.git
+.github
+.vscode
+.idea
+.vercel
+.pnpm-store
+
+# Never copy local env files into a build context.
+**/.env
+**/.env.*
+!**/.env.example
+
+# Frontend artifacts the api image does not need.
+apps/web/dist
+apps/web/.vite

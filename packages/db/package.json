@@ -10,18 +10,24 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
+    "test": "node --test --import tsx src/punch.test.ts src/cards.test.ts src/otp.test.ts src/accounts.test.ts src/reports.test.ts src/card-settings.test.ts src/wc-orders.test.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio"
   },
   "dependencies": {
-    "@neondatabase/serverless": "^0.10.0",
+    "@memesh/qr-engine": "workspace:*",
     "dotenv": "^16.4.0",
-    "drizzle-orm": "^0.36.0"
+    "drizzle-orm": "^0.36.0",
+    "pg": "^8.13.0"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.2.12",
+    "@types/node": "^24.0.0",
+    "@types/pg": "^8.11.10",
     "drizzle-kit": "^0.30.0",
+    "tsx": "^4.19.0",
     "typescript": "^5.7.0"
   }
 }
