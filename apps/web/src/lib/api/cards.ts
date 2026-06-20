@@ -1,5 +1,4 @@
-import { apiRequest, type ApiResult } from '../api';
-import { type PunchCard } from './customers';
+import { apiRequest, type ApiResult, type PunchCard } from '@memesh/web-shared';
 
 // Mirrors apps/api/src/routes/cards.ts response shape. The server allocates the
 // serial (M-YYYYMMDD-NNNN), mints the signed QR token, and stores the card.

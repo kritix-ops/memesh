@@ -1,4 +1,4 @@
-import { apiRequest, type ApiResult } from '../api';
+import { apiRequest, type ApiResult } from '@memesh/web-shared';
 
 // Customer (phone + OTP) auth surface. The verify-otp call sets an HttpOnly
 // customer_token cookie that subsequent /me / /me/cards calls send back

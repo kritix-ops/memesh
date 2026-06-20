@@ -1,4 +1,4 @@
-import { apiRequest, type ApiResult } from '../api';
+import { apiRequest, type ApiResult } from '@memesh/web-shared';
 
 // Mirrors apps/api/src/routes/card-settings.ts response shapes.
 

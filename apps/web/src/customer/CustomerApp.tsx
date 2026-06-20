@@ -1,9 +1,12 @@
+import { FauxQr, PunchCard, Sun } from '@memesh/brand';
+import {
+  getMyCards,
+  updateMe,
+  useCustomerSession,
+  type CustomerProfile,
+} from '@memesh/customer-auth';
+import { fmtDate, type PunchCard as ApiPunchCard } from '@memesh/web-shared';
 import { type CSSProperties, type FormEvent, type ReactNode, useEffect, useState } from 'react';
-import { FauxQr, PunchCard, Sun } from '../brand';
-import { type PunchCard as ApiPunchCard } from '../lib/api/customers';
-import { getMyCards, updateMe, type CustomerProfile } from '../lib/api/me';
-import { useCustomerSession } from '../lib/customer-session';
-import { fmtDate } from '../mock';
 
 const ORANGE = '#ffa983';
 const MUTED = '#636e72';

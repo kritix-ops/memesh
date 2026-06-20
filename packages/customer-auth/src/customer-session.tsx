@@ -1,5 +1,5 @@
+import { setOnCustomerSessionExpired } from '@memesh/web-shared';
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
-import { setOnCustomerSessionExpired } from './api';
 import {
   customerLogout,
   requestEmailOtp as requestEmailOtpApi,

@@ -1,4 +1,4 @@
-import { apiRequest, type ApiResult } from '../api';
+import { apiRequest, type ApiResult } from '@memesh/web-shared';
 
 // Mirrors apps/api/src/routes/reports.ts response shapes. All endpoints
 // gated to manager+admin server-side.

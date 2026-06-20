@@ -1,5 +1,10 @@
-import { apiRequest, type ApiResult } from '../api';
-import { type ChildRecord, type PreferredChannel, type PunchCard } from './customers';
+import {
+  apiRequest,
+  type ApiResult,
+  type ChildRecord,
+  type PreferredChannel,
+  type PunchCard,
+} from '@memesh/web-shared';
 
 // Customer-facing "me" surface. The /me endpoint returns the same shape as
 // the customer profile view in apps/api/src/routes/me.ts (omits staff-only

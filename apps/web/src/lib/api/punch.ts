@@ -1,4 +1,4 @@
-import { apiRequest, type ApiResult } from '../api';
+import { apiRequest, type ApiResult } from '@memesh/web-shared';
 
 // Mirrors apps/api/src/routes/punch.ts response shape. The endpoint accepts
 // either a token or a serial; the POS detail screen always uses the serial

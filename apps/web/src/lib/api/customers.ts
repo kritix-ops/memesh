@@ -1,19 +1,23 @@
-import { apiRequest, type ApiResult } from '../api';
+import {
+  apiRequest,
+  type ApiResult,
+  type ChildRecord,
+  type PreferredChannel,
+  type PunchCard,
+} from '@memesh/web-shared';
+
+// Re-export the shared customer/card types so files importing them from
+// './customers' (PosApp, AdminApp, etc.) keep working through Phase 1.
+// The canonical home is @memesh/web-shared; this is a compatibility surface.
+export type { ChildRecord, PreferredChannel, PunchCard };
 
 // Mirrors the brief-v3 customers schema (apps/api returns these directly from
 // Drizzle's $inferSelect). Kept as a frontend-local interface so the web app
 // doesn't import @memesh/db (which would drag pg into the browser bundle).
 
-export type PreferredChannel = 'sms' | 'whatsapp' | 'email';
 export type CustomerStatus = 'active' | 'frozen' | 'vip';
 export type CustomerSourceValue = 'referral' | 'social' | 'walk_by' | 'website' | 'other';
 export type CustomerSource = CustomerSourceValue | null;
-
-export interface ChildRecord {
-  name: string;
-  dob: string; // yyyy-mm-dd
-  notes?: string;
-}
 
 export interface Customer {
   id: string;
@@ -30,26 +34,6 @@ export interface Customer {
   status: CustomerStatus;
   marketingConsentAt: string | null;
   registeredBy: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface PunchCard {
-  id: string;
-  customerId: string;
-  wcOrderId: string | null;
-  serialNumber: string;
-  qrToken: string;
-  keyId: string;
-  totalEntries: number;
-  usedEntries: number;
-  isActive: boolean;
-  /** null = "forever" card (created when settings.validityDays=0). */
-  expiresAt: string | null;
-  source: 'pos' | 'online' | 'manual';
-  cancelledAt: string | null;
-  cancelledBy: string | null;
-  cancelReason: string | null;
   createdAt: string;
   updatedAt: string;
 }

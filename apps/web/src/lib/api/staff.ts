@@ -1,5 +1,5 @@
-import { apiRequest, type ApiResult } from '../api';
-import { type StaffRole } from './auth';
+import { type StaffRole } from '@memesh/staff-auth';
+import { apiRequest, type ApiResult } from '@memesh/web-shared';
 
 // Mirrors apps/api/src/routes/staff.ts. The list endpoint is gated by
 // admin or manager; the create endpoint is admin-only. The password hash

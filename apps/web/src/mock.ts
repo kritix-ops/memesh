@@ -154,11 +154,6 @@ export const avatar = (c: MockCustomer) => {
   return AVATARS[i] ?? AVATARS[0]!;
 };
 
-export const fmtDate = (iso: string): string => {
-  const [y, m, d] = iso.split('-');
-  return `${d}.${m}.${y}`;
-};
-
 export const statusBadge = (s: CardStatus) => {
   if (s === 'active') return { text: 'פעילה', bg: '#f0f5e3', color: '#6f8f37' };
   if (s === 'expiring') return { text: 'עומדת לפוג', bg: '#fff1e6', color: '#c97a52' };

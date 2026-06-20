@@ -84,6 +84,18 @@ importers:
       '@memesh/api':
         specifier: workspace:*
         version: link:../api
+      '@memesh/brand':
+        specifier: workspace:*
+        version: link:../../packages/brand
+      '@memesh/customer-auth':
+        specifier: workspace:*
+        version: link:../../packages/customer-auth
+      '@memesh/staff-auth':
+        specifier: workspace:*
+        version: link:../../packages/staff-auth
+      '@memesh/web-shared':
+        specifier: workspace:*
+        version: link:../../packages/web-shared
       '@yudiel/react-qr-scanner':
         specifier: ^2.3.0
         version: 2.6.0(@types/emscripten@1.41.5)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
@@ -134,6 +146,40 @@ importers:
       '@types/node':
         specifier: ^24.0.0
         version: 24.12.4
+      tsx:
+        specifier: ^4.19.0
+        version: 4.22.1
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/brand:
+    devDependencies:
+      '@types/react':
+        specifier: ^19.0.0
+        version: 19.2.14
+      react:
+        specifier: ^19.0.0
+        version: 19.2.6
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/customer-auth:
+    dependencies:
+      '@memesh/web-shared':
+        specifier: workspace:*
+        version: link:../web-shared
+    devDependencies:
+      '@types/node':
+        specifier: ^24.0.0
+        version: 24.12.4
+      '@types/react':
+        specifier: ^19.0.0
+        version: 19.2.14
+      react:
+        specifier: ^19.0.0
+        version: 19.2.6
       tsx:
         specifier: ^4.19.0
         version: 4.22.1
@@ -200,6 +246,37 @@ importers:
         version: 5.9.3
 
   packages/sms:
+    devDependencies:
+      '@types/node':
+        specifier: ^24.0.0
+        version: 24.12.4
+      tsx:
+        specifier: ^4.19.0
+        version: 4.22.1
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/staff-auth:
+    dependencies:
+      '@memesh/brand':
+        specifier: workspace:*
+        version: link:../brand
+      '@memesh/web-shared':
+        specifier: workspace:*
+        version: link:../web-shared
+    devDependencies:
+      '@types/react':
+        specifier: ^19.0.0
+        version: 19.2.14
+      react:
+        specifier: ^19.0.0
+        version: 19.2.6
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/web-shared:
     devDependencies:
       '@types/node':
         specifier: ^24.0.0

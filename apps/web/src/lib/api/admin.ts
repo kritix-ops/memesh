@@ -1,4 +1,4 @@
-import { apiRequest, type ApiResult } from '../api';
+import { apiRequest, type ApiResult } from '@memesh/web-shared';
 
 // Mirrors apps/api/src/routes/admin.ts response shapes. The admin endpoints
 // are gated server-side (admin or manager); the client never role-checks.

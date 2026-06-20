@@ -1,10 +1,7 @@
+import { INK, MUTED, ORANGE, Sun } from '@memesh/brand';
 import { useState, type CSSProperties, type FormEvent } from 'react';
-import { Sun } from '../brand';
-import { useStaffSession } from '../lib/staff-session';
+import { useStaffSession } from './staff-session';
 
-const ORANGE = '#ffa983';
-const INK = '#2d3436';
-const MUTED = '#636e72';
 const SHADOW = '0 4px 20px rgba(0,0,0,0.08)';
 
 const card: CSSProperties = {

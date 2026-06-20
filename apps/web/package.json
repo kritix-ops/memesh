@@ -9,10 +9,14 @@
     "build": "node scripts/build-api-bundle.mjs && tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "node scripts/build-api-bundle.mjs && tsc --noEmit",
-    "test": "node --test --import tsx src/lib/api.test.ts src/lib/api/customers.test.ts src/lib/api/punch.test.ts src/lib/api/cards.test.ts src/lib/api/customer-auth.test.ts src/lib/api/me.test.ts src/lib/api/admin.test.ts src/lib/api/staff.test.ts"
+    "test": "node --test --import tsx src/lib/api/customers.test.ts src/lib/api/punch.test.ts src/lib/api/cards.test.ts src/lib/api/admin.test.ts src/lib/api/staff.test.ts"
   },
   "dependencies": {
     "@memesh/api": "workspace:*",
+    "@memesh/brand": "workspace:*",
+    "@memesh/customer-auth": "workspace:*",
+    "@memesh/staff-auth": "workspace:*",
+    "@memesh/web-shared": "workspace:*",
     "@yudiel/react-qr-scanner": "^2.3.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"

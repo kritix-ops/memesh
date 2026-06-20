@@ -1,6 +1,8 @@
+import { FauxQr, PunchCard, Sun } from '@memesh/brand';
+import { useStaffSession } from '@memesh/staff-auth';
+import { fmtDate } from '@memesh/web-shared';
 import { Scanner, type IDetectedBarcode, type IScannerError } from '@yudiel/react-qr-scanner';
 import { type CSSProperties, useEffect, useRef, useState } from 'react';
-import { FauxQr, PunchCard, Sun } from '../brand';
 import {
   getCardPricing,
   getCompanionLimits,
@@ -12,7 +14,6 @@ import {
   type PosSellControls,
 } from '../lib/api/card-settings';
 import { refundEntry, sellCard, type SellCardResponse } from '../lib/api/cards';
-import { getMyPinStatus, setMyPin } from '../lib/api/staff';
 import {
   createCustomer,
   getCustomerDetail,
@@ -30,8 +31,8 @@ import {
   punchByToken,
   type ScanLookupResponse,
 } from '../lib/api/punch';
-import { useStaffSession } from '../lib/staff-session';
-import { companionLabel, fmtDate } from '../mock';
+import { getMyPinStatus, setMyPin } from '../lib/api/staff';
+import { companionLabel } from '../mock';
 import { PunchConfirmModal } from './PunchConfirmModal';
 import { RefundEntryModal } from './RefundEntryModal';
 

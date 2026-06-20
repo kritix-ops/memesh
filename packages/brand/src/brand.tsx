@@ -1,9 +1,5 @@
 import type { CSSProperties, ReactNode } from 'react';
-
-const ORANGE = '#ffa983';
-const GREEN = '#c4d898';
-const INK = '#2d3436';
-const MUTED = '#636e72';
+import { GREEN, INK, MUTED, ORANGE } from './tokens';
 
 interface SunProps {
   size?: number;

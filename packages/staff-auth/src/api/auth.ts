@@ -1,4 +1,4 @@
-import { apiRequest, type ApiResult } from '../api';
+import { apiRequest, type ApiResult } from '@memesh/web-shared';
 
 // Mirrors @memesh/auth's STAFF_ROLES. Kept local so apps/web doesn't have to
 // import the auth package (which contains scrypt + jose — server-only code).
