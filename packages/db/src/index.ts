@@ -7,4 +7,5 @@ export * from './accounts.js';
 export * from './reports.js';
 export * from './actions.js';
 export * from './card-settings.js';
+export * from './wc-orders.js';
 export * from './migrations-path.js';

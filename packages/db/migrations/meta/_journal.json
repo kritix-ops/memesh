@@ -36,6 +36,13 @@
       "when": 1781905628949,
       "tag": "0004_talented_genesis",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1781909661258,
+      "tag": "0005_dizzy_arclight",
+      "breakpoints": true
     }
   ]
 }
