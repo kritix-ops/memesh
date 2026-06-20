@@ -11,6 +11,18 @@ export interface SellCardInput {
   totalEntries?: number;
   /** Defaults to 'pos' server-side. */
   source?: 'pos' | 'online' | 'manual';
+  /**
+   * AccuPOS receipt number recorded at the till. Required by the server when
+   * settings.requireReceiptNumberOnPos is true and source resolves to 'pos'.
+   * Server rejects duplicates with 409 receipt_number_duplicate.
+   */
+  receiptNumber?: string;
+  /**
+   * Cashier attribution PIN. Required by the server when
+   * settings.requireSellerPin is true and source resolves to 'pos'. Wrong PIN
+   * surfaces 401 invalid_pin; lockout surfaces 423 pin_locked with retryAfterSec.
+   */
+  sellerPin?: string;
 }
 
 export interface SellCardResponse {
@@ -39,6 +51,12 @@ export interface AdminCardRow {
   cancelledAt: string | null;
   cancelReason: string | null;
   source: 'pos' | 'online' | 'manual';
+  /** AccuPOS receipt number recorded at the till. Null for online/admin cards. */
+  receiptNumber: string | null;
+  /** Cashier who issued the card. Null for online/admin cards or historical rows. */
+  soldBy: string | null;
+  soldByFirstName: string | null;
+  soldByLastName: string | null;
   createdAt: string;
   customerFirstName: string | null;
   customerLastName: string | null;
@@ -50,13 +68,18 @@ export interface AdminCardListResponse {
   cards: AdminCardRow[];
 }
 
-/** List cards (admin/manager) joined with customer info, optionally filtered. */
+/**
+ * List cards (admin/manager) joined with customer info, optionally filtered.
+ * `q` accepts free-text matching serial, receipt number, customer name, phone,
+ * or customer number — useful when Yanay drills into a suspect AccuPOS receipt.
+ */
 export const listCardsForAdmin = (
-  opts: { status?: CardListStatus; limit?: number } = {},
+  opts: { status?: CardListStatus; limit?: number; q?: string } = {},
 ): Promise<ApiResult<AdminCardListResponse>> => {
   const params = new URLSearchParams();
   if (opts.status) params.set('status', opts.status);
   if (opts.limit !== undefined) params.set('limit', String(opts.limit));
+  if (opts.q) params.set('q', opts.q);
   const qs = params.toString();
   return apiRequest(`/cards${qs ? `?${qs}` : ''}`);
 };
@@ -76,6 +99,10 @@ export interface CardDetailCard {
   expiresAt: string | null;
   source: 'pos' | 'online' | 'manual';
   wcOrderId: string | null;
+  receiptNumber: string | null;
+  soldBy: string | null;
+  soldByFirstName: string | null;
+  soldByLastName: string | null;
   cancelledAt: string | null;
   cancelledBy: string | null;
   cancelReason: string | null;

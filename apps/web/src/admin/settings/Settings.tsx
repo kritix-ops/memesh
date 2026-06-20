@@ -23,7 +23,13 @@ import {
   humanizeSettingsError,
 } from './shared';
 
-type SectionKey = 'pricing' | 'mechanics' | 'cancel' | 'sms' | 'operations';
+type SectionKey =
+  | 'pricing'
+  | 'mechanics'
+  | 'cancel'
+  | 'sms'
+  | 'operations'
+  | 'pos-controls';
 
 const SECTIONS: { key: SectionKey; label: string }[] = [
   { key: 'pricing', label: 'כרטיסייה' },
@@ -31,6 +37,7 @@ const SECTIONS: { key: SectionKey; label: string }[] = [
   { key: 'cancel', label: 'ביטולים' },
   { key: 'sms', label: 'הודעות SMS' },
   { key: 'operations', label: 'חוויית קופה ולקוחות' },
+  { key: 'pos-controls', label: 'קופה ובקרה' },
 ];
 
 const subNavStyle = (active: boolean): CSSProperties => ({
@@ -150,6 +157,9 @@ export function Settings() {
         {active === 'sms' && <SmsSection loaded={loaded} onSaved={onSaved} reload={reload} />}
         {active === 'operations' && (
           <OperationsSection loaded={loaded} onSaved={onSaved} reload={reload} />
+        )}
+        {active === 'pos-controls' && (
+          <PosControlsSection loaded={loaded} onSaved={onSaved} reload={reload} />
         )}
       </div>
     </div>
@@ -650,6 +660,184 @@ function OperationsSection({
           checked={requireChild}
           onChange={setRequireChild}
           disabled={submitting}
+        />
+      </div>
+      <SaveBar dirty={dirty} submitting={submitting} error={error} flash={flash} onSubmit={submit} />
+    </SectionShell>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// POS controls + editable customer-facing copy (Yanay 2026-06-20)
+// Anti-fraud knobs (receipt number, cashier PIN) + the four customer-facing
+// strings Yanay can edit (POS checkbox label, email nudge, email OTP
+// subject + body template).
+// ---------------------------------------------------------------------------
+
+function PosControlsSection({
+  loaded,
+  onSaved,
+  reload,
+}: {
+  loaded: CardSettings;
+  onSaved: (next: CardSettings) => void;
+  reload: () => Promise<void>;
+}) {
+  const [requireReceipt, setRequireReceipt] = useState(loaded.requireReceiptNumberOnPos);
+  const [requirePin, setRequirePin] = useState(loaded.requireSellerPin);
+  const [pinLength, setPinLength] = useState(String(loaded.pinLength));
+  const [pinMemory, setPinMemory] = useState(String(loaded.pinMemoryMinutes));
+  const [pinMaxFail, setPinMaxFail] = useState(String(loaded.pinMaxFailures));
+  const [pinLockout, setPinLockout] = useState(String(loaded.pinLockoutMinutes));
+  const [nameLabel, setNameLabel] = useState(loaded.posNameOnReceiptLabel);
+  const [emailNudge, setEmailNudge] = useState(loaded.posEmailNudgeText);
+  const [otpSubject, setOtpSubject] = useState(loaded.emailOtpSubject);
+  const [otpBody, setOtpBody] = useState(loaded.emailOtpBodyTemplate);
+  const { submitting, error, flash, save } = useSectionSave(onSaved, reload);
+
+  useEffect(() => {
+    setRequireReceipt(loaded.requireReceiptNumberOnPos);
+    setRequirePin(loaded.requireSellerPin);
+    setPinLength(String(loaded.pinLength));
+    setPinMemory(String(loaded.pinMemoryMinutes));
+    setPinMaxFail(String(loaded.pinMaxFailures));
+    setPinLockout(String(loaded.pinLockoutMinutes));
+    setNameLabel(loaded.posNameOnReceiptLabel);
+    setEmailNudge(loaded.posEmailNudgeText);
+    setOtpSubject(loaded.emailOtpSubject);
+    setOtpBody(loaded.emailOtpBodyTemplate);
+  }, [loaded]);
+
+  const dirty =
+    requireReceipt !== loaded.requireReceiptNumberOnPos ||
+    requirePin !== loaded.requireSellerPin ||
+    pinLength !== String(loaded.pinLength) ||
+    pinMemory !== String(loaded.pinMemoryMinutes) ||
+    pinMaxFail !== String(loaded.pinMaxFailures) ||
+    pinLockout !== String(loaded.pinLockoutMinutes) ||
+    nameLabel !== loaded.posNameOnReceiptLabel ||
+    emailNudge !== loaded.posEmailNudgeText ||
+    otpSubject !== loaded.emailOtpSubject ||
+    otpBody !== loaded.emailOtpBodyTemplate;
+
+  const submit = async () => {
+    const patch: CardSettingsPatch = {};
+    const len = Number(pinLength);
+    const mem = Number(pinMemory);
+    const mx = Number(pinMaxFail);
+    const lk = Number(pinLockout);
+    if ([len, mem, mx, lk].some((n) => !Number.isInteger(n))) return;
+    if (requireReceipt !== loaded.requireReceiptNumberOnPos)
+      patch.requireReceiptNumberOnPos = requireReceipt;
+    if (requirePin !== loaded.requireSellerPin) patch.requireSellerPin = requirePin;
+    if (len !== loaded.pinLength) patch.pinLength = len;
+    if (mem !== loaded.pinMemoryMinutes) patch.pinMemoryMinutes = mem;
+    if (mx !== loaded.pinMaxFailures) patch.pinMaxFailures = mx;
+    if (lk !== loaded.pinLockoutMinutes) patch.pinLockoutMinutes = lk;
+    if (nameLabel.trim() !== loaded.posNameOnReceiptLabel)
+      patch.posNameOnReceiptLabel = nameLabel.trim();
+    if (emailNudge.trim() !== loaded.posEmailNudgeText)
+      patch.posEmailNudgeText = emailNudge.trim();
+    if (otpSubject.trim() !== loaded.emailOtpSubject) patch.emailOtpSubject = otpSubject.trim();
+    // Body template is sent raw — newlines and leading whitespace are
+    // intentional content.
+    if (otpBody !== loaded.emailOtpBodyTemplate) patch.emailOtpBodyTemplate = otpBody;
+    await save(patch, 'pos-controls');
+  };
+
+  return (
+    <SectionShell
+      title="קופה ובקרה"
+      description="כלי בקרה למניעת הנפקת כרטיסיות ללא תיעוד בקופה, וטקסטים שמופיעים ללקוחות שניתן לערוך כאן."
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <BooleanField
+          label="חובה למלא מספר קבלה"
+          description="כשמופעל, בכל מכירה בקופה הקופאי חייב להזין את מספר הקבלה שהדפיס במכשיר. השרת מונע שכפול של אותו מספר על שתי כרטיסיות."
+          checked={requireReceipt}
+          onChange={setRequireReceipt}
+          disabled={submitting}
+        />
+        <BooleanField
+          label="חובה להזין קוד אישי בכל מכירה"
+          description="כשמופעל, בכל מכירה מופיע חלון לקוד האישי של הקופאי. הקוד נזכר באותו דפדפן למשך זמן הזיכרון שמוגדר למטה כדי שלא יישאל שוב ושוב."
+          checked={requirePin}
+          onChange={setRequirePin}
+          disabled={submitting}
+        />
+        <div
+          style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(170px,1fr))', gap: 14 }}
+        >
+          <NumberField
+            label="אורך הקוד האישי"
+            value={pinLength}
+            onChange={setPinLength}
+            disabled={submitting}
+            suffix="ספרות"
+            hint="3–12. ערך נמוך עדיף לקופה מהירה, גבוה לבטיחות יתרה."
+          />
+          <NumberField
+            label="זיכרון הקוד בדפדפן"
+            value={pinMemory}
+            onChange={setPinMemory}
+            disabled={submitting}
+            suffix="דקות"
+            hint="באותו דפדפן הקוד יישאל רק פעם בכל חלון זמן. ניתן לאפס בלחיצה על 'החלף קופאי'."
+          />
+          <NumberField
+            label="ניסיונות מותרים לפני נעילה"
+            value={pinMaxFail}
+            onChange={setPinMaxFail}
+            disabled={submitting}
+            suffix="ניסיונות"
+            hint="לאחר כל כך הרבה ניסיונות שגויים הקוד יינעל. מנהל יכול לשחרר ידנית."
+          />
+          <NumberField
+            label="משך נעילה"
+            value={pinLockout}
+            onChange={setPinLockout}
+            disabled={submitting}
+            suffix="דקות"
+            hint="לאחר נעילה הקוד מושבת לכמות דקות זו, אלא אם מנהל ישחרר."
+          />
+        </div>
+
+        <div style={{ fontSize: 13.5, color: MUTED, fontWeight: 600, marginTop: 8 }}>
+          טקסטים שמופיעים ללקוחות
+        </div>
+        <TextField
+          label="טקסט וי שם הלקוח (קופה)"
+          value={nameLabel}
+          onChange={setNameLabel}
+          disabled={submitting}
+          hint="המשפט שמופיע על תיבת הסימון 'רשמתי את שם הלקוח על הקבלה' לפני שמאשרים מכירה."
+          maxLength={200}
+        />
+        <TextAreaField
+          label="טקסט עידוד למילוי אימייל (קופה)"
+          value={emailNudge}
+          onChange={setEmailNudge}
+          disabled={submitting}
+          hint="ההסבר הקצר מתחת לשדה האימייל בטופס לקוח חדש."
+          maxLength={500}
+          rows={3}
+        />
+        <TextField
+          label="נושא של מייל OTP"
+          value={otpSubject}
+          onChange={setOtpSubject}
+          disabled={submitting}
+          hint="הנושא שייראה בתיבת הדואר של הלקוח שמתחבר באימייל."
+          maxLength={200}
+        />
+        <TextAreaField
+          label="תוכן של מייל OTP"
+          value={otpBody}
+          onChange={setOtpBody}
+          disabled={submitting}
+          hint={'הגוף של המייל. ניתן להשתמש בתווי מיקום {{firstName}} ו-{{code}}. כל תו מיקום אחר ייגרום לשגיאה בשמירה.'}
+          maxLength={2000}
+          rows={8}
         />
       </div>
       <SaveBar dirty={dirty} submitting={submitting} error={error} flash={flash} onSubmit={submit} />

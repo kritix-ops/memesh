@@ -30,7 +30,7 @@ const SKIP_AUTO_REFRESH = new Set(['/auth/refresh', '/auth/login', '/auth/logout
 
 export type ApiResult<T> = { ok: true; data: T } | { ok: false; status: number; error: string };
 
-export type ApiMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE';
+export type ApiMethod = 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
 
 /**
  * 'staff' (default): a 401 attempts /auth/refresh and retries once. If refresh

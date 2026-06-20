@@ -83,9 +83,10 @@ export function CustomerApp() {
 // ---------------------------------------------------------------------------
 
 function CustomerLogin() {
-  const { requestOtp, verifyOtp } = useCustomerSession();
-  const [step, setStep] = useState<'phone' | 'code'>('phone');
+  const { requestOtp, verifyOtp, requestEmailOtp, verifyEmailOtp } = useCustomerSession();
+  const [step, setStep] = useState<'phone' | 'code' | 'email' | 'email-code'>('phone');
   const [phone, setPhone] = useState('');
+  const [email, setEmail] = useState('');
   const [code, setCode] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -125,13 +126,48 @@ function CustomerLogin() {
     }
   };
 
+  const onRequestEmail = async (e: FormEvent) => {
+    e.preventDefault();
+    const trimmed = email.trim();
+    if (!trimmed || !/^\S+@\S+\.\S+$/.test(trimmed)) {
+      setError('נא להזין כתובת אימייל תקינה');
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    const res = await requestEmailOtp(trimmed);
+    setSubmitting(false);
+    if (!res.ok) {
+      setError(humanizeCustomerAuthError(res.error));
+      return;
+    }
+    setCode('');
+    setStep('email-code');
+  };
+
+  const onVerifyEmail = async (e: FormEvent) => {
+    e.preventDefault();
+    const trimmed = code.trim();
+    if (!trimmed) {
+      setError('נא להזין את הקוד מהאימייל');
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    const res = await verifyEmailOtp(email.trim(), trimmed);
+    setSubmitting(false);
+    if (!res.ok) {
+      setError(humanizeCustomerAuthError(res.error));
+    }
+  };
+
   return (
     <div style={card}>
       <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 8 }}>
         <Sun size={56} />
       </div>
       <div style={{ textAlign: 'center', fontSize: 22, fontWeight: 600 }}>אזור אישי</div>
-      {step === 'phone' ? (
+      {step === 'phone' && (
         <form onSubmit={onRequest}>
           <div style={{ color: MUTED, textAlign: 'center', fontSize: 14, margin: '6px 0 18px' }}>
             הזינו מספר טלפון ונשלח לכם קוד כניסה
@@ -159,8 +195,30 @@ function CustomerLogin() {
           >
             {submitting ? 'שולח…' : 'שלחו לי קוד'}
           </button>
+          <button
+            type="button"
+            onClick={() => {
+              setStep('email');
+              setError(null);
+              setCode('');
+            }}
+            disabled={submitting}
+            style={{
+              border: 'none',
+              background: 'transparent',
+              color: MUTED,
+              cursor: 'pointer',
+              width: '100%',
+              marginTop: 12,
+              fontSize: 14,
+              textDecoration: 'underline',
+            }}
+          >
+            לא קיבלתי SMS — להתחבר באימייל
+          </button>
         </form>
-      ) : (
+      )}
+      {step === 'code' && (
         <form onSubmit={onVerify}>
           <div style={{ color: MUTED, textAlign: 'center', fontSize: 14, margin: '6px 0 4px' }}>
             הזינו את הקוד שנשלח אליכם
@@ -214,6 +272,113 @@ function CustomerLogin() {
             }}
           >
             שינוי מספר טלפון
+          </button>
+        </form>
+      )}
+      {step === 'email' && (
+        <form onSubmit={onRequestEmail}>
+          <div style={{ color: MUTED, textAlign: 'center', fontSize: 14, margin: '6px 0 18px' }}>
+            הזינו את כתובת האימייל שלכם ונשלח לכם קוד כניסה. רק אימייל שכבר רשום במערכת.
+          </div>
+          <input
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            type="email"
+            inputMode="email"
+            autoComplete="email"
+            placeholder="your@example.com"
+            disabled={submitting}
+            style={{ ...inputStyle, textAlign: 'center' }}
+          />
+          {error && <ErrorBanner message={error} />}
+          <button
+            type="submit"
+            disabled={submitting}
+            style={{
+              ...primaryBtn,
+              marginTop: 16,
+              opacity: submitting ? 0.6 : 1,
+              cursor: submitting ? 'default' : 'pointer',
+            }}
+          >
+            {submitting ? 'שולח…' : 'שלחו לי קוד באימייל'}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setStep('phone');
+              setError(null);
+              setCode('');
+            }}
+            disabled={submitting}
+            style={{
+              border: 'none',
+              background: 'transparent',
+              color: MUTED,
+              cursor: 'pointer',
+              width: '100%',
+              marginTop: 12,
+              fontSize: 14,
+            }}
+          >
+            חזרה להתחברות ב-SMS
+          </button>
+        </form>
+      )}
+      {step === 'email-code' && (
+        <form onSubmit={onVerifyEmail}>
+          <div style={{ color: MUTED, textAlign: 'center', fontSize: 14, margin: '6px 0 4px' }}>
+            הזינו את הקוד שנשלח אליכם באימייל
+          </div>
+          <div style={{ color: MUTED, textAlign: 'center', fontSize: 13, marginBottom: 18 }}>
+            קוד נשלח אל {email}
+          </div>
+          <input
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            placeholder="••••••"
+            disabled={submitting}
+            style={{
+              ...inputStyle,
+              textAlign: 'center',
+              letterSpacing: 8,
+              fontSize: 22,
+            }}
+          />
+          {error && <ErrorBanner message={error} />}
+          <button
+            type="submit"
+            disabled={submitting}
+            style={{
+              ...primaryBtn,
+              marginTop: 16,
+              opacity: submitting ? 0.6 : 1,
+              cursor: submitting ? 'default' : 'pointer',
+            }}
+          >
+            {submitting ? 'מאמת…' : 'כניסה'}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setStep('email');
+              setError(null);
+              setCode('');
+            }}
+            disabled={submitting}
+            style={{
+              border: 'none',
+              background: 'transparent',
+              color: MUTED,
+              cursor: 'pointer',
+              width: '100%',
+              marginTop: 12,
+              fontSize: 14,
+            }}
+          >
+            שינוי כתובת האימייל
           </button>
         </form>
       )}

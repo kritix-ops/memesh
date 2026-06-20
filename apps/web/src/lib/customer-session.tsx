@@ -2,7 +2,9 @@ import { createContext, useCallback, useContext, useEffect, useState, type React
 import { setOnCustomerSessionExpired } from './api';
 import {
   customerLogout,
+  requestEmailOtp as requestEmailOtpApi,
   requestOtp as requestOtpApi,
+  verifyEmailOtp as verifyEmailOtpApi,
   verifyOtp as verifyOtpApi,
 } from './api/customer-auth';
 import { getMe, type CustomerProfile } from './api/me';
@@ -27,6 +29,9 @@ interface CustomerSessionContextValue {
   state: CustomerSessionState;
   requestOtp: (phone: string) => Promise<RequestOtpResult>;
   verifyOtp: (phone: string, code: string) => Promise<SignInResult>;
+  /** Email-OTP fallback when SMS fails or the customer changed phone numbers. */
+  requestEmailOtp: (email: string) => Promise<RequestOtpResult>;
+  verifyEmailOtp: (email: string, code: string) => Promise<SignInResult>;
   signOut: () => Promise<void>;
   /** Refresh the cached profile after a successful PATCH /me, etc. */
   refresh: () => Promise<void>;
@@ -96,6 +101,38 @@ export function CustomerSessionProvider({ children }: { children: ReactNode }) {
     return { ok: true };
   }, []);
 
+  const requestEmailOtp = useCallback(async (email: string): Promise<RequestOtpResult> => {
+    console.info('[web customer auth] request email otp', { email: maskEmail(email) });
+    const res = await requestEmailOtpApi(email);
+    if (!res.ok) {
+      console.warn('[web customer auth] request email otp failed', { error: res.error });
+      return { ok: false, error: res.error };
+    }
+    return { ok: true };
+  }, []);
+
+  const verifyEmailOtp = useCallback(
+    async (email: string, code: string): Promise<SignInResult> => {
+      console.info('[web customer auth] verify email', { email: maskEmail(email) });
+      const verifyRes = await verifyEmailOtpApi(email, code);
+      if (!verifyRes.ok) {
+        console.warn('[web customer auth] verify email failed', { error: verifyRes.error });
+        return { ok: false, error: verifyRes.error };
+      }
+      const meRes = await getMe();
+      if (!meRes.ok) {
+        console.warn('[web customer auth] me after email verify failed');
+        return { ok: false, error: 'session_unavailable' };
+      }
+      console.info('[web customer auth] signed in via email', {
+        customerNumber: meRes.data.profile.customerNumber,
+      });
+      setState({ status: 'signed-in', profile: meRes.data.profile });
+      return { ok: true };
+    },
+    [],
+  );
+
   const signOut = useCallback(async () => {
     console.info('[web customer auth] logout');
     try {
@@ -118,7 +155,16 @@ export function CustomerSessionProvider({ children }: { children: ReactNode }) {
 
   return (
     <CustomerSessionContext.Provider
-      value={{ state, requestOtp, verifyOtp, signOut, refresh, setProfile }}
+      value={{
+        state,
+        requestOtp,
+        verifyOtp,
+        requestEmailOtp,
+        verifyEmailOtp,
+        signOut,
+        refresh,
+        setProfile,
+      }}
     >
       {children}
     </CustomerSessionContext.Provider>
@@ -133,4 +179,10 @@ export function useCustomerSession(): CustomerSessionContextValue {
 
 function maskPhone(phone: string): string {
   return `${phone.slice(0, 3)}***`;
+}
+
+function maskEmail(email: string): string {
+  const at = email.indexOf('@');
+  if (at <= 0) return '***';
+  return `${email.slice(0, 1)}***@${email.slice(at + 1)}`;
 }

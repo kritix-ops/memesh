@@ -31,6 +31,18 @@ export interface CardSettings {
   expiryBadgeThresholdDays: number;
   requireEmailOnNewCustomer: boolean;
   requireChildOnNewCustomer: boolean;
+  // Cashier anti-fraud controls (Yanay 2026-06-20)
+  requireReceiptNumberOnPos: boolean;
+  requireSellerPin: boolean;
+  pinLength: number;
+  pinMemoryMinutes: number;
+  pinMaxFailures: number;
+  pinLockoutMinutes: number;
+  // Editable customer-facing copy
+  posNameOnReceiptLabel: string;
+  posEmailNudgeText: string;
+  emailOtpSubject: string;
+  emailOtpBodyTemplate: string;
 
   updatedBy: string | null;
   updatedAt: string;
@@ -87,6 +99,16 @@ export interface CardSettingsPatch {
   expiryBadgeThresholdDays?: number;
   requireEmailOnNewCustomer?: boolean;
   requireChildOnNewCustomer?: boolean;
+  requireReceiptNumberOnPos?: boolean;
+  requireSellerPin?: boolean;
+  pinLength?: number;
+  pinMemoryMinutes?: number;
+  pinMaxFailures?: number;
+  pinLockoutMinutes?: number;
+  posNameOnReceiptLabel?: string;
+  posEmailNudgeText?: string;
+  emailOtpSubject?: string;
+  emailOtpBodyTemplate?: string;
 }
 
 export const getCardSettings = (): Promise<ApiResult<CardSettingsResponse>> =>
@@ -108,6 +130,21 @@ export const getCancelContext = (): Promise<ApiResult<CancelContext>> =>
 
 export const getCompanionLimits = (): Promise<ApiResult<CompanionLimits>> =>
   apiRequest('/pos/companion-limits');
+
+// Sell-flow controls exposed to the cashier POS so the modal can render the
+// right inputs (receipt number, PIN prompt) and the editable Hebrew labels
+// without round-tripping through the admin settings endpoint.
+export interface PosSellControls {
+  requireReceiptNumberOnPos: boolean;
+  requireSellerPin: boolean;
+  pinLength: number;
+  pinMemoryMinutes: number;
+  nameOnReceiptLabel: string;
+  emailNudgeText: string;
+}
+
+export const getPosSellControls = (): Promise<ApiResult<PosSellControls>> =>
+  apiRequest('/pos/sell-controls');
 
 // HH:MM helpers used by the SMS quiet-hours fields.
 export const formatHHMM = (minutes: number): string => {

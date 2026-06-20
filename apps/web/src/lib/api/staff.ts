@@ -71,3 +71,61 @@ export const updateStaffMember = (
  */
 export const deleteStaffMember = (id: string): Promise<ApiResult<{ ok: true }>> =>
   apiRequest(`/staff/${id}`, { method: 'DELETE' });
+
+// ---------------------------------------------------------------------------
+// Cashier attribution PIN (Yanay 2026-06-20). Admin/manager manages PINs for
+// every cashier; the cashier can also self-set via /me/pin with the
+// fresh-auth password gate.
+// ---------------------------------------------------------------------------
+
+export interface StaffPinStatus {
+  exists: boolean;
+  locked: boolean;
+  /** ISO timestamp when the lockout expires, or null when not locked. */
+  lockedUntil: string | null;
+  failedCount: number;
+}
+
+/** Read PIN status for a cashier (admin/manager only). */
+export const getStaffPinStatus = (id: string): Promise<ApiResult<StaffPinStatus>> =>
+  apiRequest(`/staff/${id}/pin`);
+
+/** Set a specific PIN (digits, length matches the live settings.pinLength). */
+export const setStaffPin = (
+  id: string,
+  pin: string,
+): Promise<ApiResult<StaffPinStatus>> =>
+  apiRequest(`/staff/${id}/pin`, { method: 'PUT', body: { pin } });
+
+/**
+ * Generate a random PIN of the configured length. The server returns the
+ * generated PIN exactly once — the UI must surface it to the manager so they
+ * can hand it to the cashier. There is no way to recover it after this call.
+ */
+export const generateStaffPin = (
+  id: string,
+): Promise<ApiResult<StaffPinStatus & { pin: string }>> =>
+  apiRequest(`/staff/${id}/pin/generate`, { method: 'POST' });
+
+/** Remove the cashier's PIN entirely. */
+export const deleteStaffPin = (
+  id: string,
+): Promise<ApiResult<{ ok: true; removed: boolean }>> =>
+  apiRequest(`/staff/${id}/pin`, { method: 'DELETE' });
+
+/** Clear the lockout state on a cashier's PIN. */
+export const unlockStaffPin = (id: string): Promise<ApiResult<StaffPinStatus>> =>
+  apiRequest(`/staff/${id}/pin/unlock`, { method: 'POST' });
+
+/** Read the signed-in cashier's own PIN status. */
+export const getMyPinStatus = (): Promise<ApiResult<StaffPinStatus>> => apiRequest('/me/pin');
+
+/**
+ * Self-set the signed-in cashier's PIN. Server requires the current password
+ * as a fresh-auth gate so a stolen session can't silently rotate the PIN.
+ */
+export const setMyPin = (
+  pin: string,
+  password: string,
+): Promise<ApiResult<StaffPinStatus>> =>
+  apiRequest('/me/pin', { method: 'PUT', body: { pin, password } });

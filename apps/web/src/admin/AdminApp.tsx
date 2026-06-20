@@ -45,10 +45,16 @@ import {
 import {
   createStaffMember,
   deleteStaffMember,
+  deleteStaffPin,
+  generateStaffPin,
+  getStaffPinStatus,
   listStaff,
+  setStaffPin,
+  unlockStaffPin,
   updateStaffMember,
   type CreateStaffInput,
   type StaffMember,
+  type StaffPinStatus,
   type UpdateStaffInput,
 } from '../lib/api/staff';
 import { useStaffSession } from '../lib/staff-session';
@@ -939,6 +945,18 @@ function Cards() {
                   {c.customerNumber && (
                     <div style={{ fontSize: 12.5, color: MUTED, marginTop: 2 }}>
                       {c.customerNumber} · {c.customerPhone ?? '—'}
+                    </div>
+                  )}
+                  {(c.soldByFirstName || c.receiptNumber) && (
+                    <div style={{ fontSize: 12, color: MUTED, marginTop: 4 }}>
+                      {c.soldByFirstName && (
+                        <span>
+                          מכר: {c.soldByFirstName}
+                          {c.soldByLastName ? ` ${c.soldByLastName}` : ''}
+                        </span>
+                      )}
+                      {c.soldByFirstName && c.receiptNumber && <span> · </span>}
+                      {c.receiptNumber && <span>קבלה: {c.receiptNumber}</span>}
                     </div>
                   )}
                   {c.cancelReason && (
@@ -1946,6 +1964,12 @@ function CustomerDetailModal({
             cancelledAt: c.cancelledAt,
             cancelReason: c.cancelReason,
             source: c.source,
+            // Synthesized row used only by CancelCardModal — receipt+seller
+            // are display-only there and the cancel flow doesn't read them.
+            receiptNumber: null,
+            soldBy: null,
+            soldByFirstName: null,
+            soldByLastName: null,
             createdAt: c.createdAt,
             customerFirstName: cust?.firstName ?? null,
             customerLastName: cust?.lastName ?? null,
@@ -2478,6 +2502,7 @@ function Staff() {
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<StaffMember | null>(null);
   const [deleting, setDeleting] = useState<StaffMember | null>(null);
+  const [managingPin, setManagingPin] = useState<StaffMember | null>(null);
   const { state: sessionState } = useStaffSession();
   const currentUserId = sessionState.status === 'signed-in' ? sessionState.user.id : null;
 
@@ -2583,6 +2608,24 @@ function Staff() {
               </div>
               <Badge text={r.label} bg={r.bg} color={r.color} />
               {!m.isActive && <Badge text="מושעה" bg="#ececec" color="#9aa3a6" />}
+              {m.role === 'cashier' && (
+                <button
+                  onClick={() => setManagingPin(m)}
+                  title="ניהול הקוד האישי של הקופאי"
+                  style={{
+                    border: '1.5px solid #e9e0d9',
+                    background: '#fff',
+                    color: MUTED,
+                    borderRadius: 8,
+                    padding: '6px 12px',
+                    fontWeight: 600,
+                    fontSize: 13,
+                    cursor: 'pointer',
+                  }}
+                >
+                  קוד אישי
+                </button>
+              )}
               <button
                 onClick={() => setEditing(m)}
                 style={{
@@ -2640,6 +2683,299 @@ function Staff() {
           }}
         />
       )}
+      {managingPin && (
+        <PinManageModal
+          member={managingPin}
+          onClose={() => setManagingPin(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function humanizePinError(code: string): string {
+  if (code === 'pin_wrong_length') return 'אורך הקוד לא תואם להגדרה הנוכחית.';
+  if (code === 'no_pin') return 'לא מוגדר קוד אישי לקופאי הזה.';
+  if (code === 'not_found') return 'איש הצוות לא נמצא. רעננו את הדף.';
+  if (code === 'invalid_id') return 'מזהה איש צוות לא תקין.';
+  if (code === 'invalid_body') return 'הקוד צריך להכיל ספרות בלבד.';
+  return 'תקלה זמנית. נסו שוב בעוד רגע.';
+}
+
+function formatLockedUntil(iso: string): string {
+  const d = new Date(iso);
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  return `${hh}:${mm}`;
+}
+
+function PinManageModal({
+  member,
+  onClose,
+}: {
+  member: StaffMember;
+  onClose: () => void;
+}) {
+  const [status, setStatus] = useState<StaffPinStatus | null>(null);
+  const [pinLength, setPinLength] = useState<number>(3);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [pinInput, setPinInput] = useState('');
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  // Generated PIN is shown ONCE so the manager can read it to the cashier.
+  // We never display it again on this screen and never store it anywhere.
+  const [generatedPin, setGeneratedPin] = useState<string | null>(null);
+
+  const reload = async () => {
+    setLoadError(null);
+    const [s, settings] = await Promise.all([
+      getStaffPinStatus(member.id),
+      fetchCardSettings(),
+    ]);
+    if (!s.ok) {
+      setLoadError(humanizePinError(s.error));
+      return;
+    }
+    setStatus(s.data);
+    if (settings.ok) setPinLength(settings.data.settings.pinLength);
+  };
+
+  useEffect(() => {
+    void reload();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleSet = async () => {
+    setActionError(null);
+    setGeneratedPin(null);
+    if (!/^\d+$/.test(pinInput)) {
+      setActionError(`הקוד חייב להכיל ספרות בלבד (${pinLength} ספרות).`);
+      return;
+    }
+    if (pinInput.length !== pinLength) {
+      setActionError(`הקוד חייב להיות באורך ${pinLength} ספרות.`);
+      return;
+    }
+    setBusy(true);
+    console.info('[web admin pin] set', { staffId: member.id });
+    const res = await setStaffPin(member.id, pinInput);
+    setBusy(false);
+    if (!res.ok) {
+      console.warn('[web admin pin] set failed', { error: res.error });
+      setActionError(humanizePinError(res.error));
+      return;
+    }
+    setStatus(res.data);
+    setPinInput('');
+  };
+
+  const handleGenerate = async () => {
+    setActionError(null);
+    setGeneratedPin(null);
+    setBusy(true);
+    console.info('[web admin pin] generate', { staffId: member.id });
+    const res = await generateStaffPin(member.id);
+    setBusy(false);
+    if (!res.ok) {
+      console.warn('[web admin pin] generate failed', { error: res.error });
+      setActionError(humanizePinError(res.error));
+      return;
+    }
+    setStatus({
+      exists: res.data.exists,
+      locked: res.data.locked,
+      lockedUntil: res.data.lockedUntil,
+      failedCount: res.data.failedCount,
+    });
+    setGeneratedPin(res.data.pin);
+  };
+
+  const handleDelete = async () => {
+    if (!window.confirm('למחוק את הקוד? הקופאי לא יוכל למכור כרטיסיות עד שיוגדר קוד חדש.')) {
+      return;
+    }
+    setActionError(null);
+    setGeneratedPin(null);
+    setBusy(true);
+    console.info('[web admin pin] delete', { staffId: member.id });
+    const res = await deleteStaffPin(member.id);
+    setBusy(false);
+    if (!res.ok) {
+      console.warn('[web admin pin] delete failed', { error: res.error });
+      setActionError(humanizePinError(res.error));
+      return;
+    }
+    void reload();
+  };
+
+  const handleUnlock = async () => {
+    setActionError(null);
+    setGeneratedPin(null);
+    setBusy(true);
+    console.info('[web admin pin] unlock', { staffId: member.id });
+    const res = await unlockStaffPin(member.id);
+    setBusy(false);
+    if (!res.ok) {
+      console.warn('[web admin pin] unlock failed', { error: res.error });
+      setActionError(humanizePinError(res.error));
+      return;
+    }
+    setStatus(res.data);
+  };
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(45,52,54,0.4)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 20,
+        zIndex: 50,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: '#fff',
+          borderRadius: 16,
+          boxShadow: SHADOW,
+          padding: 24,
+          width: 460,
+          maxWidth: '100%',
+        }}
+      >
+        <div style={{ fontWeight: 600, fontSize: 18, color: INK, marginBottom: 6 }}>
+          קוד אישי · {member.firstName} {member.lastName}
+        </div>
+        <div style={{ fontSize: 13, color: MUTED, marginBottom: 16 }}>
+          הקוד מזוהה עם כל מכירה של קופאי זה. אורך הקוד הנוכחי: {pinLength} ספרות.
+        </div>
+
+        {loadError && (
+          <div style={{ color: '#a23a3a', fontSize: 14, padding: '8px 0' }}>{loadError}</div>
+        )}
+
+        {status && (
+          <div
+            style={{
+              border: '1px solid #f3efea',
+              borderRadius: 12,
+              padding: 12,
+              marginBottom: 16,
+              background: '#faf7f3',
+            }}
+          >
+            {status.exists ? (
+              status.locked && status.lockedUntil ? (
+                <div style={{ color: '#a23a3a', fontWeight: 600 }}>
+                  הקוד נעול עד {formatLockedUntil(status.lockedUntil)} ({status.failedCount}{' '}
+                  ניסיונות שגויים)
+                </div>
+              ) : (
+                <div style={{ color: '#3a7d5a', fontWeight: 600 }}>הוגדר קוד אישי</div>
+              )
+            ) : (
+              <div style={{ color: MUTED }}>לא הוגדר קוד אישי. הקופאי לא יוכל למכור עד שיוגדר.</div>
+            )}
+          </div>
+        )}
+
+        {generatedPin && (
+          <div
+            style={{
+              border: '2px dashed #ffa983',
+              borderRadius: 12,
+              padding: 16,
+              marginBottom: 16,
+              background: '#fff9f5',
+              textAlign: 'center',
+            }}
+          >
+            <div style={{ fontSize: 13, color: MUTED, marginBottom: 8 }}>
+              הקוד שנוצר עבור {member.firstName}:
+            </div>
+            <div
+              style={{
+                fontSize: 32,
+                fontWeight: 700,
+                letterSpacing: 6,
+                color: INK,
+                fontFamily: 'ui-monospace, monospace',
+              }}
+            >
+              {generatedPin}
+            </div>
+            <div style={{ fontSize: 12, color: MUTED, marginTop: 8 }}>
+              הקוד יוצג רק פעם אחת. הקפידו לרשום או למסור לקופאי לפני סגירת החלון.
+            </div>
+          </div>
+        )}
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input
+              style={{ ...inputStyle, fontFamily: 'ui-monospace, monospace', letterSpacing: 4 }}
+              value={pinInput}
+              onChange={(e) => setPinInput(e.target.value.replace(/\D/g, '').slice(0, pinLength))}
+              inputMode="numeric"
+              placeholder={`קוד חדש (${pinLength} ספרות)`}
+              maxLength={pinLength}
+              disabled={busy}
+            />
+            <button
+              type="button"
+              onClick={() => void handleSet()}
+              disabled={busy || pinInput.length !== pinLength}
+              style={primaryBtn}
+            >
+              הגדר
+            </button>
+          </div>
+
+          <button type="button" onClick={() => void handleGenerate()} disabled={busy} style={ghostBtn}>
+            הגרל קוד אקראי
+          </button>
+
+          {status?.locked && (
+            <button type="button" onClick={() => void handleUnlock()} disabled={busy} style={ghostBtn}>
+              שחרור נעילה
+            </button>
+          )}
+
+          {status?.exists && (
+            <button
+              type="button"
+              onClick={() => void handleDelete()}
+              disabled={busy}
+              style={{
+                border: '1.5px solid #f0d6d6',
+                background: '#fff',
+                color: '#a23a3a',
+                borderRadius: 10,
+                padding: '10px 18px',
+                fontWeight: 600,
+                cursor: busy ? 'not-allowed' : 'pointer',
+              }}
+            >
+              מחק קוד
+            </button>
+          )}
+        </div>
+
+        {actionError && (
+          <div style={{ color: '#a23a3a', fontSize: 14, padding: '12px 0 0' }}>{actionError}</div>
+        )}
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
+          <button type="button" onClick={onClose} style={ghostBtn}>
+            סגירה
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

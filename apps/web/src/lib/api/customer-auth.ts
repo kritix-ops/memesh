@@ -40,3 +40,33 @@ export const customerLogout = (): Promise<ApiResult<{ ok: true }>> =>
     method: 'POST',
     audience: 'customer',
   });
+
+// ---------------------------------------------------------------------------
+// Email-OTP fallback (Yanay 2026-06-20). Used when SMS fails or the customer
+// has changed their phone number. The server only sends when the email
+// matches an existing customers.email exactly; the route never reveals
+// whether the address is on file.
+// ---------------------------------------------------------------------------
+
+/**
+ * Ask the server to send a login code via email. Always returns ok:true
+ * regardless of whether the email is on file (opaque shape mirrors the SMS
+ * path so the endpoint never leaks customer existence).
+ */
+export const requestEmailOtp = (email: string): Promise<ApiResult<RequestOtpResponse>> =>
+  apiRequest('/auth/customer/request-email-otp', {
+    method: 'POST',
+    body: { email },
+    audience: 'customer',
+  });
+
+/** Verify the email code and start a customer session (same cookie as SMS). */
+export const verifyEmailOtp = (
+  email: string,
+  code: string,
+): Promise<ApiResult<VerifyOtpResponse>> =>
+  apiRequest('/auth/customer/verify-email-otp', {
+    method: 'POST',
+    body: { email, code },
+    audience: 'customer',
+  });

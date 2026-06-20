@@ -5,11 +5,14 @@ import {
   getCardPricing,
   getCompanionLimits,
   getCustomerFormRules,
+  getPosSellControls,
   type CardPricing,
   type CompanionLimits,
   type CustomerFormRules,
+  type PosSellControls,
 } from '../lib/api/card-settings';
 import { refundEntry, sellCard, type SellCardResponse } from '../lib/api/cards';
+import { getMyPinStatus, setMyPin } from '../lib/api/staff';
 import {
   createCustomer,
   getCustomerDetail,
@@ -151,6 +154,14 @@ function humanizePunchError(code: string): string {
 
 function humanizeSellError(code: string): string {
   if (code === 'invalid_body') return 'נתונים לא תקינים. בדקו ונסו שוב.';
+  if (code === 'receipt_number_required') return 'יש להזין את מספר הקבלה לפני המכירה.';
+  if (code === 'receipt_number_duplicate')
+    return 'מספר הקבלה הזה כבר משויך לכרטיסייה אחרת. בדקו את הקבלה.';
+  if (code === 'pin_required') return 'יש להזין את הקוד האישי לפני המכירה.';
+  if (code === 'pin_not_set') return 'לא הוגדר קוד אישי לחשבון שלך. פנה למנהל.';
+  if (code === 'invalid_pin') return 'הקוד שגוי. נסה שוב.';
+  if (code === 'pin_locked' || code === 'pin_locked_now')
+    return 'הקוד ננעל לאחר ניסיונות שגויים. פנה למנהל לשחרור.';
   return 'שגיאה במכירת הכרטיסייה. נסו שוב.';
 }
 
@@ -192,6 +203,52 @@ const FALLBACK_PRICING: CardPricing = {
 };
 const FALLBACK_COMPANION_LIMITS: CompanionLimits = { min: 1, max: 4 };
 const FALLBACK_FORM_RULES: CustomerFormRules = { requireEmail: false, requireChild: false };
+// Fail-closed defaults for the sell-flow controls: assume the anti-fraud
+// requirements are ON if the API call fails, so a transient failure doesn't
+// silently bypass receipt + PIN enforcement at the till. The server still
+// re-validates on POST /cards; this fallback only governs what the UI shows.
+const FALLBACK_SELL_CONTROLS: PosSellControls = {
+  requireReceiptNumberOnPos: true,
+  requireSellerPin: true,
+  pinLength: 3,
+  pinMemoryMinutes: 15,
+  nameOnReceiptLabel: 'רשמתי את שם הלקוח על הקבלה במעמד התשלום',
+  emailNudgeText:
+    'האימייל לא חובה אך מומלץ — מאפשר ללקוח להיכנס לאזור האישי גם אם החליף מספר טלפון או אם ה-SMS לא יגיע.',
+};
+
+// Module-scoped PIN session memory. Lives only in the running tab — never
+// persisted to localStorage/sessionStorage so a closed tab loses it. Keyed
+// by staffId so two-cashier-per-shift setups work without confusion. The
+// expiry is set when the PIN is first remembered and slides forward on each
+// successful sale (see useSellerPinMemory).
+interface CachedPin {
+  pin: string;
+  /** Wall-clock ms when this cached PIN goes stale. */
+  expiresAt: number;
+}
+const sellerPinCache = new Map<string, CachedPin>();
+
+function readCachedPin(staffId: string, now: number = Date.now()): string | null {
+  const entry = sellerPinCache.get(staffId);
+  if (!entry) return null;
+  if (entry.expiresAt <= now) {
+    sellerPinCache.delete(staffId);
+    return null;
+  }
+  return entry.pin;
+}
+
+function writeCachedPin(staffId: string, pin: string, memoryMinutes: number): void {
+  sellerPinCache.set(staffId, {
+    pin,
+    expiresAt: Date.now() + memoryMinutes * 60 * 1000,
+  });
+}
+
+function clearCachedPin(staffId: string): void {
+  sellerPinCache.delete(staffId);
+}
 
 export function PosApp() {
   const { state: sessionState } = useStaffSession();
@@ -211,13 +268,15 @@ export function PosApp() {
   const [pricing, setPricing] = useState<CardPricing>(FALLBACK_PRICING);
   const [companionLimits, setCompanionLimits] = useState<CompanionLimits>(FALLBACK_COMPANION_LIMITS);
   const [formRules, setFormRules] = useState<CustomerFormRules>(FALLBACK_FORM_RULES);
+  const [sellControls, setSellControls] = useState<PosSellControls>(FALLBACK_SELL_CONTROLS);
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [p, c, r] = await Promise.all([
+      const [p, c, r, s] = await Promise.all([
         getCardPricing(),
         getCompanionLimits(),
         getCustomerFormRules(),
+        getPosSellControls(),
       ]);
       if (cancelled) return;
       if (p.ok) {
@@ -238,11 +297,36 @@ export function PosApp() {
       } else {
         console.warn('[web pos form-rules] fallback', { error: r.error });
       }
+      if (s.ok) {
+        console.info('[web pos sell-controls] fetched', {
+          requireReceipt: s.data.requireReceiptNumberOnPos,
+          requirePin: s.data.requireSellerPin,
+          pinLength: s.data.pinLength,
+        });
+        setSellControls(s.data);
+      } else {
+        console.warn('[web pos sell-controls] fallback (fail-closed)', { error: s.error });
+      }
     })();
     return () => {
       cancelled = true;
     };
   }, []);
+
+  // Sell-flow extras: receipt number + name-on-receipt affirmation + the
+  // pending-PIN modal. Reset whenever the customer changes or after a sale
+  // completes (so the next sale starts from a clean slate, never reusing
+  // the previous receipt number by accident).
+  const [receiptNumber, setReceiptNumber] = useState('');
+  const [nameOnReceiptChecked, setNameOnReceiptChecked] = useState(false);
+  const [pinModalOpen, setPinModalOpen] = useState(false);
+  const [selfPinModalOpen, setSelfPinModalOpen] = useState(false);
+  useEffect(() => {
+    if (sellStep === 'choose' || sellStep === 'done') {
+      setReceiptNumber('');
+      setNameOnReceiptChecked(false);
+    }
+  }, [selectedId, sellStep]);
 
   // Live search state (debounced + abortable). Empty query => no fetch.
   const [searchResults, setSearchResults] = useState<Customer[]>([]);
@@ -416,27 +500,97 @@ export function PosApp() {
     setScreen('sell');
   };
 
-  const submitSell = async () => {
+  // Issue the actual sell call. Split out so the PIN modal can resume the
+  // flow after the cashier enters their code without duplicating the body
+  // validation.
+  const executeSell = async (pin: string | undefined) => {
     if (!selectedId) {
       setSellError('בחרו לקוח לפני המכירה.');
       return;
     }
     setSellSubmitting(true);
     setSellError(null);
-    console.info('[web sell] submit', { customerId: selectedId });
-    const res = await sellCard({ customerId: selectedId });
+    const trimmedReceipt = receiptNumber.trim();
+    console.info('[pos sell] submit', {
+      customerId: selectedId,
+      hasReceipt: trimmedReceipt.length > 0,
+      hasPin: Boolean(pin),
+    });
+    const res = await sellCard({
+      customerId: selectedId,
+      ...(trimmedReceipt !== '' && { receiptNumber: trimmedReceipt }),
+      ...(pin !== undefined && { sellerPin: pin }),
+    });
     setSellSubmitting(false);
     if (!res.ok) {
-      console.warn('[web sell] error', { status: res.status, error: res.error });
+      console.warn('[pos sell] error', { status: res.status, error: res.error });
+      // PIN-related rejections invalidate the cached PIN so the next attempt
+      // re-prompts. Lockout errors clear the cache too so a new shift cannot
+      // retry the locked PIN by accident.
+      if (
+        sessionUser &&
+        (res.error === 'invalid_pin' ||
+          res.error === 'pin_locked' ||
+          res.error === 'pin_locked_now' ||
+          res.error === 'pin_not_set')
+      ) {
+        clearCachedPin(sessionUser.id);
+      }
       setSellError(humanizeSellError(res.error));
       return;
     }
-    console.info('[web sell] success', {
+    console.info('[pos sell] success', {
       cardId: res.data.card.id,
       serial: res.data.card.serialNumber,
     });
+    // Refresh the PIN's sliding-window expiry on every successful sale.
+    if (sessionUser && pin) {
+      writeCachedPin(sessionUser.id, pin, sellControls.pinMemoryMinutes);
+    }
     setSellResponse(res.data);
     setSellStep('done');
+  };
+
+  const submitSell = async () => {
+    if (!selectedId) {
+      setSellError('בחרו לקוח לפני המכירה.');
+      return;
+    }
+    // Settings-driven field validation. The server re-validates; this just
+    // avoids round-tripping for an obviously incomplete submit.
+    if (sellControls.requireReceiptNumberOnPos && receiptNumber.trim() === '') {
+      setSellError('יש להזין את מספר הקבלה לפני המכירה.');
+      return;
+    }
+    if (!nameOnReceiptChecked) {
+      setSellError('יש לסמן שרשמתם את שם הלקוח על הקבלה לפני המכירה.');
+      return;
+    }
+    if (sellControls.requireSellerPin) {
+      const cached = sessionUser ? readCachedPin(sessionUser.id) : null;
+      if (cached) {
+        await executeSell(cached);
+      } else {
+        // Defer the call — the PIN modal opens, collects the code, then
+        // resumes via onPinModalConfirm.
+        setSellError(null);
+        setPinModalOpen(true);
+      }
+    } else {
+      await executeSell(undefined);
+    }
+  };
+
+  const onPinModalConfirm = async (pin: string) => {
+    setPinModalOpen(false);
+    await executeSell(pin);
+  };
+
+  // "Switch cashier" — clears the in-tab PIN cache so the next sale prompts
+  // again. Useful when two cashiers share a device mid-shift.
+  const switchCashier = () => {
+    if (sessionUser) clearCachedPin(sessionUser.id);
+    setSellError(null);
   };
 
   // Affordance from the Customer detail screen ("no active card" branch): sell
@@ -599,6 +753,23 @@ export function PosApp() {
         {screen === 'sell' && <Sell />}
         {screen === 'scan' && <Scan />}
       </main>
+      {pinModalOpen && sessionUser && (
+        <SellerPinModal
+          firstName={sessionUser.firstName}
+          length={sellControls.pinLength}
+          onCancel={() => {
+            setPinModalOpen(false);
+            setSellError(null);
+          }}
+          onConfirm={(pin) => void onPinModalConfirm(pin)}
+        />
+      )}
+      {selfPinModalOpen && (
+        <SelfPinModal
+          length={sellControls.pinLength}
+          onClose={() => setSelfPinModalOpen(false)}
+        />
+      )}
     </>
   );
 
@@ -653,12 +824,59 @@ export function PosApp() {
     ];
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
-        <div>
-          <div style={{ fontSize: 24, fontWeight: 600 }}>
-            {greetingFor(new Date())}
-            {sessionUser ? `, ${sessionUser.firstName}` : ''}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'flex-start',
+            justifyContent: 'space-between',
+            gap: 12,
+            flexWrap: 'wrap',
+          }}
+        >
+          <div>
+            <div style={{ fontSize: 24, fontWeight: 600 }}>
+              {greetingFor(new Date())}
+              {sessionUser ? `, ${sessionUser.firstName}` : ''}
+            </div>
+            <div style={{ color: MUTED, marginTop: 4 }}>{hebrewDate(new Date())}</div>
           </div>
-          <div style={{ color: MUTED, marginTop: 4 }}>{hebrewDate(new Date())}</div>
+          {sellControls.requireSellerPin && (
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                onClick={switchCashier}
+                title="מחק את הקוד שנזכר בדפדפן כדי שהקופאי הבא יזין את שלו"
+                style={{
+                  border: '1.5px solid #e9e0d9',
+                  background: '#fff',
+                  color: MUTED,
+                  borderRadius: 10,
+                  padding: '8px 14px',
+                  fontWeight: 600,
+                  fontSize: 13,
+                  cursor: 'pointer',
+                }}
+              >
+                החלף קופאי
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelfPinModalOpen(true)}
+                style={{
+                  border: '1.5px solid #e9e0d9',
+                  background: '#fff',
+                  color: MUTED,
+                  borderRadius: 10,
+                  padding: '8px 14px',
+                  fontWeight: 600,
+                  fontSize: 13,
+                  cursor: 'pointer',
+                }}
+              >
+                ניהול הקוד שלי
+              </button>
+            </div>
+          )}
         </div>
         <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
           <Stat label="כניסות היום" value="38" />
@@ -1141,6 +1359,18 @@ export function PosApp() {
                 autoComplete="email"
               />
             </div>
+            {!formRules.requireEmail && (
+              <div
+                style={{
+                  fontSize: 12.5,
+                  color: MUTED,
+                  marginTop: 6,
+                  lineHeight: 1.4,
+                }}
+              >
+                {sellControls.emailNudgeText}
+              </div>
+            )}
 
             <NewCustomerExtras
               open={newExtrasOpen}
@@ -1520,6 +1750,68 @@ export function PosApp() {
             <div style={{ color: MUTED, fontSize: 14 }}>
               החיוב מתבצע בקופה החיצונית. לאחר אישור התשלום, לחצו "אושר".
             </div>
+
+            {sellControls.requireReceiptNumberOnPos && (
+              <div style={{ marginTop: 18 }}>
+                <label
+                  htmlFor="pos-receipt-number"
+                  style={{
+                    display: 'block',
+                    fontSize: 13.5,
+                    color: MUTED,
+                    marginBottom: 6,
+                    fontWeight: 600,
+                  }}
+                >
+                  מספר קבלה *
+                </label>
+                <input
+                  id="pos-receipt-number"
+                  value={receiptNumber}
+                  onChange={(e) => setReceiptNumber(e.target.value)}
+                  inputMode="text"
+                  autoComplete="off"
+                  placeholder="מספר הקבלה שהדפסת בקופה"
+                  disabled={sellSubmitting}
+                  style={{
+                    width: '100%',
+                    fontSize: 16,
+                    padding: '12px 14px',
+                    border: '1.5px solid #e9e0d9',
+                    borderRadius: 10,
+                    background: '#fff',
+                    outline: 'none',
+                    boxSizing: 'border-box',
+                  }}
+                />
+              </div>
+            )}
+
+            <label
+              style={{
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: 10,
+                marginTop: 14,
+                padding: '10px 12px',
+                border: '1.5px solid #e9e0d9',
+                borderRadius: 10,
+                background: '#fffaf5',
+                cursor: 'pointer',
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={nameOnReceiptChecked}
+                onChange={(e) => setNameOnReceiptChecked(e.target.checked)}
+                disabled={sellSubmitting}
+                style={{ marginTop: 3 }}
+              />
+              <span style={{ fontSize: 14, color: INK, lineHeight: 1.4 }}>
+                {sellControls.nameOnReceiptLabel}
+              </span>
+            </label>
+
             <div style={{ fontWeight: 600, margin: '18px 0 10px' }}>הלקוח שולם בקופה?</div>
             {sellError && (
               <div
@@ -1548,11 +1840,12 @@ export function PosApp() {
                 style={{
                   ...primaryBtn,
                   flex: 1,
-                  opacity: sellSubmitting ? 0.6 : 1,
-                  cursor: sellSubmitting ? 'default' : 'pointer',
+                  opacity: sellSubmitting || !nameOnReceiptChecked ? 0.6 : 1,
+                  cursor:
+                    sellSubmitting || !nameOnReceiptChecked ? 'not-allowed' : 'pointer',
                 }}
                 onClick={() => void submitSell()}
-                disabled={sellSubmitting}
+                disabled={sellSubmitting || !nameOnReceiptChecked}
               >
                 {sellSubmitting ? 'יוצר…' : 'אושר'}
               </button>
@@ -1881,4 +2174,309 @@ export function PosApp() {
       </div>
     );
   }
+}
+
+// ---------------------------------------------------------------------------
+// SellerPinModal — prompts the cashier for their attribution PIN before a
+// sale completes. The cached PIN lives in module memory (sellerPinCache);
+// this modal only opens when the cache has no entry for the current user.
+// ---------------------------------------------------------------------------
+
+function SellerPinModal({
+  firstName,
+  length,
+  onCancel,
+  onConfirm,
+}: {
+  firstName: string;
+  length: number;
+  onCancel: () => void;
+  onConfirm: (pin: string) => void;
+}) {
+  const [pin, setPin] = useState('');
+  const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+  const submit = () => {
+    if (pin.length === length) onConfirm(pin);
+  };
+  return (
+    <div
+      onClick={onCancel}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(45,52,54,0.45)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 20,
+        zIndex: 60,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: '#fff',
+          borderRadius: 16,
+          boxShadow: SHADOW,
+          padding: 24,
+          width: 380,
+          maxWidth: '100%',
+          textAlign: 'center',
+        }}
+      >
+        <div style={{ fontSize: 20, fontWeight: 600, color: INK }}>
+          היי {firstName}, הזן את הקוד האישי שלך
+        </div>
+        <div style={{ fontSize: 13, color: MUTED, marginTop: 8 }}>
+          הקוד יישמר בדפדפן זה למשך זמן הזיכרון שהוגדר. ניתן לאפס בכפתור "החלף קופאי".
+        </div>
+        <input
+          ref={inputRef}
+          type="password"
+          inputMode="numeric"
+          autoComplete="off"
+          value={pin}
+          onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, length))}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') submit();
+          }}
+          maxLength={length}
+          placeholder={'•'.repeat(length)}
+          style={{
+            width: '100%',
+            fontSize: 32,
+            textAlign: 'center',
+            letterSpacing: 14,
+            padding: '14px 0',
+            margin: '18px 0',
+            border: '1.5px solid #e9e0d9',
+            borderRadius: 10,
+            background: '#faf7f3',
+            outline: 'none',
+            fontFamily: 'ui-monospace, monospace',
+            boxSizing: 'border-box',
+          }}
+        />
+        <div style={{ display: 'flex', gap: 10 }}>
+          <button type="button" onClick={onCancel} style={{ ...ghostBtn, flex: 1 }}>
+            ביטול
+          </button>
+          <button
+            type="button"
+            onClick={submit}
+            disabled={pin.length !== length}
+            style={{
+              ...primaryBtn,
+              flex: 1,
+              opacity: pin.length === length ? 1 : 0.6,
+              cursor: pin.length === length ? 'pointer' : 'not-allowed',
+            }}
+          >
+            המשך
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// SelfPinModal — cashier sets or changes their own PIN. The server requires
+// the current password as a fresh-auth gate so a stolen session can't
+// silently rotate the PIN. Shows current PIN status before the form.
+// ---------------------------------------------------------------------------
+
+function SelfPinModal({ length, onClose }: { length: number; onClose: () => void }) {
+  const [status, setStatus] = useState<{ exists: boolean; locked: boolean } | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [pin, setPin] = useState('');
+  const [password, setPassword] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const res = await getMyPinStatus();
+      if (cancelled) return;
+      if (res.ok) setStatus({ exists: res.data.exists, locked: res.data.locked });
+      else setLoadError(res.error);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const submit = async () => {
+    setError(null);
+    setSuccess(false);
+    if (!/^\d+$/.test(pin) || pin.length !== length) {
+      setError(`הקוד חייב להיות בדיוק ${length} ספרות.`);
+      return;
+    }
+    if (password.length === 0) {
+      setError('הזן את סיסמת המשתמש שלך כדי לאשר.');
+      return;
+    }
+    setSubmitting(true);
+    console.info('[pos self-pin] submit');
+    const res = await setMyPin(pin, password);
+    setSubmitting(false);
+    if (!res.ok) {
+      console.warn('[pos self-pin] failed', { error: res.error });
+      if (res.error === 'invalid_password') {
+        setError('סיסמה שגויה.');
+      } else if (res.error === 'pin_wrong_length') {
+        setError(`הקוד חייב להיות בדיוק ${length} ספרות לפי ההגדרות.`);
+      } else if (res.error === 'invalid_body') {
+        setError('הקוד צריך להכיל ספרות בלבד.');
+      } else {
+        setError('תקלה זמנית. נסו שוב.');
+      }
+      return;
+    }
+    console.info('[pos self-pin] success');
+    setSuccess(true);
+    setPin('');
+    setPassword('');
+    setStatus({ exists: true, locked: false });
+    // Note: we intentionally do NOT cache the freshly-set PIN here — the
+    // user already knows it and the next sale will prompt once, which
+    // doubles as a confirmation that they entered the right code.
+  };
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(45,52,54,0.45)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 20,
+        zIndex: 60,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: '#fff',
+          borderRadius: 16,
+          boxShadow: SHADOW,
+          padding: 24,
+          width: 420,
+          maxWidth: '100%',
+        }}
+      >
+        <div style={{ fontSize: 20, fontWeight: 600, color: INK }}>הקוד האישי שלי</div>
+        <div style={{ fontSize: 13, color: MUTED, marginTop: 6, marginBottom: 14 }}>
+          הקוד מצורף לכל מכירה ומאפשר לזהות מי מכר כל כרטיסייה. אורך הקוד: {length} ספרות.
+        </div>
+        {loadError && (
+          <div style={{ color: '#a23a3a', fontSize: 13, marginBottom: 12 }}>
+            לא ניתן לטעון את סטטוס הקוד הנוכחי.
+          </div>
+        )}
+        {status && (
+          <div
+            style={{
+              padding: 10,
+              borderRadius: 10,
+              background: status.exists ? '#f0f7f1' : '#faf7f3',
+              border: '1px solid #e9e0d9',
+              fontSize: 13.5,
+              color: status.exists ? '#3a7d5a' : MUTED,
+              marginBottom: 14,
+            }}
+          >
+            {status.locked
+              ? 'הקוד נעול לאחר מספר ניסיונות שגויים. פנה למנהל לשחרור.'
+              : status.exists
+                ? 'מוגדר קוד אישי. ניתן לשנותו כאן.'
+                : 'אין קוד מוגדר. כדי למכור כרטיסיות יש להגדיר קוד.'}
+          </div>
+        )}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <label style={{ fontSize: 13.5, color: MUTED }}>
+            קוד חדש ({length} ספרות)
+            <input
+              type="password"
+              inputMode="numeric"
+              autoComplete="off"
+              value={pin}
+              onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, length))}
+              maxLength={length}
+              disabled={submitting}
+              style={{
+                width: '100%',
+                fontSize: 18,
+                padding: '10px 12px',
+                marginTop: 4,
+                border: '1.5px solid #e9e0d9',
+                borderRadius: 10,
+                background: '#fff',
+                outline: 'none',
+                boxSizing: 'border-box',
+                fontFamily: 'ui-monospace, monospace',
+                letterSpacing: 6,
+              }}
+            />
+          </label>
+          <label style={{ fontSize: 13.5, color: MUTED }}>
+            סיסמת המשתמש שלך (לאישור)
+            <input
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              disabled={submitting}
+              style={{
+                width: '100%',
+                fontSize: 15,
+                padding: '10px 12px',
+                marginTop: 4,
+                border: '1.5px solid #e9e0d9',
+                borderRadius: 10,
+                background: '#fff',
+                outline: 'none',
+                boxSizing: 'border-box',
+              }}
+            />
+          </label>
+        </div>
+        {error && (
+          <div role="alert" style={{ color: '#a23a3a', fontSize: 13.5, marginTop: 10 }}>
+            {error}
+          </div>
+        )}
+        {success && (
+          <div style={{ color: '#3a7d5a', fontSize: 13.5, marginTop: 10 }}>הקוד נשמר.</div>
+        )}
+        <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
+          <button type="button" onClick={onClose} style={{ ...ghostBtn, flex: 1 }}>
+            סגירה
+          </button>
+          <button
+            type="button"
+            onClick={() => void submit()}
+            disabled={submitting}
+            style={{
+              ...primaryBtn,
+              flex: 1,
+              opacity: submitting ? 0.6 : 1,
+              cursor: submitting ? 'not-allowed' : 'pointer',
+            }}
+          >
+            {submitting ? 'שומר…' : 'שמירה'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }

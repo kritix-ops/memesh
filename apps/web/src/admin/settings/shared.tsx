@@ -50,6 +50,16 @@ export function humanizeSettingsError(code: string): string {
   if (code === 'sms_low_entries_out_of_range') return 'סף כניסות נמוכות חייב להיות בין 0 ל-100';
   if (code === 'sms_quiet_minutes_out_of_range') return 'שעת שקט לא תקינה';
   if (code === 'expiry_badge_out_of_range') return 'סף תג פג בקרוב בין 0 ל-365 ימים';
+  if (code === 'pin_length_out_of_range') return 'אורך הקוד האישי חייב להיות בין 3 ל-12 ספרות';
+  if (code === 'pin_memory_out_of_range') return 'זיכרון הקוד חייב להיות בין דקה ל-60 דקות';
+  if (code === 'pin_max_failures_out_of_range') return 'מספר הניסיונות המותרים חייב להיות בין 1 ל-10';
+  if (code === 'pin_lockout_out_of_range') return 'משך הנעילה חייב להיות בין דקה ל-60 דקות';
+  if (code === 'pos_name_on_receipt_label_length') return 'הטקסט של תיבת הסימון חייב לכלול בין תו אחד ל-200 תווים';
+  if (code === 'pos_email_nudge_text_length') return 'טקסט עידוד האימייל ארוך מ-500 תווים';
+  if (code === 'email_otp_subject_length') return 'נושא המייל חייב לכלול בין תו אחד ל-200 תווים';
+  if (code === 'email_otp_body_template_length') return 'תוכן המייל ארוך מ-2,000 תווים';
+  if (code === 'email_otp_body_template_unknown_placeholder')
+    return 'בתוכן המייל יש תווי מיקום לא חוקיים. ניתן להשתמש רק ב-{{firstName}} ו-{{code}}.';
   if (code === 'no_changes') return 'לא בוצעו שינויים';
   if (code === 'invalid_body') return 'נתונים לא תקינים. בדקו ונסו שוב.';
   if (code === 'forbidden') return 'רק אדמין יכול לערוך הגדרות.';
