@@ -182,3 +182,21 @@ test('POST /webhooks/woocommerce/order without headers returns 503 in tests (no 
   });
   assert.equal(res.statusCode, 503);
 });
+
+// ---------------------------------------------------------------------------
+// /cron/wc-reconcile — structural HTTP gates only. The reconciliation
+// pipeline itself is covered in src/lib/wc-reconciliation.test.ts.
+// ---------------------------------------------------------------------------
+
+test('GET /cron/wc-reconcile returns 503 in tests (no CRON_SECRET)', async () => {
+  // CRON_SECRET is unset in the test env, so the route hits the production
+  // guard before any auth comparison and 503s. With it set, missing or
+  // wrong Authorization moves the response to 401.
+  const res = await app.inject({ method: 'GET', url: '/cron/wc-reconcile' });
+  assert.equal(res.statusCode, 503);
+});
+
+test('GET /cron/wc-reconcile rejects POST (Vercel Cron uses GET)', async () => {
+  const res = await app.inject({ method: 'POST', url: '/cron/wc-reconcile' });
+  assert.equal(res.statusCode, 404);
+});

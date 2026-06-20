@@ -6,5 +6,8 @@
   "rewrites": [
     { "source": "/api/:path*", "destination": "/api/server" },
     { "source": "/((?!assets/|fonts/|favicon|manifest|robots).*)", "destination": "/index.html" }
+  ],
+  "crons": [
+    { "path": "/api/cron/wc-reconcile", "schedule": "0 * * * *" }
   ]
 }

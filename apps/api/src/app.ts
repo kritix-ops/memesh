@@ -13,6 +13,7 @@ import { customerAuthRoutes } from './routes/customer-auth.js';
 import { customersRoutes } from './routes/customers.js';
 import { meRoutes } from './routes/me.js';
 import { punchRoutes } from './routes/punch.js';
+import { cronWcReconcileRoutes } from './routes/cron-wc-reconcile.js';
 import { reportsRoutes } from './routes/reports.js';
 import { staffRoutes } from './routes/staff.js';
 import { webhooksWcRoutes } from './routes/webhooks-wc.js';
@@ -56,6 +57,7 @@ export const buildApp = async (): Promise<FastifyInstance> => {
   await fastify.register(adminRoutes);
   await fastify.register(reportsRoutes);
   await fastify.register(webhooksWcRoutes);
+  await fastify.register(cronWcReconcileRoutes);
 
   fastify.get('/health', async () => ({
     status: 'ok',
