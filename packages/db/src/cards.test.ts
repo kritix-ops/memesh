@@ -1094,3 +1094,84 @@ test('editCard logs a staff action with a Hebrew diff summary', async () => {
   assert.match(audit!.summary, /ללא תפוגה/);
   assert.match(audit!.summary, /כניסות 12→30/);
 });
+
+// ---------------------------------------------------------------------------
+// Receipt number + seller attribution (Yanay 2026-06-20)
+// ---------------------------------------------------------------------------
+
+test('createPunchCard records receiptNumber + soldBy when provided', async () => {
+  const db = await freshDb();
+  const customer = await makeCustomer(db);
+  const cashier = await makeStaff(db, 'cashier');
+
+  const card = await createPunchCard(db, resolver, {
+    customerId: customer.id,
+    receiptNumber: '12345',
+    soldBy: cashier,
+  });
+  assert.equal(card.receiptNumber, '12345');
+  assert.equal(card.soldBy, cashier);
+});
+
+test('createPunchCard rejects a duplicate receiptNumber so re-use of a till receipt cannot mint two cards', async () => {
+  const db = await freshDb();
+  const customer = await makeCustomer(db);
+  const cashier = await makeStaff(db, 'cashier');
+  await createPunchCard(db, resolver, {
+    customerId: customer.id,
+    receiptNumber: 'R-7',
+    soldBy: cashier,
+  });
+  await assert.rejects(
+    () =>
+      createPunchCard(db, resolver, {
+        customerId: customer.id,
+        receiptNumber: 'R-7',
+        soldBy: cashier,
+      }),
+    /unique|duplicate/i,
+  );
+});
+
+test('createPunchCard allows multiple null receiptNumbers (historical + admin-issued cards)', async () => {
+  const db = await freshDb();
+  const customer = await makeCustomer(db);
+  // Two cards without receiptNumber must coexist — Postgres treats NULL as
+  // distinct in UNIQUE, so the partial-index-style behavior comes free.
+  const a = await createPunchCard(db, resolver, { customerId: customer.id });
+  const b = await createPunchCard(db, resolver, { customerId: customer.id });
+  assert.equal(a.receiptNumber, null);
+  assert.equal(b.receiptNumber, null);
+});
+
+test('cardDetail surfaces soldBy + soldByFirstName + soldByLastName', async () => {
+  const db = await freshDb();
+  const customer = await makeCustomer(db);
+  const cashier = await makeStaff(db, 'cashier');
+  const card = await createPunchCard(db, resolver, {
+    customerId: customer.id,
+    receiptNumber: 'R-9001',
+    soldBy: cashier,
+  });
+  const detail = await cardDetail(db, card.id);
+  assert.ok(detail);
+  assert.equal(detail.card.receiptNumber, 'R-9001');
+  assert.equal(detail.card.soldBy, cashier);
+  assert.equal(detail.card.soldByFirstName, 'Test');
+  assert.equal(detail.card.soldByLastName, 'Staff');
+});
+
+test('listCards search matches receipt_number so Yanay can drill into a suspect till receipt', async () => {
+  const db = await freshDb();
+  const customer = await makeCustomer(db);
+  const cashier = await makeStaff(db, 'cashier');
+  await createPunchCard(db, resolver, {
+    customerId: customer.id,
+    receiptNumber: '99887766',
+    soldBy: cashier,
+  });
+  const results = await listCards(db, { q: '99887' });
+  assert.equal(results.length, 1);
+  assert.equal(results[0]?.receiptNumber, '99887766');
+  assert.equal(results[0]?.soldByFirstName, 'Test');
+});

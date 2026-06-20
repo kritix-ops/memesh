@@ -32,6 +32,19 @@ export const punchCards = pgTable(
     // Non-null = created_at + validityDays.
     expiresAt: timestamp('expires_at', { withTimezone: true }),
     source: punchCardSourceEnum('source').notNull().default('pos'),
+    // Receipt number printed by the AccuPOS register at the time of sale.
+    // Required at the API layer for source='pos' (settings-driven); kept
+    // nullable in the schema so historical rows from before the requirement
+    // stay valid. UNIQUE at the DB level — multiple NULLs are allowed under
+    // Postgres unique semantics, so historical NULL rows don't collide while
+    // every recorded receipt number is enforced unique. Reusing the same
+    // number twice is the lazy version of cashier-fraud (issuing a card
+    // without ringing it up) and the constraint catches it for free.
+    receiptNumber: varchar('receipt_number', { length: 64 }).unique(),
+    // Cashier who issued the card, attributed by the per-sale PIN entered
+    // at the till. Nullable for historical rows and for online/admin-issued
+    // cards where there is no "selling" cashier.
+    soldBy: uuid('sold_by').references(() => staff.id),
     cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
     cancelledBy: uuid('cancelled_by').references(() => staff.id),
     cancelReason: text('cancel_reason'),
@@ -43,6 +56,10 @@ export const punchCards = pgTable(
     // wc_order_id = ? per order, hourly. Without the index this becomes a
     // full table scan once `punch_cards` grows past a few thousand rows.
     index('punch_cards_wc_order_id_idx').on(table.wcOrderId),
+    // Reports surface (next phase): "cards sold by cashier X" — admin
+    // dashboard, performance metrics. Indexed up-front so the dashboard
+    // doesn't full-scan when it ships.
+    index('punch_cards_sold_by_idx').on(table.soldBy),
   ],
 );
 

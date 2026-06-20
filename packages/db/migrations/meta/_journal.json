@@ -43,6 +43,13 @@
       "when": 1781909661258,
       "tag": "0005_dizzy_arclight",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1781966580294,
+      "tag": "0006_swift_mystique",
+      "breakpoints": true
     }
   ]
 }
