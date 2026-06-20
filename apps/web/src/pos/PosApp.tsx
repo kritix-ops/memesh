@@ -879,8 +879,8 @@ export function PosApp() {
           )}
         </div>
         <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
-          <Stat label="כניסות היום" value="38" />
-          <Stat label="כרטיסיות שנמכרו היום" value="5" />
+          <Stat label="כניסות היום" value="0" />
+          <Stat label="כרטיסיות שנמכרו היום" value="0" />
         </div>
         <div
           style={{
