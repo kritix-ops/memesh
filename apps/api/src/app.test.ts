@@ -200,3 +200,83 @@ test('GET /cron/wc-reconcile rejects POST (Vercel Cron uses GET)', async () => {
   const res = await app.inject({ method: 'POST', url: '/cron/wc-reconcile' });
   assert.equal(res.statusCode, 404);
 });
+
+// ---------------------------------------------------------------------------
+// Cashier PIN + email-OTP routes (Yanay 2026-06-20). Auth-gate smoke tests
+// only — the underlying flow is covered by db unit tests
+// (staff-pins.test.ts, email-otp.test.ts) and route behavior is exercised
+// manually in QA per the plan's testing section.
+// ---------------------------------------------------------------------------
+
+test('GET /staff/:id/pin without auth returns 401', async () => {
+  const res = await app.inject({
+    method: 'GET',
+    url: '/staff/00000000-0000-0000-0000-000000000000/pin',
+  });
+  assert.equal(res.statusCode, 401);
+});
+
+test('PUT /staff/:id/pin without auth returns 401', async () => {
+  const res = await app.inject({
+    method: 'PUT',
+    url: '/staff/00000000-0000-0000-0000-000000000000/pin',
+    payload: { pin: '123' },
+  });
+  assert.equal(res.statusCode, 401);
+});
+
+test('POST /staff/:id/pin/generate without auth returns 401', async () => {
+  const res = await app.inject({
+    method: 'POST',
+    url: '/staff/00000000-0000-0000-0000-000000000000/pin/generate',
+  });
+  assert.equal(res.statusCode, 401);
+});
+
+test('DELETE /staff/:id/pin without auth returns 401', async () => {
+  const res = await app.inject({
+    method: 'DELETE',
+    url: '/staff/00000000-0000-0000-0000-000000000000/pin',
+  });
+  assert.equal(res.statusCode, 401);
+});
+
+test('POST /staff/:id/pin/unlock without auth returns 401', async () => {
+  const res = await app.inject({
+    method: 'POST',
+    url: '/staff/00000000-0000-0000-0000-000000000000/pin/unlock',
+  });
+  assert.equal(res.statusCode, 401);
+});
+
+test('GET /me/pin without auth returns 401', async () => {
+  const res = await app.inject({ method: 'GET', url: '/me/pin' });
+  assert.equal(res.statusCode, 401);
+});
+
+test('PUT /me/pin without auth returns 401', async () => {
+  const res = await app.inject({
+    method: 'PUT',
+    url: '/me/pin',
+    payload: { pin: '123', password: 'x' },
+  });
+  assert.equal(res.statusCode, 401);
+});
+
+test('POST /auth/customer/request-email-otp rejects an invalid email with 400', async () => {
+  const res = await app.inject({
+    method: 'POST',
+    url: '/auth/customer/request-email-otp',
+    payload: { email: 'not-an-email' },
+  });
+  assert.equal(res.statusCode, 400);
+});
+
+test('POST /auth/customer/verify-email-otp rejects an invalid body with 400', async () => {
+  const res = await app.inject({
+    method: 'POST',
+    url: '/auth/customer/verify-email-otp',
+    payload: { email: 'noa@example.com', code: 'abc' },
+  });
+  assert.equal(res.statusCode, 400);
+});

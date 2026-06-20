@@ -48,6 +48,15 @@ const envSchema = z.object({
   SMS_019_TOKEN: z.string().optional(),
   SMS_019_SOURCE: z.string().max(11).optional(),
   SMS_019_ENDPOINT: z.string().url().optional(),
+  // Email provider selection for the customer email-OTP fallback. 'console'
+  // (default) logs each message to stdout — fine for dev and the first
+  // production boot before the Resend account/domain are verified. 'resend'
+  // is the live provider; requires RESEND_API_KEY + EMAIL_FROM (a verified
+  // sender on the Memesh domain). See _plans/2026-06-20-seller-attribution-
+  // and-email-fallback.md for the integration plan.
+  EMAIL_PROVIDER: z.enum(['console', 'resend']).default('console'),
+  RESEND_API_KEY: z.string().optional(),
+  EMAIL_FROM: z.string().optional(),
 });
 
 export const env = envSchema.parse(process.env);

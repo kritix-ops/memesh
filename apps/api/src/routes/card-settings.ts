@@ -74,6 +74,54 @@ const updateBodySchema = z.object({
     .optional(),
   requireEmailOnNewCustomer: z.boolean().optional(),
   requireChildOnNewCustomer: z.boolean().optional(),
+  // Cashier anti-fraud controls
+  requireReceiptNumberOnPos: z.boolean().optional(),
+  requireSellerPin: z.boolean().optional(),
+  pinLength: z.number().int().min(L.pinLength.min).max(L.pinLength.max).optional(),
+  pinMemoryMinutes: z
+    .number()
+    .int()
+    .min(L.pinMemoryMinutes.min)
+    .max(L.pinMemoryMinutes.max)
+    .optional(),
+  pinMaxFailures: z
+    .number()
+    .int()
+    .min(L.pinMaxFailures.min)
+    .max(L.pinMaxFailures.max)
+    .optional(),
+  pinLockoutMinutes: z
+    .number()
+    .int()
+    .min(L.pinLockoutMinutes.min)
+    .max(L.pinLockoutMinutes.max)
+    .optional(),
+  // Editable customer-facing copy
+  posNameOnReceiptLabel: z
+    .string()
+    .trim()
+    .min(L.posNameOnReceiptLabel.minLength)
+    .max(L.posNameOnReceiptLabel.maxLength)
+    .optional(),
+  posEmailNudgeText: z
+    .string()
+    .trim()
+    .min(L.posEmailNudgeText.minLength)
+    .max(L.posEmailNudgeText.maxLength)
+    .optional(),
+  emailOtpSubject: z
+    .string()
+    .trim()
+    .min(L.emailOtpSubject.minLength)
+    .max(L.emailOtpSubject.maxLength)
+    .optional(),
+  // Body template uses .max only (no trim) so the user's leading whitespace
+  // and trailing newlines are preserved exactly as written.
+  emailOtpBodyTemplate: z
+    .string()
+    .min(L.emailOtpBodyTemplate.minLength)
+    .max(L.emailOtpBodyTemplate.maxLength)
+    .optional(),
 });
 
 const validationStatus: Record<CardSettingsValidationError, number> = {
@@ -92,6 +140,15 @@ const validationStatus: Record<CardSettingsValidationError, number> = {
   sms_low_entries_out_of_range: 400,
   sms_quiet_minutes_out_of_range: 400,
   expiry_badge_out_of_range: 400,
+  pin_length_out_of_range: 400,
+  pin_memory_out_of_range: 400,
+  pin_max_failures_out_of_range: 400,
+  pin_lockout_out_of_range: 400,
+  pos_name_on_receipt_label_length: 400,
+  pos_email_nudge_text_length: 400,
+  email_otp_subject_length: 400,
+  email_otp_body_template_length: 400,
+  email_otp_body_template_unknown_placeholder: 400,
   no_changes: 409,
 };
 
@@ -177,6 +234,26 @@ export const cardSettingsRoutes: FastifyPluginAsync = async (fastify) => {
     async () => {
       const settings = await getCardSettings(db);
       return { min: settings.minCompanions, max: settings.maxCompanions };
+    },
+  );
+
+  // Sell-flow controls — receipt-number + PIN policy + the editable
+  // customer-facing copy. Exposed at staff scope so the POS sell modal can
+  // render the right inputs and the right Hebrew labels without round-
+  // tripping through /admin/card-settings.
+  fastify.get(
+    '/pos/sell-controls',
+    { preHandler: requireRoleHook(...STAFF) },
+    async () => {
+      const settings = await getCardSettings(db);
+      return {
+        requireReceiptNumberOnPos: settings.requireReceiptNumberOnPos,
+        requireSellerPin: settings.requireSellerPin,
+        pinLength: settings.pinLength,
+        pinMemoryMinutes: settings.pinMemoryMinutes,
+        nameOnReceiptLabel: settings.posNameOnReceiptLabel,
+        emailNudgeText: settings.posEmailNudgeText,
+      };
     },
   );
 };

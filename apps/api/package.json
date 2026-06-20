@@ -23,6 +23,7 @@
     "@fastify/rate-limit": "^10.0.0",
     "@memesh/auth": "workspace:*",
     "@memesh/db": "workspace:*",
+    "@memesh/email": "workspace:*",
     "@memesh/qr-engine": "workspace:*",
     "@memesh/sms": "workspace:*",
     "drizzle-orm": "^0.36.0",

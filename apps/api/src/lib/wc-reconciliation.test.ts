@@ -43,11 +43,21 @@ async function freshDb() {
 function fakeOrder(over: {
   id: number;
   phone?: string;
+  email?: string | null;
   quantity?: number;
   sku?: string | null;
   status?: string;
   customer_id?: number;
 }): WcOrderSummary {
+  // Default email derived from id so each fake order has a unique address —
+  // mirrors the email-required gate added 2026-06-20. Pass email:null to
+  // exercise the email_required failure path.
+  const email =
+    over.email === undefined
+      ? `buyer-${over.id}@example.com`
+      : over.email === null
+        ? undefined
+        : over.email;
   return {
     id: over.id,
     status: over.status ?? 'completed',
@@ -55,6 +65,7 @@ function fakeOrder(over: {
     billing: {
       first_name: 'Test',
       last_name: 'Buyer',
+      ...(email !== undefined && { email }),
       phone: over.phone ?? `052-000-${String(over.id).padStart(4, '0')}`,
     },
     line_items: [
