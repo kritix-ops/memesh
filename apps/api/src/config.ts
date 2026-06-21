@@ -83,6 +83,14 @@ const envSchema = z.object({
   // https://staff.memesh.co.il (or admin.memesh.co.il — both apps detect
   // the token).
   STAFF_LOGIN_URL: z.string().url().default('http://localhost:5173'),
+  // Base URL of the customer personal area. The cards POST /cards post-sale
+  // SMS embeds this in the magic link as `${CUSTOMER_BASE_URL}/checkout-
+  // complete?token=<raw>` so the buyer can tap straight into their card
+  // without an OTP step (same target page the WooCommerce handoff lands on).
+  // Server-built, never trusted from client input, so a leaked SMS cannot
+  // redirect somewhere else. Dev default points at the customer Vite dev
+  // server; in prod set this to https://my.memesh.co.il.
+  CUSTOMER_BASE_URL: z.string().url().default('http://localhost:3030'),
 });
 
 export const env = envSchema.parse(process.env);

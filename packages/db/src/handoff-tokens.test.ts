@@ -71,6 +71,26 @@ test('mintHandoffToken stores a row and returns the raw token for the caller', a
   assert.equal(minted.expiresAt.getTime(), T0.getTime() + 5 * 60 * 1000);
 });
 
+test('mintHandoffToken accepts source: pos_sell and respects a custom ttlMs override', async () => {
+  const db = await freshDb();
+  const customerId = await seedCustomer(db);
+  const ttlMs = 24 * 60 * 60 * 1000;
+  const minted = await mintHandoffToken(db, {
+    customerId,
+    source: 'pos_sell',
+    orderRef: 'card-uuid-abc',
+    ttlMs,
+    now: T0,
+  });
+  assert.equal(minted.expiresAt.getTime(), T0.getTime() + ttlMs);
+  const res = await consumeHandoffToken(db, minted.raw, { now: plus(1_000) });
+  assert.equal(res.ok, true);
+  if (res.ok) {
+    assert.equal(res.customerId, customerId);
+    assert.equal(res.source, 'pos_sell');
+  }
+});
+
 test('consumeHandoffToken: valid token returns ok with customerId and marks the row consumed', async () => {
   const db = await freshDb();
   const customerId = await seedCustomer(db);

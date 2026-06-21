@@ -7,20 +7,30 @@ import {
   getCardSettings,
   getCustomerById,
   listCards,
+  mintHandoffToken,
   reassignCard,
   refundEntry,
   staff,
 } from '@memesh/db';
 import { verifyPassword } from '@memesh/auth';
+import { createHash } from 'node:crypto';
 import { and, eq, isNotNull } from 'drizzle-orm';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
+import { env } from '../config.js';
 import { requireRoleHook } from '../lib/auth-guards.js';
 import { envKeyResolver } from '../qr.js';
-import { sendMarketingSms } from '../lib/sms.js';
+import { buildPosSellSmsBody } from '../lib/post-sale-sms.js';
+import { smsProvider } from '../lib/sms.js';
 import { verifyStaffPin } from '../lib/staff-pin-repo.js';
 
 const STAFF = ['cashier', 'manager', 'admin'] as const;
+
+// pos_sell handoff tokens live longer than wc_checkout ones (24h vs 5min).
+// An SMS may sit unread on the customer's phone for hours — the link still
+// needs to work when they get around to it. Single-use still applies, so a
+// leaked SMS is good for at most one sign-in inside the window.
+const POS_SELL_HANDOFF_TTL_MS = 24 * 60 * 60 * 1000;
 
 const createBodySchema = z.object({
   customerId: z.string().uuid(),
@@ -169,23 +179,70 @@ export const cardsRoutes: FastifyPluginAsync = async (fastify) => {
       '[pos sell] created',
     );
 
-    // Fire-and-log marketing SMS after the sale. The wrapper enforces the
-    // smsOnPurchase setting, customer consent, and quiet hours. Failures
-    // never bubble up — the sale must not fail because SMS failed.
+    // Fire-and-log post-sale SMS with a magic link into the customer area.
+    // Failures never bubble up — the sale must not fail because SMS failed.
+    //
+    // THIS IS A TRANSACTIONAL SEND, NOT MARKETING. The customer just paid
+    // for the card; confirming "your card is ready, here is the link" is
+    // covered by the transactional exception in Israeli Comm. Act amend. 40
+    // (חוק התקשורת תיקון 40), so we deliberately bypass:
+    //   - `marketingConsentAt` (legal gate for marketing only)
+    //   - quiet hours (a customer at the desk wants confirmation NOW)
+    // What we DO honor:
+    //   - `smsOnPurchase` — operator master switch for "send any post-sale
+    //     SMS at all" (cost control, dev envs, brand preference).
+    //
+    // See _plans/2026-06-22-pos-sell-sms-magic-link.md for the design and
+    // the decision record that flipped this from marketing to transactional.
     void (async () => {
       try {
         const customer = await getCustomerById(db, parsed.data.customerId);
         if (!customer) return;
-        const expiryClause = card.expiresAt
-          ? `, תוקף עד ${card.expiresAt.toISOString().slice(0, 10)}`
-          : ' (ללא תפוגה)';
-        await sendMarketingSms({
-          to: customer.phone,
-          body: `הכרטיסייה שלך ב-Memesh נוצרה! ${card.totalEntries} כניסות${expiryClause}. מספר סידורי: ${card.serialNumber}`,
-          marketingConsentAt: customer.marketingConsentAt,
-          kind: 'purchase',
-          log: request.log,
+        const cardSettings = await getCardSettings(db);
+        if (!cardSettings.smsOnPurchase) {
+          request.log.info(
+            { cardId: card.id },
+            '[cards post-sale] skipped: smsOnPurchase disabled',
+          );
+          return;
+        }
+        const minted = await mintHandoffToken(db, {
+          customerId: customer.id,
+          source: 'pos_sell',
+          orderRef: card.id,
+          ttlMs: POS_SELL_HANDOFF_TTL_MS,
         });
+        const tokenHashPrefix = createHash('sha256')
+          .update(minted.raw)
+          .digest('hex')
+          .slice(0, 8);
+        request.log.info(
+          {
+            cardId: card.id,
+            customerId: customer.id,
+            tokenHashPrefix,
+            expiresAt: minted.expiresAt.toISOString(),
+          },
+          '[cards post-sale] minted handoff token',
+        );
+        const link = `${env.CUSTOMER_BASE_URL}/checkout-complete?token=${minted.raw}`;
+        const body = buildPosSellSmsBody({
+          totalEntries: card.totalEntries,
+          expiresAt: card.expiresAt,
+          link,
+        });
+        const res = await smsProvider.send({ to: customer.phone, body });
+        if (res.ok) {
+          request.log.info(
+            { cardId: card.id, tokenHashPrefix, providerId: res.id ?? null },
+            '[cards post-sale] sms sent',
+          );
+        } else {
+          request.log.warn(
+            { cardId: card.id, tokenHashPrefix, error: res.error },
+            '[cards post-sale] sms provider error',
+          );
+        }
       } catch (err) {
         request.log.warn({ err }, '[cards] post-sale SMS failed silently');
       }

@@ -2189,7 +2189,7 @@ function Sell({
           </div>
           <div style={{ fontSize: 22, fontWeight: 600, marginTop: 12 }}>הכרטיסייה נוצרה!</div>
           <div style={{ color: MUTED, fontSize: 14, marginTop: 6 }}>
-            הכרטיסייה זמינה בכרטיס הלקוח. שליחת ה-SMS עם ה-QR תיכנס בעדכון הבא.
+            הכרטיסייה זמינה בכרטיס הלקוח. נשלח ללקוח/ה SMS עם קישור אישי לצפייה בכרטיסייה.
           </div>
           <div style={{ display: 'flex', justifyContent: 'center', margin: '18px 0' }}>
             <MemeshQr

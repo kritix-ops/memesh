@@ -7,7 +7,13 @@ type AnyPgDatabase = PgDatabase<any, any, any>;
 
 const DEFAULT_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
-export type HandoffTokenSource = 'wc_checkout';
+// Sources that mint a customer_login_tokens row. Each value corresponds to
+// a distinct creation surface so we can audit + (later) rate-limit per source
+// without touching the others:
+//   - 'wc_checkout' — WordPress/WooCommerce checkout handoff (5-min TTL).
+//   - 'pos_sell'    — cashier-driven POS card sale → magic link in the
+//                     post-sale SMS (24-h TTL, set by the caller via ttlMs).
+export type HandoffTokenSource = 'wc_checkout' | 'pos_sell';
 
 /**
  * Generate a fresh handoff token. 32 random bytes rendered as base64url
