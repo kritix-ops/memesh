@@ -29,7 +29,8 @@ type SectionKey =
   | 'cancel'
   | 'sms'
   | 'operations'
-  | 'pos-controls';
+  | 'pos-controls'
+  | 'thankyou';
 
 const SECTIONS: { key: SectionKey; label: string }[] = [
   { key: 'pricing', label: 'כרטיסייה' },
@@ -38,6 +39,7 @@ const SECTIONS: { key: SectionKey; label: string }[] = [
   { key: 'sms', label: 'הודעות SMS' },
   { key: 'operations', label: 'חוויית קופה ולקוחות' },
   { key: 'pos-controls', label: 'קופה ובקרה' },
+  { key: 'thankyou', label: 'דף תודה' },
 ];
 
 const subNavStyle = (active: boolean): CSSProperties => ({
@@ -160,6 +162,9 @@ export function Settings() {
         )}
         {active === 'pos-controls' && (
           <PosControlsSection loaded={loaded} onSaved={onSaved} reload={reload} />
+        )}
+        {active === 'thankyou' && (
+          <ThankyouSection loaded={loaded} onSaved={onSaved} reload={reload} />
         )}
       </div>
     </div>
@@ -304,7 +309,9 @@ function PricingSection({
 }
 
 // ---------------------------------------------------------------------------
-// Mechanics — companions, lockout, grace
+// Mechanics — lockout + grace. The cashier picks how many entries to consume
+// per scan at the till (bounded by the card's remaining entries); no admin
+// cap on per-scan count today.
 // ---------------------------------------------------------------------------
 
 function MechanicsSection({
@@ -316,34 +323,24 @@ function MechanicsSection({
   onSaved: (next: CardSettings) => void;
   reload: () => Promise<void>;
 }) {
-  const [minC, setMinC] = useState(String(loaded.minCompanions));
-  const [maxC, setMaxC] = useState(String(loaded.maxCompanions));
   const [lockout, setLockout] = useState(String(loaded.sameDayLockoutMinutes));
   const [grace, setGrace] = useState(String(loaded.gracePeriodDays));
   const { submitting, error, flash, save } = useSectionSave(onSaved, reload);
 
   useEffect(() => {
-    setMinC(String(loaded.minCompanions));
-    setMaxC(String(loaded.maxCompanions));
     setLockout(String(loaded.sameDayLockoutMinutes));
     setGrace(String(loaded.gracePeriodDays));
   }, [loaded]);
 
   const dirty =
-    minC !== String(loaded.minCompanions) ||
-    maxC !== String(loaded.maxCompanions) ||
     lockout !== String(loaded.sameDayLockoutMinutes) ||
     grace !== String(loaded.gracePeriodDays);
 
   const submit = async () => {
     const patch: CardSettingsPatch = {};
-    const mn = Number(minC);
-    const mx = Number(maxC);
     const lk = Number(lockout);
     const gr = Number(grace);
-    if ([mn, mx, lk, gr].some((n) => !Number.isInteger(n))) return;
-    if (mn !== loaded.minCompanions) patch.minCompanions = mn;
-    if (mx !== loaded.maxCompanions) patch.maxCompanions = mx;
+    if ([lk, gr].some((n) => !Number.isInteger(n))) return;
     if (lk !== loaded.sameDayLockoutMinutes) patch.sameDayLockoutMinutes = lk;
     if (gr !== loaded.gracePeriodDays) patch.gracePeriodDays = gr;
     await save(patch, 'mechanics');
@@ -352,23 +349,9 @@ function MechanicsSection({
   return (
     <SectionShell
       title="כללי כרטיסייה"
-      description="כללים המוחלים בזמן ניקוב — מספר מלווים, נעילה בין ניקובים רצופים, ותקופת חסד שמאפשרת כניסה גם לאחר תאריך פג תוקף."
+      description="כללים המוחלים בזמן ניקוב — נעילה בין ניקובים רצופים ותקופת חסד שמאפשרת כניסה גם לאחר תאריך פג תוקף. הקופאי בוחר בעצמו כמה כניסות לנקב בכל סריקה, עד למספר הכניסות שנותרו בכרטיסייה."
     >
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: 14 }}>
-        <NumberField
-          label="מינימום מלווים"
-          value={minC}
-          onChange={setMinC}
-          disabled={submitting}
-          hint="לרוב 1."
-        />
-        <NumberField
-          label="מקסימום מלווים"
-          value={maxC}
-          onChange={setMaxC}
-          disabled={submitting}
-          hint="חייב להיות ≥ למינימום."
-        />
         <NumberField
           label="נעילה בין ניקובים"
           value={lockout}
@@ -838,6 +821,84 @@ function PosControlsSection({
           hint={'הגוף של המייל. ניתן להשתמש בתווי מיקום {{firstName}} ו-{{code}}. כל תו מיקום אחר ייגרום לשגיאה בשמירה.'}
           maxLength={2000}
           rows={8}
+        />
+      </div>
+      <SaveBar dirty={dirty} submitting={submitting} error={error} flash={flash} onSubmit={submit} />
+    </SectionShell>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// "Thank you" page after a WC checkout (my.memesh.co.il/checkout-complete).
+// Three editable strings — title, body, button text. The {{firstName}}
+// placeholder is substituted server-side; unknown placeholders are rejected
+// by the API at save time so a typo can't silently break the page.
+// ---------------------------------------------------------------------------
+function ThankyouSection({
+  loaded,
+  onSaved,
+  reload,
+}: {
+  loaded: CardSettings;
+  onSaved: (next: CardSettings) => void;
+  reload: () => Promise<void>;
+}) {
+  const [title, setTitle] = useState(loaded.checkoutThankyouTitle);
+  const [body, setBody] = useState(loaded.checkoutThankyouBody);
+  const [buttonText, setButtonText] = useState(loaded.checkoutThankyouButtonText);
+  const { submitting, error, flash, save } = useSectionSave(onSaved, reload);
+
+  useEffect(() => {
+    setTitle(loaded.checkoutThankyouTitle);
+    setBody(loaded.checkoutThankyouBody);
+    setButtonText(loaded.checkoutThankyouButtonText);
+  }, [loaded]);
+
+  const dirty =
+    title !== loaded.checkoutThankyouTitle ||
+    body !== loaded.checkoutThankyouBody ||
+    buttonText !== loaded.checkoutThankyouButtonText;
+
+  const submit = async () => {
+    const patch: CardSettingsPatch = {};
+    if (title.trim() !== loaded.checkoutThankyouTitle)
+      patch.checkoutThankyouTitle = title.trim();
+    if (body.trim() !== loaded.checkoutThankyouBody) patch.checkoutThankyouBody = body.trim();
+    if (buttonText.trim() !== loaded.checkoutThankyouButtonText)
+      patch.checkoutThankyouButtonText = buttonText.trim();
+    await save(patch, 'thankyou');
+  };
+
+  return (
+    <SectionShell
+      title="דף תודה לאחר רכישה"
+      description='הטקסטים שמופיעים על דף "תודה" באזור האישי (my.memesh.co.il) מיד אחרי שלקוח רוכש כרטיסייה באתר. ניתן להשתמש בתו המיקום {{firstName}} שייוחלף בשם הפרטי של הלקוח (במידה שאין שם — יוחלף ל"לקוח/ה").'
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <TextField
+          label="כותרת ראשית"
+          value={title}
+          onChange={setTitle}
+          disabled={submitting}
+          hint='הכותרת הגדולה שמופיעה בראש הכרטיס. דוגמה: "תודה רבה, {{firstName}}! 🎉"'
+          maxLength={120}
+        />
+        <TextAreaField
+          label="טקסט גוף"
+          value={body}
+          onChange={setBody}
+          disabled={submitting}
+          hint="המשפט שמופיע מתחת לכותרת. שני שורות כדי להישאר נעים ונקי."
+          maxLength={400}
+          rows={3}
+        />
+        <TextField
+          label="טקסט הכפתור"
+          value={buttonText}
+          onChange={setButtonText}
+          disabled={submitting}
+          hint='הטקסט על הכפתור הראשי שמוביל לאזור האישי. למשל: "לאזור האישי שלי".'
+          maxLength={60}
         />
       </div>
       <SaveBar dirty={dirty} submitting={submitting} error={error} flash={flash} onSubmit={submit} />

@@ -160,4 +160,4 @@ export const statusBadge = (s: CardStatus) => {
   return { text: 'פג תוקף', bg: '#ececec', color: '#9aa3a6' };
 };
 
-export const companionLabel = (n: number): string => (n === 1 ? 'מלווה אחד' : `${n} מלווים`);
+export const entriesLabel = (n: number): string => (n === 1 ? 'כניסה אחת' : `${n} כניסות`);

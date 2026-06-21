@@ -21,8 +21,6 @@ const updateBodySchema = z.object({
   totalEntries: z.number().int().min(L.totalEntries.min).max(L.totalEntries.max).optional(),
   pitchLabel: z.string().trim().min(L.pitchLabel.minLength).max(L.pitchLabel.maxLength).optional(),
   // Mechanics
-  minCompanions: z.number().int().min(L.minCompanions.min).max(L.minCompanions.max).optional(),
-  maxCompanions: z.number().int().min(L.maxCompanions.min).max(L.maxCompanions.max).optional(),
   sameDayLockoutMinutes: z
     .number()
     .int()
@@ -122,6 +120,25 @@ const updateBodySchema = z.object({
     .min(L.emailOtpBodyTemplate.minLength)
     .max(L.emailOtpBodyTemplate.maxLength)
     .optional(),
+  // Editable thank-you copy on my.memesh.co.il/checkout-complete. Title and
+  // button trim; body preserves whitespace so paragraph breaks survive.
+  checkoutThankyouTitle: z
+    .string()
+    .trim()
+    .min(L.checkoutThankyouTitle.minLength)
+    .max(L.checkoutThankyouTitle.maxLength)
+    .optional(),
+  checkoutThankyouBody: z
+    .string()
+    .min(L.checkoutThankyouBody.minLength)
+    .max(L.checkoutThankyouBody.maxLength)
+    .optional(),
+  checkoutThankyouButtonText: z
+    .string()
+    .trim()
+    .min(L.checkoutThankyouButtonText.minLength)
+    .max(L.checkoutThankyouButtonText.maxLength)
+    .optional(),
 });
 
 const validationStatus: Record<CardSettingsValidationError, number> = {
@@ -129,9 +146,6 @@ const validationStatus: Record<CardSettingsValidationError, number> = {
   validity_out_of_range: 400,
   entries_out_of_range: 400,
   pitch_length: 400,
-  min_companions_out_of_range: 400,
-  max_companions_out_of_range: 400,
-  companion_range_invalid: 400,
   lockout_out_of_range: 400,
   grace_out_of_range: 400,
   cancel_reason_length_out_of_range: 400,
@@ -149,6 +163,11 @@ const validationStatus: Record<CardSettingsValidationError, number> = {
   email_otp_subject_length: 400,
   email_otp_body_template_length: 400,
   email_otp_body_template_unknown_placeholder: 400,
+  checkout_thankyou_title_length: 400,
+  checkout_thankyou_title_unknown_placeholder: 400,
+  checkout_thankyou_body_length: 400,
+  checkout_thankyou_body_unknown_placeholder: 400,
+  checkout_thankyou_button_text_length: 400,
   no_changes: 409,
 };
 
@@ -223,17 +242,6 @@ export const cardSettingsRoutes: FastifyPluginAsync = async (fastify) => {
         allowCancelAfterFirstPunch: settings.allowCancelAfterFirstPunch,
         cancelRole: settings.cancelRole,
       };
-    },
-  );
-
-  // Companion limits — exposed so the POS modal's +/- buttons know the
-  // current min/max without admin scope.
-  fastify.get(
-    '/pos/companion-limits',
-    { preHandler: requireRoleHook(...STAFF) },
-    async () => {
-      const settings = await getCardSettings(db);
-      return { min: settings.minCompanions, max: settings.maxCompanions };
     },
   );
 

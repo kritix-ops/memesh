@@ -480,7 +480,7 @@ export interface EntriesReportRow {
   id: string;
   punchedAt: string;
   method: string;
-  companionCount: number;
+  entriesConsumed: number;
   refundedAt: string | null;
   refundReason: string | null;
   cardId: string;
@@ -522,7 +522,7 @@ export const entriesReport = async (
       id: punchCardEntries.id,
       punchedAt: punchCardEntries.punchedAt,
       method: punchCardEntries.method,
-      companionCount: punchCardEntries.companionCount,
+      entriesConsumed: punchCardEntries.entriesConsumed,
       refundedAt: punchCardEntries.refundedAt,
       refundReason: punchCardEntries.refundReason,
       cardId: punchCards.id,
@@ -560,7 +560,7 @@ export const entriesReport = async (
     id: r.id,
     punchedAt: r.punchedAt instanceof Date ? r.punchedAt.toISOString() : String(r.punchedAt),
     method: r.method,
-    companionCount: r.companionCount,
+    entriesConsumed: r.entriesConsumed,
     refundedAt:
       r.refundedAt instanceof Date ? r.refundedAt.toISOString() : (r.refundedAt as string | null),
     refundReason: r.refundReason,

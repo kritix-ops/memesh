@@ -43,7 +43,7 @@ export interface PunchCardEntry {
   punchCardId: string;
   punchedBy: string | null;
   method: string;
-  companionCount: number;
+  entriesConsumed: number;
   idempotencyKey: string | null;
   notes: string | null;
   punchedAt: string;

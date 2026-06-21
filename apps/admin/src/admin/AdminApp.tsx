@@ -1068,7 +1068,7 @@ function Cards() {
           const target = detail.entries.find((e) => e.id === refundEntryId);
           if (!target) return null;
           const summary = `${fmtDateTime(target.punchedAt)} · ${
-            target.companionCount === 1 ? 'מלווה אחד' : `${target.companionCount} מלווים`
+            target.entriesConsumed === 1 ? 'כניסה אחת' : `${target.entriesConsumed} כניסות`
           }`;
           return (
             <RefundEntryModal
@@ -1542,7 +1542,7 @@ function CardDetailBody({
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
                 <div style={{ color: MUTED, whiteSpace: 'nowrap' }}>
-                  {e.companionCount === 1 ? 'מלווה אחד' : `${e.companionCount} מלווים`}
+                  {e.entriesConsumed === 1 ? 'כניסה אחת' : `${e.entriesConsumed} כניסות`}
                 </div>
                 {!refunded && refundsAllowed && (
                   <button
@@ -1723,7 +1723,7 @@ function CustomerDetailModal({
     const target = openCardDetail.entries.find((e) => e.id === entryId);
     if (!target) return;
     const summary = `${fmtDateTime(target.punchedAt)} · ${
-      target.companionCount === 1 ? 'מלווה אחד' : `${target.companionCount} מלווים`
+      target.entriesConsumed === 1 ? 'כניסה אחת' : `${target.entriesConsumed} כניסות`
     }`;
     setRefundErr(null);
     setRefundTarget({ cardId: openCardDetail.card.id, entryId, summary });
@@ -2405,13 +2405,13 @@ function CustomerDetailBody({
       ) : (
         entries.slice(0, 10).map((e, i) => {
           const refunded = e.refundedAt !== null;
-          const companions =
-            e.companionCount === 1 ? 'מלווה אחד' : `${e.companionCount} מלווים`;
+          const entriesText =
+            e.entriesConsumed === 1 ? 'כניסה אחת' : `${e.entriesConsumed} כניסות`;
           const serial = serialByCardId.get(e.punchCardId);
           // Refund summary always includes the card serial so the modal
           // makes it unambiguous which card is being refunded, even when the
           // customer has only one card (helps the audit trail).
-          const summary = `${fmtDateTime(e.punchedAt)} · ${companions}${
+          const summary = `${fmtDateTime(e.punchedAt)} · ${entriesText}${
             serial ? ` · ${serial}` : ''
           }`;
           return (
@@ -2444,7 +2444,7 @@ function CustomerDetailBody({
                 )}
               </div>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0 }}>
-                <span style={{ color: MUTED, whiteSpace: 'nowrap' }}>{companions}</span>
+                <span style={{ color: MUTED, whiteSpace: 'nowrap' }}>{entriesText}</span>
                 {!refunded && (
                   <button
                     type="button"
@@ -2601,7 +2601,10 @@ function Staff() {
                     <span style={{ fontSize: 11, color: MUTED, fontWeight: 400 }}>(אני)</span>
                   )}
                 </div>
-                <div style={{ fontSize: 13, color: MUTED }}>{m.phone}</div>
+                <div style={{ fontSize: 13, color: MUTED, direction: 'ltr', textAlign: 'right' }}>
+                  {m.email ?? 'ללא דוא"ל'}
+                </div>
+                <div style={{ fontSize: 12.5, color: MUTED }}>{m.phone}</div>
               </div>
               <Badge text={r.label} bg={r.bg} color={r.color} />
               {!m.isActive && <Badge text="מושעה" bg="#ececec" color="#9aa3a6" />}
@@ -2983,6 +2986,9 @@ function humanizeStaffUpdateError(code: string): string {
   if (code === 'not_found') return 'איש הצוות לא נמצא. רעננו את הדף.';
   if (code === 'invalid_body') return 'אחד השדות לא תקין.';
   if (code === 'invalid_id') return 'מזהה איש צוות לא תקין.';
+  if (code === 'email_taken') return 'הדוא"ל כבר רשום אצל איש צוות אחר.';
+  if (code === 'email_required_for_role')
+    return 'דוא"ל הוא שדה חובה למנהל/אדמין (שימוש ככניסה למערכת).';
   return 'תקלה זמנית. נסו שוב בעוד רגע.';
 }
 
@@ -3046,6 +3052,13 @@ function EditStaffModal({
     }
     if (te && !/^\S+@\S+\.\S+$/.test(te)) {
       setError('כתובת מייל לא תקינה.');
+      return;
+    }
+    // Mirror the server-side rule: admin/manager rows must have an email
+    // (email is the login username as of 2026-06-21). Catch this before the
+    // round trip so the user gets immediate feedback.
+    if ((role === 'admin' || role === 'manager') && !te) {
+      setError('דוא"ל הוא שדה חובה למנהל/אדמין (שימוש ככניסה למערכת).');
       return;
     }
     await submit(buildPatch());
@@ -3342,6 +3355,12 @@ function CreateStaffForm({ onCreated, onCancel }: { onCreated: () => void; onCan
   }>({});
   const [topError, setTopError] = useState<string | null>(null);
 
+  // Admin and manager log into the web app with their email (username switch
+  // landed 2026-06-21); cashier may still be created without an email because
+  // their till-side attribution uses a PIN. Mirror the server-side rule here
+  // so the user gets the validation before the round-trip.
+  const emailRequiredForRole = role === 'admin' || role === 'manager';
+
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
     const errors: typeof fieldErrors = {};
@@ -3353,7 +3372,11 @@ function CreateStaffForm({ onCreated, onCancel }: { onCreated: () => void; onCan
     if (!tLast) errors.lastName = 'שדה חובה';
     if (!tPhone) errors.phone = 'שדה חובה';
     if (password.length < 6) errors.password = 'לפחות 6 תווים';
-    if (tEmail && !/^\S+@\S+\.\S+$/.test(tEmail)) errors.email = 'כתובת מייל לא תקינה';
+    if (emailRequiredForRole && !tEmail) {
+      errors.email = 'דוא"ל הוא שדה חובה למנהל/אדמין (שימוש ככניסה למערכת)';
+    } else if (tEmail && !/^\S+@\S+\.\S+$/.test(tEmail)) {
+      errors.email = 'כתובת מייל לא תקינה';
+    }
     if (Object.keys(errors).length > 0) {
       setFieldErrors(errors);
       setTopError(null);
@@ -3375,6 +3398,10 @@ function CreateStaffForm({ onCreated, onCancel }: { onCreated: () => void; onCan
     if (!res.ok) {
       if (res.error === 'phone_taken') {
         setFieldErrors({ phone: 'מספר הטלפון כבר רשום במערכת' });
+      } else if (res.error === 'email_taken') {
+        setFieldErrors({ email: 'הדוא"ל כבר רשום אצל איש צוות אחר' });
+      } else if (res.error === 'email_required_for_role') {
+        setFieldErrors({ email: 'דוא"ל הוא שדה חובה לתפקיד שנבחר' });
       } else if (res.error === 'invalid_body') {
         setTopError('אחד השדות לא תקין. בדקו ונסו שוב.');
       } else {
@@ -3462,7 +3489,10 @@ function CreateStaffForm({ onCreated, onCancel }: { onCreated: () => void; onCan
             <option value="admin">אדמין</option>
           </select>
         </FieldRow>
-        <FieldRow label="מייל" error={fieldErrors.email}>
+        <FieldRow
+          label={emailRequiredForRole ? 'דוא"ל *' : 'דוא"ל'}
+          error={fieldErrors.email}
+        >
           <input
             style={errored(inputStyle, fieldErrors.email)}
             value={email}
@@ -3470,6 +3500,7 @@ function CreateStaffForm({ onCreated, onCancel }: { onCreated: () => void; onCan
             type="email"
             inputMode="email"
             autoComplete="email"
+            placeholder={emailRequiredForRole ? 'משמש ככניסה למערכת' : ''}
             disabled={submitting}
           />
         </FieldRow>

@@ -62,7 +62,7 @@ const stepBtnStyle: CSSProperties = {
   cursor: 'pointer',
 };
 
-const companionLabel = (n: number): string => (n === 1 ? 'מלווה אחד' : `${n} מלווים`);
+const entriesLabel = (n: number): string => (n === 1 ? 'כניסה אחת' : `${n} כניסות`);
 
 const fullName = (c: ScanLookupResponse['customer']): string =>
   `${c.firstName ?? ''} ${c.lastName ?? ''}`.trim() || 'לקוח לא ידוע';
@@ -110,43 +110,51 @@ interface Props {
   /** Called when the user dismisses (overlay click or "ביטול"/"סגור"). */
   onClose: () => void;
   /**
-   * Called with the chosen companion count when the user taps "נקב".
+   * Called with the chosen entries-to-consume count when the user taps "נקב".
    * Not called when the modal is rendered for a blocking preview status.
    */
-  onConfirm: (companions: number) => void;
+  onConfirm: (entries: number) => void;
   /** True while the parent is awaiting the punch response — disables the buttons. */
   submitting: boolean;
   /**
    * Optional preview block. Present in the scan flow so the cashier can see
    * who and what they are about to punch. Omitted in the customer-detail
    * flow because the customer is already on screen. For blocking statuses
-   * the companion picker is hidden and the primary action becomes "סגור".
+   * the entries picker is hidden and the primary action becomes "סגור".
    * For 'grace' the picker stays but with a yellow warning banner.
    */
   preview?: ScanLookupResponse;
-  /** Companion picker bounds — settings-driven. Defaults to 1..4 if omitted. */
-  companionRange?: { min: number; max: number };
+  /**
+   * Upper bound for the entries-to-consume picker. The cashier can pick
+   * 1..maxEntries; the server caps again on submit so a stale UI value can
+   * never over-draw the card. Defaults to 1 when omitted (single-entry scan).
+   */
+  maxEntries?: number;
 }
 
 /**
- * Companion-count picker + confirm, optionally fronted by a customer +
- * card preview block. The parent owns the idempotency key and the punch
- * call; this component is pure UI.
+ * Entries-to-consume picker + confirm, optionally fronted by a customer +
+ * card preview block. The cashier picks how many entries this single scan
+ * should consume (1..remaining). The parent owns the idempotency key and
+ * the punch call; this component is pure UI.
  */
 export function PunchConfirmModal({
   onClose,
   onConfirm,
   submitting,
   preview,
-  companionRange,
+  maxEntries,
 }: Props) {
-  const minC = companionRange?.min ?? 1;
-  const maxC = companionRange?.max ?? 4;
-  const [companions, setCompanions] = useState(minC);
+  // Preview, when present, is the source of truth for remaining entries —
+  // it's read fresh from /scan/lookup. The customer-detail flow has no
+  // preview so it passes maxEntries directly. Floor at 1 either way so the
+  // picker is always operable (the blocking branch handles exhaustion).
+  const remaining = preview ? preview.card.totalEntries - preview.card.usedEntries : 0;
+  const ceiling = Math.max(1, preview ? remaining : maxEntries ?? 1);
+  const [entries, setEntries] = useState(1);
 
   const blocking = preview ? isBlocking(preview.status) : false;
   const canPunch = !blocking;
-  const remaining = preview ? preview.card.totalEntries - preview.card.usedEntries : 0;
   const lastEntry = preview?.entries[0];
   const showExpiringBadge =
     preview &&
@@ -228,7 +236,7 @@ export function PunchConfirmModal({
                 marginTop: preview ? 16 : 0,
               }}
             >
-              כמה מלווים?
+              כמה כניסות לנקב?
             </div>
             <div
               style={{
@@ -241,28 +249,40 @@ export function PunchConfirmModal({
             >
               <button
                 style={stepBtnStyle}
-                onClick={() => setCompanions((n) => Math.max(minC, n - 1))}
-                disabled={submitting || companions <= minC}
-                aria-label="פחות מלווים"
+                onClick={() => setEntries((n) => Math.max(1, n - 1))}
+                disabled={submitting || entries <= 1}
+                aria-label="פחות כניסות"
               >
                 −
               </button>
               <div style={{ textAlign: 'center', minWidth: 100 }}>
                 <div style={{ fontSize: 44, fontWeight: 600, color: ORANGE, lineHeight: 1 }}>
-                  {companions}
+                  {entries}
                 </div>
                 <div style={{ fontSize: 13, color: MUTED, marginTop: 4 }}>
-                  {companionLabel(companions)}
+                  {entriesLabel(entries)}
                 </div>
               </div>
               <button
                 style={stepBtnStyle}
-                onClick={() => setCompanions((n) => Math.min(maxC, n + 1))}
-                disabled={submitting || companions >= maxC}
-                aria-label="עוד מלווים"
+                onClick={() => setEntries((n) => Math.min(ceiling, n + 1))}
+                disabled={submitting || entries >= ceiling}
+                aria-label="עוד כניסות"
               >
                 +
               </button>
+            </div>
+            <div
+              style={{
+                fontSize: 12.5,
+                color: MUTED,
+                textAlign: 'center',
+                marginTop: 10,
+              }}
+            >
+              {preview
+                ? `מקסימום ${ceiling} (נותרו בכרטיסייה)`
+                : `מקסימום ${ceiling} כניסות בסריקה זו`}
             </div>
           </>
         )}
@@ -279,7 +299,7 @@ export function PunchConfirmModal({
               </button>
               <button
                 style={{ ...primaryBtn, flex: 1, opacity: submitting ? 0.7 : 1 }}
-                onClick={() => onConfirm(companions)}
+                onClick={() => onConfirm(entries)}
                 disabled={submitting}
               >
                 {submitting ? 'מנקב…' : 'נקב'}
@@ -298,7 +318,7 @@ export function PunchConfirmModal({
 
 // Preview block: customer identity + card progress + children + last visit
 // + full punch history. Designed to fit inside the same modal as the
-// companion picker so the cashier sees everything before tapping "נקב".
+// entries-to-consume picker so the cashier sees everything before tapping "נקב".
 function PreviewBlock({
   preview,
   remaining,
@@ -434,7 +454,7 @@ function PreviewBlock({
                     {fmtDayShort(h.punchedAt)} · {fmtTime(h.punchedAt)}
                   </span>
                   <span style={{ color: MUTED }}>
-                    {companionLabel(h.companionCount)}
+                    {entriesLabel(h.entriesConsumed)}
                     {who ? ` · ${who}` : ''}
                   </span>
                 </div>

@@ -9,14 +9,17 @@ export interface PunchSuccess {
   ok: true;
   /** True if the server treated this as a replay of a previous idempotent call. */
   replay: boolean;
+  /** How many entries this scan consumed (echo of the request). */
+  entriesConsumed: number;
   remaining: number;
   usedEntries: number;
   totalEntries: number;
 }
 
 export interface PunchByserialOptions {
-  /** 1–4. Defaults to 1 on the server when omitted. */
-  companions?: number;
+  /** How many entries to consume in this scan. Defaults to 1 on the server when
+   *  omitted. Server caps at the card's remaining entries. */
+  entries?: number;
   /** Per-intent UUID. The same key on a retry is a no-op (returns replay:true). */
   idempotencyKey?: string;
   /** Optional terminal id for the audit row. Unused by the web app today. */
@@ -32,15 +35,16 @@ export const punchBySerial = (
     method: 'POST',
     body: {
       serial,
-      ...(opts.companions !== undefined && { companions: opts.companions }),
+      ...(opts.entries !== undefined && { entries: opts.entries }),
       ...(opts.idempotencyKey !== undefined && { idempotencyKey: opts.idempotencyKey }),
       ...(opts.terminalId !== undefined && { terminalId: opts.terminalId }),
     },
   });
 
 export interface PunchByTokenOptions {
-  /** 1–4. Defaults to 1 on the server when omitted. */
-  companions?: number;
+  /** How many entries to consume in this scan. Defaults to 1 on the server when
+   *  omitted. Server caps at the card's remaining entries. */
+  entries?: number;
   /** Per-intent UUID. Same key on a retry is a no-op (returns replay:true). */
   idempotencyKey?: string;
   /** Optional terminal id for the audit row. */
@@ -61,7 +65,7 @@ export const punchByToken = (
     method: 'POST',
     body: {
       token,
-      ...(opts.companions !== undefined && { companions: opts.companions }),
+      ...(opts.entries !== undefined && { entries: opts.entries }),
       ...(opts.idempotencyKey !== undefined && { idempotencyKey: opts.idempotencyKey }),
       ...(opts.terminalId !== undefined && { terminalId: opts.terminalId }),
     },
@@ -110,7 +114,7 @@ export interface ScanLookupEntry {
   id: string;
   punchedAt: string;
   method: 'qr_scan' | 'serial' | 'phone' | 'manual';
-  companionCount: number;
+  entriesConsumed: number;
   staffFirstName: string | null;
   staffLastName: string | null;
   /** Non-null when the entry has been refunded. */
@@ -153,3 +157,37 @@ export const lookupBySerial = (
     method: 'POST',
     body: { serial, ...(opts.terminalId !== undefined && { terminalId: opts.terminalId }) },
   });
+
+// ---------------------------------------------------------------------------
+// TEMPORARY DIAGNOSTIC — paired with apps/api/src/routes/debug-qr.ts.
+// Surfaces the precise verifyToken failure reason so we can tell whether the
+// secret was rotated (bad_signature), the keyId is foreign (unknown_key_id),
+// or the QR encode/decode mangled the payload (invalid_format /
+// malformed_payload). Remove once the investigation closes.
+// ---------------------------------------------------------------------------
+
+export type DebugQrVerifyResult =
+  | 'ok'
+  | 'invalid_format'
+  | 'unknown_version'
+  | 'malformed_payload'
+  | 'unknown_key_id'
+  | 'bad_signature';
+
+export interface DebugQrVerifyResponse {
+  verifyResult: DebugQrVerifyResult;
+  envKeyId: string;
+  keyIdMatchesEnv: boolean;
+  tokenStructure: {
+    version: string | null;
+    payloadKeyId: string | null;
+    payloadSerial: string | null;
+    payloadCreatedTs: number | null;
+    payloadCustomerIdSuffix: string | null;
+  };
+}
+
+export const debugVerifyToken = (
+  token: string,
+): Promise<ApiResult<DebugQrVerifyResponse>> =>
+  apiRequest('/debug/qr/verify', { method: 'POST', body: { token } });

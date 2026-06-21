@@ -5,11 +5,9 @@ import { Scanner, type IDetectedBarcode, type IScannerError } from '@yudiel/reac
 import { type CSSProperties, useEffect, useRef, useState } from 'react';
 import {
   getCardPricing,
-  getCompanionLimits,
   getCustomerFormRules,
   getPosSellControls,
   type CardPricing,
-  type CompanionLimits,
   type CustomerFormRules,
   type PosSellControls,
 } from '../lib/api/card-settings';
@@ -25,6 +23,7 @@ import {
   type PunchCard as ApiPunchCard,
 } from '../lib/api/customers';
 import {
+  debugVerifyToken,
   lookupBySerial,
   lookupByToken,
   punchBySerial,
@@ -32,7 +31,7 @@ import {
   type ScanLookupResponse,
 } from '../lib/api/punch';
 import { getMyPinStatus, setMyPin } from '../lib/api/staff';
-import { companionLabel } from '../mock';
+import { entriesLabel } from '../mock';
 import { PunchConfirmModal } from './PunchConfirmModal';
 import { RefundEntryModal } from './RefundEntryModal';
 
@@ -202,7 +201,6 @@ const FALLBACK_PRICING: CardPricing = {
   priceShekels: 320,
   pitchLabel: 'משלמים על 10, מקבלים 12 · תקף לשנה',
 };
-const FALLBACK_COMPANION_LIMITS: CompanionLimits = { min: 1, max: 4 };
 const FALLBACK_FORM_RULES: CustomerFormRules = { requireEmail: false, requireChild: false };
 // Fail-closed defaults for the sell-flow controls: assume the anti-fraud
 // requirements are ON if the API call fails, so a transient failure doesn't
@@ -262,20 +260,20 @@ export function PosApp() {
   const [query, setQuery] = useState('');
   const [sellStep, setSellStep] = useState<SellStep>('choose');
 
-  // Card price + pitch text + companion bounds + customer-form rules all come
+  // Card price + pitch text + customer-form rules + sell controls all come
   // from /pos/* endpoints (admin-editable in 'הגדרות'). Fetched together on
   // mount; each independently falls back to hardcoded defaults if its call
-  // fails so the cashier is never blocked from working.
+  // fails so the cashier is never blocked from working. The entries-per-scan
+  // picker is no longer settings-driven — the cashier picks at the till,
+  // bounded by the card's remaining entries.
   const [pricing, setPricing] = useState<CardPricing>(FALLBACK_PRICING);
-  const [companionLimits, setCompanionLimits] = useState<CompanionLimits>(FALLBACK_COMPANION_LIMITS);
   const [formRules, setFormRules] = useState<CustomerFormRules>(FALLBACK_FORM_RULES);
   const [sellControls, setSellControls] = useState<PosSellControls>(FALLBACK_SELL_CONTROLS);
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [p, c, r, s] = await Promise.all([
+      const [p, r, s] = await Promise.all([
         getCardPricing(),
-        getCompanionLimits(),
         getCustomerFormRules(),
         getPosSellControls(),
       ]);
@@ -285,12 +283,6 @@ export function PosApp() {
         setPricing(p.data);
       } else {
         console.warn('[web pos pricing] fallback', { error: p.error });
-      }
-      if (c.ok) {
-        console.info('[web pos companion-limits] fetched', c.data);
-        setCompanionLimits(c.data);
-      } else {
-        console.warn('[web pos companion-limits] fallback', { error: c.error });
       }
       if (r.ok) {
         console.info('[web pos form-rules] fetched', r.data);
@@ -682,7 +674,7 @@ export function PosApp() {
     });
   }, [detail]);
 
-  // Open the companion-count modal. A fresh UUID lives for this intent only.
+  // Open the entries-to-consume modal. A fresh UUID lives for this intent only.
   const openPunch = () => {
     setPunchKey(crypto.randomUUID());
     setAskPunch(true);
@@ -692,14 +684,14 @@ export function PosApp() {
 
   // The actual call. Closes the modal, posts to the API, refetches detail on
   // success, surfaces a Hebrew error otherwise.
-  const confirmPunch = async (companionsArg: number) => {
+  const confirmPunch = async (entriesArg: number) => {
     if (!detail) return;
     const active = pickActiveCard(detail.cards);
     if (!active) return;
     setPunching(true);
-    console.info('[web punch] submit', { companions: companionsArg });
+    console.info('[web punch] submit', { entries: entriesArg });
     const res = await punchBySerial(active.serialNumber, {
-      companions: companionsArg,
+      entries: entriesArg,
       idempotencyKey: punchKey,
     });
     setPunching(false);
@@ -1220,7 +1212,7 @@ export function PosApp() {
                   >
                     {fmtDate(yyyyMmDd(h.punchedAt))} · {hhMm(h.punchedAt)}
                     <span style={{ color: MUTED, marginInlineStart: 8 }}>
-                      · {companionLabel(h.companionCount)}
+                      · {entriesLabel(h.entriesConsumed)}
                     </span>
                   </div>
                   {refunded && (
@@ -1287,7 +1279,7 @@ export function PosApp() {
             onClose={() => setAskPunch(false)}
             onConfirm={confirmPunch}
             submitting={punching}
-            companionRange={companionLimits}
+            maxEntries={Math.max(1, activeCard.totalEntries - activeCard.usedEntries)}
           />
         )}
 
@@ -1295,8 +1287,8 @@ export function PosApp() {
           (() => {
             const target = entries.find((e) => e.id === refundEntryId);
             if (!target) return null;
-            const summary = `${fmtDate(yyyyMmDd(target.punchedAt))} · ${hhMm(target.punchedAt)} · ${companionLabel(
-              target.companionCount,
+            const summary = `${fmtDate(yyyyMmDd(target.punchedAt))} · ${hhMm(target.punchedAt)} · ${entriesLabel(
+              target.entriesConsumed,
             )}`;
             return (
               <RefundEntryModal
@@ -1753,7 +1745,7 @@ export function PosApp() {
                 ₪{pricing.priceShekels}
               </div>
               <div style={{ color: MUTED, fontSize: 13.5, marginTop: 4 }}>
-                כל כניסה = ילד אחד + מלווה אחד
+                ניקוב גמיש — בוחרים בקופה כמה כניסות לסמן בכל סריקה
               </div>
             </div>
             <button
@@ -1936,7 +1928,7 @@ export function PosApp() {
   function Scan() {
     // 'loading-preview' fetches /scan/lookup before the modal opens, so the
     // cashier sees customer + card context (and a red banner for problem
-    // cards) instead of a blank companion picker.
+    // cards) instead of a blank entries picker.
     type ScanPhase =
       | 'camera'
       | 'serial'
@@ -1975,8 +1967,14 @@ export function PosApp() {
 
     // Fetch /scan/lookup using the captured source, then transition to the
     // confirming phase whether the card is punchable or not. The modal itself
-    // decides whether to show the companion picker or the red banner based on
+    // decides whether to show the entries picker or the red banner based on
     // preview.status.
+    //
+    // TEMP DIAGNOSTIC: on an invalid_signature failure from the token path,
+    // also call /debug/qr/verify so the modal surfaces the precise verifyToken
+    // reason (bad_signature / unknown_key_id / invalid_format / …) instead of
+    // the collapsed "QR לא תקין". Remove once the qr-verify investigation
+    // closes — see _plans/2026-06-21-real-qr-codes.md.
     const fetchPreview = async (nextSource: Source) => {
       setPhase('loading-preview');
       console.info('[web scan] preview fetch', { mode: nextSource.mode });
@@ -1991,7 +1989,18 @@ export function PosApp() {
         return;
       }
       console.warn('[web scan] preview error', { status: res.status, error: res.error });
-      setPunchErrorMsg(humanizePunchError(res.error));
+      let message = humanizePunchError(res.error);
+      if (res.error === 'invalid_signature' && nextSource.mode === 'token') {
+        const dbg = await debugVerifyToken(nextSource.token);
+        if (dbg.ok) {
+          console.warn('[web scan] debug verify', dbg.data);
+          message = `${message}\n(diag: ${dbg.data.verifyResult}; envKeyId=${dbg.data.envKeyId}; tokenKeyId=${dbg.data.tokenStructure.payloadKeyId ?? 'null'}; serial=${dbg.data.tokenStructure.payloadSerial ?? 'null'})`;
+        } else {
+          console.warn('[web scan] debug verify failed', { status: dbg.status, error: dbg.error });
+          message = `${message}\n(diag unavailable: ${dbg.error})`;
+        }
+      }
+      setPunchErrorMsg(message);
       setPhase('error');
     };
 
@@ -2025,15 +2034,15 @@ export function PosApp() {
       void fetchPreview(nextSource);
     };
 
-    const confirmPunch = async (companions: number) => {
+    const confirmPunch = async (entries: number) => {
       if (!source) return;
       setPhase('submitting');
       setPunchErrorMsg(null);
-      console.info('[web scan] punch submit', { mode: source.mode, companions });
+      console.info('[web scan] punch submit', { mode: source.mode, entries });
       const res =
         source.mode === 'token'
-          ? await punchByToken(source.token, { companions, idempotencyKey: scanKey })
-          : await punchBySerial(source.serial, { companions, idempotencyKey: scanKey });
+          ? await punchByToken(source.token, { entries, idempotencyKey: scanKey })
+          : await punchBySerial(source.serial, { entries, idempotencyKey: scanKey });
       if (res.ok) {
         console.info('[web scan] punch success', { remaining: res.data.remaining });
         setResult({ remaining: res.data.remaining, total: res.data.totalEntries });
@@ -2156,7 +2165,6 @@ export function PosApp() {
             }}
             onConfirm={confirmPunch}
             submitting={phase === 'submitting'}
-            companionRange={companionLimits}
             {...(preview !== null && { preview })}
           />
         )}
@@ -2185,7 +2193,7 @@ export function PosApp() {
         {phase === 'error' && (
           <div style={{ ...card, textAlign: 'center' }}>
             <div style={{ fontSize: 20, fontWeight: 600, color: '#c25a5a' }}>הניקוב לא בוצע</div>
-            <div style={{ color: MUTED, marginTop: 8, fontSize: 14 }}>
+            <div style={{ color: MUTED, marginTop: 8, fontSize: 14, whiteSpace: 'pre-wrap' }}>
               {punchErrorMsg ?? 'שגיאה לא ידועה.'}
             </div>
             <div style={{ display: 'flex', gap: 10, marginTop: 18 }}>

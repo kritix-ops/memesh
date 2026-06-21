@@ -2,6 +2,7 @@ import { eq } from 'drizzle-orm';
 import type { PgDatabase } from 'drizzle-orm/pg-core';
 import { logStaffAction } from './actions';
 import { validateEmailOtpTemplate } from './email-otp';
+import { validateHandoffThankyouTemplate } from './handoff-thankyou';
 import { cardSettings, type CardSettingsRow } from './schema/index';
 
 type AnyPgDatabase = PgDatabase<any, any, any>;
@@ -16,8 +17,6 @@ export const CARD_SETTINGS_LIMITS = {
   validityDays: { min: 0, max: 3650 },
   totalEntries: { min: 1, max: 100 },
   pitchLabel: { minLength: 1, maxLength: 200 },
-  minCompanions: { min: 1, max: 10 },
-  maxCompanions: { min: 1, max: 10 },
   sameDayLockoutMinutes: { min: 0, max: 1440 },
   gracePeriodDays: { min: 0, max: 90 },
   minCancelReasonLength: { min: 1, max: 500 },
@@ -35,6 +34,9 @@ export const CARD_SETTINGS_LIMITS = {
   posEmailNudgeText: { minLength: 1, maxLength: 500 },
   emailOtpSubject: { minLength: 1, maxLength: 200 },
   emailOtpBodyTemplate: { minLength: 1, maxLength: 2000 },
+  checkoutThankyouTitle: { minLength: 1, maxLength: 200 },
+  checkoutThankyouBody: { minLength: 1, maxLength: 2000 },
+  checkoutThankyouButtonText: { minLength: 1, maxLength: 100 },
 } as const;
 
 export type CardSettingsValidationError =
@@ -42,9 +44,6 @@ export type CardSettingsValidationError =
   | 'validity_out_of_range'
   | 'entries_out_of_range'
   | 'pitch_length'
-  | 'min_companions_out_of_range'
-  | 'max_companions_out_of_range'
-  | 'companion_range_invalid'
   | 'lockout_out_of_range'
   | 'grace_out_of_range'
   | 'cancel_reason_length_out_of_range'
@@ -62,6 +61,11 @@ export type CardSettingsValidationError =
   | 'email_otp_subject_length'
   | 'email_otp_body_template_length'
   | 'email_otp_body_template_unknown_placeholder'
+  | 'checkout_thankyou_title_length'
+  | 'checkout_thankyou_title_unknown_placeholder'
+  | 'checkout_thankyou_body_length'
+  | 'checkout_thankyou_body_unknown_placeholder'
+  | 'checkout_thankyou_button_text_length'
   | 'no_changes';
 
 /**
@@ -86,8 +90,6 @@ export interface UpdateCardSettingsInput {
   totalEntries?: number | undefined;
   pitchLabel?: string | undefined;
   // Mechanics
-  minCompanions?: number | undefined;
-  maxCompanions?: number | undefined;
   sameDayLockoutMinutes?: number | undefined;
   gracePeriodDays?: number | undefined;
   // Cancellation & refunds
@@ -116,6 +118,11 @@ export interface UpdateCardSettingsInput {
   posEmailNudgeText?: string | undefined;
   emailOtpSubject?: string | undefined;
   emailOtpBodyTemplate?: string | undefined;
+  // Editable thank-you page shown after a successful WooCommerce checkout
+  // (my.memesh.co.il/checkout-complete). Title + body support {{firstName}}.
+  checkoutThankyouTitle?: string | undefined;
+  checkoutThankyouBody?: string | undefined;
+  checkoutThankyouButtonText?: string | undefined;
 
   /** Staff member making the change; recorded on the row and in the action log. */
   staffId?: string | undefined;
@@ -158,12 +165,6 @@ export const updateCardSettings = async (
     if (trimmed.length < L.pitchLabel.minLength || trimmed.length > L.pitchLabel.maxLength) {
       return { ok: false, error: 'pitch_length' };
     }
-  }
-  if (input.minCompanions !== undefined && !within(input.minCompanions, L.minCompanions.min, L.minCompanions.max)) {
-    return { ok: false, error: 'min_companions_out_of_range' };
-  }
-  if (input.maxCompanions !== undefined && !within(input.maxCompanions, L.maxCompanions.min, L.maxCompanions.max)) {
-    return { ok: false, error: 'max_companions_out_of_range' };
   }
   if (input.sameDayLockoutMinutes !== undefined && !within(input.sameDayLockoutMinutes, L.sameDayLockoutMinutes.min, L.sameDayLockoutMinutes.max)) {
     return { ok: false, error: 'lockout_out_of_range' };
@@ -233,14 +234,34 @@ export const updateCardSettings = async (
       return { ok: false, error: 'email_otp_body_template_unknown_placeholder' };
     }
   }
+  if (input.checkoutThankyouTitle !== undefined) {
+    const trimmed = input.checkoutThankyouTitle.trim();
+    if (trimmed.length < L.checkoutThankyouTitle.minLength || trimmed.length > L.checkoutThankyouTitle.maxLength) {
+      return { ok: false, error: 'checkout_thankyou_title_length' };
+    }
+    const placeholderCheck = validateHandoffThankyouTemplate(trimmed);
+    if (!placeholderCheck.ok) {
+      return { ok: false, error: 'checkout_thankyou_title_unknown_placeholder' };
+    }
+  }
+  if (input.checkoutThankyouBody !== undefined) {
+    if (input.checkoutThankyouBody.length < L.checkoutThankyouBody.minLength || input.checkoutThankyouBody.length > L.checkoutThankyouBody.maxLength) {
+      return { ok: false, error: 'checkout_thankyou_body_length' };
+    }
+    const placeholderCheck = validateHandoffThankyouTemplate(input.checkoutThankyouBody);
+    if (!placeholderCheck.ok) {
+      return { ok: false, error: 'checkout_thankyou_body_unknown_placeholder' };
+    }
+  }
+  if (input.checkoutThankyouButtonText !== undefined) {
+    const trimmed = input.checkoutThankyouButtonText.trim();
+    if (trimmed.length < L.checkoutThankyouButtonText.minLength || trimmed.length > L.checkoutThankyouButtonText.maxLength) {
+      return { ok: false, error: 'checkout_thankyou_button_text_length' };
+    }
+  }
 
   const now = input.now ?? new Date();
   const current = await getCardSettings(db);
-
-  // Cross-field check: min ≤ max after applying both patch and current values.
-  const nextMin = input.minCompanions ?? current.minCompanions;
-  const nextMax = input.maxCompanions ?? current.maxCompanions;
-  if (nextMin > nextMax) return { ok: false, error: 'companion_range_invalid' };
 
   const next: Partial<typeof cardSettings.$inferInsert> = {};
   const diff: Record<string, [unknown, unknown]> = {};
@@ -276,8 +297,6 @@ export const updateCardSettings = async (
   assignNumber('validityDays', input.validityDays);
   assignNumber('totalEntries', input.totalEntries);
   assignString('pitchLabel', input.pitchLabel);
-  assignNumber('minCompanions', input.minCompanions);
-  assignNumber('maxCompanions', input.maxCompanions);
   assignNumber('sameDayLockoutMinutes', input.sameDayLockoutMinutes);
   assignNumber('gracePeriodDays', input.gracePeriodDays);
   assignBool('allowCancelAfterFirstPunch', input.allowCancelAfterFirstPunch);
@@ -306,6 +325,11 @@ export const updateCardSettings = async (
   // Body template uses assignStringRaw to preserve user newlines + leading
   // whitespace inside the email body.
   assignStringRaw('emailOtpBodyTemplate', input.emailOtpBodyTemplate);
+  assignString('checkoutThankyouTitle', input.checkoutThankyouTitle);
+  // Body uses assignStringRaw to preserve user newlines inside the thank-you
+  // copy (operators may want a paragraph break before the CTA).
+  assignStringRaw('checkoutThankyouBody', input.checkoutThankyouBody);
+  assignString('checkoutThankyouButtonText', input.checkoutThankyouButtonText);
 
   if (Object.keys(diff).length === 0) return { ok: false, error: 'no_changes' };
 
@@ -338,8 +362,6 @@ const FIELD_LABELS: Record<string, string> = {
   validityDays: 'תוקף',
   totalEntries: 'כניסות',
   pitchLabel: 'טקסט שיווקי',
-  minCompanions: 'מינימום מלווים',
-  maxCompanions: 'מקסימום מלווים',
   sameDayLockoutMinutes: 'נעילת רה-ניקוב',
   gracePeriodDays: 'תקופת חסד',
   allowCancelAfterFirstPunch: 'ביטול לאחר ניקוב',
@@ -363,6 +385,9 @@ const FIELD_LABELS: Record<string, string> = {
   posEmailNudgeText: 'טקסט המלצת אימייל',
   emailOtpSubject: 'נושא מייל OTP',
   emailOtpBodyTemplate: 'תבנית מייל OTP',
+  checkoutThankyouTitle: 'כותרת דף תודה',
+  checkoutThankyouBody: 'גוף דף תודה',
+  checkoutThankyouButtonText: 'כפתור דף תודה',
 };
 
 const summarizeDiff = (diff: Record<string, [unknown, unknown]>): string => {

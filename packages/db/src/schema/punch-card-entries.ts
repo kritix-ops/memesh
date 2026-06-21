@@ -11,7 +11,9 @@ export const punchCardEntries = pgTable('punch_card_entries', {
     .references(() => punchCards.id),
   punchedBy: uuid('punched_by').references(() => staff.id), // null for online/system punches
   method: punchMethodEnum('method').notNull(),
-  companionCount: integer('companion_count').notNull().default(1), // metadata only; one punch = one entry
+  /** Number of entries this scan consumed from the card. Drives the
+   * decrement of punch_cards.used_entries; bounded by remaining at scan time. */
+  entriesConsumed: integer('entries_consumed').notNull().default(1),
   idempotencyKey: varchar('idempotency_key', { length: 64 }).unique(), // safe retry / double-tap guard
   notes: text('notes'),
   punchedAt: timestamp('punched_at', { withTimezone: true }).notNull().defaultNow(),

@@ -266,8 +266,8 @@ test('cardDetail returns the card joined with the customer + entries (newest fir
   const card = await createPunchCard(db, resolver, { customerId: cust.id });
 
   // Punch twice so there are two entries.
-  await punchCard(db, { punchCardId: card.id, method: 'qr_scan', companionCount: 2 });
-  await punchCard(db, { punchCardId: card.id, method: 'serial', companionCount: 1 });
+  await punchCard(db, { punchCardId: card.id, method: 'qr_scan' });
+  await punchCard(db, { punchCardId: card.id, method: 'serial' });
 
   const detail = await cardDetail(db, card.id);
   assert.ok(detail);
@@ -357,8 +357,8 @@ test('scanCardLookup returns customer children and the full entry history newest
     children: [{ name: 'Itamar', dob: '2021-04-12' }],
   });
   const card = await createPunchCard(db, resolver, { customerId: cust.id });
-  await punchCard(db, { punchCardId: card.id, method: 'qr_scan', companionCount: 2 });
-  await punchCard(db, { punchCardId: card.id, method: 'serial', companionCount: 1 });
+  await punchCard(db, { punchCardId: card.id, method: 'qr_scan' });
+  await punchCard(db, { punchCardId: card.id, method: 'serial' });
 
   const preview = await scanCardLookup(db, card.id);
   assert.ok(preview);
@@ -462,41 +462,13 @@ test('scanCardLookup echoes expiryBadgeThresholdDays from settings', async () =>
 });
 
 // ---------------------------------------------------------------------------
-// punchCard — companion limits, lockout, grace acceptance
+// punchCard — entries bound, lockout, grace acceptance
+//
+// Entries-out-of-range bounds (entries < 1 and entries > remaining) and the
+// happy multi-entry path live in punch.test.ts. This block focuses on lockout
+// + grace because those depend on createPunchCard/updateCardSettings setup
+// that only this file's helpers know how to construct.
 // ---------------------------------------------------------------------------
-
-test('punchCard rejects companions below the configured minimum', async () => {
-  const db = await freshDb();
-  await updateCardSettings(db, { minCompanions: 2, maxCompanions: 4 });
-  const cust = await makeCustomer(db);
-  const card = await createPunchCard(db, resolver, { customerId: cust.id });
-
-  const res = await punchCard(db, {
-    punchCardId: card.id,
-    method: 'qr_scan',
-    companionCount: 1,
-  });
-  assert.equal(res.ok, false);
-  if (!res.ok) {
-    assert.equal(res.reason, 'companions_out_of_range');
-    assert.deepEqual(res.allowedRange, { min: 2, max: 4 });
-  }
-});
-
-test('punchCard rejects companions above the configured maximum', async () => {
-  const db = await freshDb();
-  await updateCardSettings(db, { minCompanions: 1, maxCompanions: 3 });
-  const cust = await makeCustomer(db);
-  const card = await createPunchCard(db, resolver, { customerId: cust.id });
-
-  const res = await punchCard(db, {
-    punchCardId: card.id,
-    method: 'qr_scan',
-    companionCount: 5,
-  });
-  assert.equal(res.ok, false);
-  if (!res.ok) assert.equal(res.reason, 'companions_out_of_range');
-});
 
 test('punchCard enforces sameDayLockoutMinutes between successful punches', async () => {
   const db = await freshDb();

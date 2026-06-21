@@ -102,25 +102,8 @@ test('updateCardSettings logs a staff action with a Hebrew diff summary', async 
 });
 
 // ---------------------------------------------------------------------------
-// Expanded settings — companion limits, lockout, grace, cancel, SMS, customer.
+// Expanded settings — lockout, grace, cancel, SMS, customer.
 // ---------------------------------------------------------------------------
-
-test('updateCardSettings rejects min companions > max companions (cross-field)', async () => {
-  const db = await freshDb();
-  // Default max is 4. Trying to set min=6 should fail because nextMax stays 4.
-  const res = await updateCardSettings(db, { minCompanions: 6 });
-  assert.equal(res.ok, false);
-  if (!res.ok) assert.equal(res.error, 'companion_range_invalid');
-});
-
-test('updateCardSettings accepts a paired min+max bump in a single patch', async () => {
-  const db = await freshDb();
-  const res = await updateCardSettings(db, { minCompanions: 2, maxCompanions: 8 });
-  assert.equal(res.ok, true);
-  if (!res.ok) return;
-  assert.equal(res.row.minCompanions, 2);
-  assert.equal(res.row.maxCompanions, 8);
-});
 
 test('updateCardSettings rejects lockout > 1440 minutes', async () => {
   const db = await freshDb();
@@ -270,4 +253,37 @@ test('updateCardSettings validates PIN ranges + rejects unknown email template p
     pinLength: 4,
   });
   assert.equal(d.ok, true);
+});
+
+test('updateCardSettings validates checkout thank-you copy + placeholders', async () => {
+  const db = await freshDb();
+
+  // Title supports {{firstName}} but rejects unknown tokens.
+  const badTitle = await updateCardSettings(db, {
+    checkoutThankyouTitle: 'שלום {{nickname}}',
+  });
+  assert.equal(badTitle.ok, false);
+  if (!badTitle.ok) assert.equal(badTitle.error, 'checkout_thankyou_title_unknown_placeholder');
+
+  const badBody = await updateCardSettings(db, {
+    checkoutThankyouBody: 'תודה {{name}}!',
+  });
+  assert.equal(badBody.ok, false);
+  if (!badBody.ok) assert.equal(badBody.error, 'checkout_thankyou_body_unknown_placeholder');
+
+  const emptyButton = await updateCardSettings(db, { checkoutThankyouButtonText: '   ' });
+  assert.equal(emptyButton.ok, false);
+  if (!emptyButton.ok) assert.equal(emptyButton.error, 'checkout_thankyou_button_text_length');
+
+  // Valid edit with {{firstName}} in title and a multi-line body goes through.
+  const ok = await updateCardSettings(db, {
+    checkoutThankyouTitle: 'תודה רבה, {{firstName}}!',
+    checkoutThankyouBody: 'הכרטיסייה שלך מוכנה.\nנשמח לראותך בקרוב.',
+    checkoutThankyouButtonText: 'לאזור האישי',
+  });
+  assert.equal(ok.ok, true);
+  if (!ok.ok) return;
+  assert.equal(ok.row.checkoutThankyouTitle, 'תודה רבה, {{firstName}}!');
+  assert.equal(ok.row.checkoutThankyouBody, 'הכרטיסייה שלך מוכנה.\nנשמח לראותך בקרוב.');
+  assert.equal(ok.row.checkoutThankyouButtonText, 'לאזור האישי');
 });

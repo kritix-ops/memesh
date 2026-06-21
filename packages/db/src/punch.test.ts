@@ -69,7 +69,7 @@ async function seedCard(db: TestDb, opts: SeedOpts = {}) {
   return { cardId: cardRow.id, staffId: staffRow.id, customerId: custRow.id };
 }
 
-test('happy path: a punch consumes one entry and writes a success audit', async () => {
+test('happy path: a single-entry punch consumes one entry and writes a success audit', async () => {
   const db = await freshDb();
   const { cardId, staffId } = await seedCard(db, { used: 0, total: 12 });
 
@@ -77,12 +77,12 @@ test('happy path: a punch consumes one entry and writes a success audit', async 
     punchCardId: cardId,
     punchedBy: staffId,
     method: 'qr_scan',
-    companionCount: 2,
   });
 
   assert.equal(res.ok, true);
   if (res.ok) {
     assert.equal(res.replay, false);
+    assert.equal(res.entriesConsumed, 1);
     assert.equal(res.usedEntries, 1);
     assert.equal(res.remaining, 11);
   }
@@ -97,11 +97,92 @@ test('happy path: a punch consumes one entry and writes a success audit', async 
     .from(punchCardEntries)
     .where(eq(punchCardEntries.punchCardId, cardId));
   assert.equal(entries.length, 1);
-  assert.equal(entries[0]?.companionCount, 2);
+  assert.equal(entries[0]?.entriesConsumed, 1);
 
   const audits = await db.select().from(scanAttempts);
   assert.equal(audits.length, 1);
   assert.equal(audits[0]?.result, 'success');
+});
+
+test('multi-entry punch decrements by N and records entriesConsumed=N', async () => {
+  const db = await freshDb();
+  const { cardId, staffId } = await seedCard(db, { used: 0, total: 12 });
+
+  const res = await punchCard(db, {
+    punchCardId: cardId,
+    punchedBy: staffId,
+    method: 'qr_scan',
+    entries: 3,
+  });
+
+  assert.equal(res.ok, true);
+  if (res.ok) {
+    assert.equal(res.entriesConsumed, 3);
+    assert.equal(res.usedEntries, 3);
+    assert.equal(res.remaining, 9);
+  }
+
+  const card = (await db.select().from(punchCards).where(eq(punchCards.id, cardId)))[0];
+  assert.ok(card);
+  assert.equal(card.usedEntries, 3);
+  assert.equal(card.isActive, true);
+
+  const entries = await db
+    .select()
+    .from(punchCardEntries)
+    .where(eq(punchCardEntries.punchCardId, cardId));
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0]?.entriesConsumed, 3);
+});
+
+test('entries=0 or negative is rejected as entries_out_of_range', async () => {
+  const db = await freshDb();
+  const { cardId } = await seedCard(db, { used: 0, total: 12 });
+
+  const zero = await punchCard(db, { punchCardId: cardId, method: 'manual', entries: 0 });
+  assert.equal(zero.ok, false);
+  if (!zero.ok) {
+    assert.equal(zero.reason, 'entries_out_of_range');
+    assert.deepEqual(zero.allowedRange, { min: 1, max: 1 });
+  }
+
+  const negative = await punchCard(db, { punchCardId: cardId, method: 'manual', entries: -2 });
+  assert.equal(negative.ok, false);
+  if (!negative.ok) assert.equal(negative.reason, 'entries_out_of_range');
+});
+
+test('entries > remaining is rejected with allowedRange showing the ceiling', async () => {
+  const db = await freshDb();
+  const { cardId } = await seedCard(db, { used: 10, total: 12 });
+
+  const res = await punchCard(db, { punchCardId: cardId, method: 'manual', entries: 5 });
+  assert.equal(res.ok, false);
+  if (!res.ok) {
+    assert.equal(res.reason, 'entries_out_of_range');
+    assert.deepEqual(res.allowedRange, { min: 1, max: 2 });
+  }
+
+  // Card row is unchanged after a rejected over-draw.
+  const card = (await db.select().from(punchCards).where(eq(punchCards.id, cardId)))[0];
+  assert.ok(card);
+  assert.equal(card.usedEntries, 10);
+});
+
+test('multi-entry punch that exhausts the card deactivates it', async () => {
+  const db = await freshDb();
+  const { cardId } = await seedCard(db, { used: 10, total: 12 });
+
+  const res = await punchCard(db, { punchCardId: cardId, method: 'qr_scan', entries: 2 });
+  assert.equal(res.ok, true);
+  if (res.ok) {
+    assert.equal(res.remaining, 0);
+    assert.equal(res.entriesConsumed, 2);
+  }
+
+  const card = (await db.select().from(punchCards).where(eq(punchCards.id, cardId)))[0];
+  assert.ok(card);
+  assert.equal(card.usedEntries, 12);
+  assert.equal(card.isActive, false);
 });
 
 test('exhaustion: the final entry deactivates the card', async () => {
@@ -155,6 +236,7 @@ test('idempotency: repeating the same key does not punch twice', async () => {
   assert.equal(second.ok, true);
   if (second.ok) {
     assert.equal(second.replay, true);
+    assert.equal(second.entriesConsumed, 1);
     assert.equal(second.usedEntries, 1);
     assert.equal(second.remaining, 11);
   }

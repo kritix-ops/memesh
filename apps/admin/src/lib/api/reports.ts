@@ -100,7 +100,7 @@ export interface EntriesReportRow {
   id: string;
   punchedAt: string;
   method: string;
-  companionCount: number;
+  entriesConsumed: number;
   refundedAt: string | null;
   refundReason: string | null;
   cardId: string;

@@ -168,7 +168,7 @@ test('getCardDetail GETs /cards/:id and unwraps card + entries', async () => {
           id: 'e1',
           punchedAt: '2026-06-19T08:30:00.000Z',
           method: 'qr_scan',
-          companionCount: 2,
+          entriesConsumed: 2,
           notes: null,
           punchedBy: 'staff-1',
           staffFirstName: 'Maya',

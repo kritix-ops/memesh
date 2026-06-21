@@ -13,8 +13,6 @@ export interface CardSettings {
   totalEntries: number;
   pitchLabel: string;
   // Mechanics
-  minCompanions: number;
-  maxCompanions: number;
   sameDayLockoutMinutes: number;
   gracePeriodDays: number;
   // Cancellation
@@ -74,18 +72,11 @@ export interface CancelContext {
   cancelRole: CancelRole;
 }
 
-export interface CompanionLimits {
-  min: number;
-  max: number;
-}
-
 export interface CardSettingsPatch {
   priceShekels?: number;
   validityDays?: number;
   totalEntries?: number;
   pitchLabel?: string;
-  minCompanions?: number;
-  maxCompanions?: number;
   sameDayLockoutMinutes?: number;
   gracePeriodDays?: number;
   allowCancelAfterFirstPunch?: boolean;
@@ -127,9 +118,6 @@ export const getCustomerFormRules = (): Promise<ApiResult<CustomerFormRules>> =>
 
 export const getCancelContext = (): Promise<ApiResult<CancelContext>> =>
   apiRequest('/admin/cancel-context');
-
-export const getCompanionLimits = (): Promise<ApiResult<CompanionLimits>> =>
-  apiRequest('/pos/companion-limits');
 
 // Sell-flow controls exposed to the cashier POS so the modal can render the
 // right inputs (receipt number, PIN prompt) and the editable Hebrew labels

@@ -77,11 +77,11 @@ export function EntriesReport() {
     };
   }, [filters]);
 
-  const cols: TableCol<'when' | 'customer' | 'card' | 'companions' | 'method' | 'staff' | 'refunded'>[] = [
+  const cols: TableCol<'when' | 'customer' | 'card' | 'entries' | 'method' | 'staff' | 'refunded'>[] = [
     { key: 'when', label: 'תאריך + שעה', width: 140 },
     { key: 'customer', label: 'לקוח' },
     { key: 'card', label: 'כרטיסייה', width: 150 },
-    { key: 'companions', label: 'מלווים', width: 80 },
+    { key: 'entries', label: 'כניסות בסריקה', width: 110 },
     { key: 'method', label: 'שיטה', width: 110 },
     { key: 'staff', label: 'קופאי' },
     { key: 'refunded', label: 'החזר', width: 100 },
@@ -97,7 +97,7 @@ export function EntriesReport() {
       },
       { label: 'מס׳ לקוח', value: (r) => r.customerNumber ?? '' },
       { label: 'מס׳ כרטיסייה', value: (r) => r.cardSerial },
-      { label: 'מלווים', value: (r) => r.companionCount },
+      { label: 'כניסות בסריקה', value: (r) => r.entriesConsumed },
       { label: 'שיטה', value: (r) => methodLabel(r.method) },
       {
         label: 'קופאי',
@@ -172,7 +172,7 @@ export function EntriesReport() {
                 )}
               </Td>
               <Td muted>{r.cardSerial}</Td>
-              <Td muted>{r.companionCount}</Td>
+              <Td muted>{r.entriesConsumed}</Td>
               <Td muted>{methodLabel(r.method)}</Td>
               <Td muted>
                 {r.staffFirstName || r.staffLastName

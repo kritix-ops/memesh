@@ -39,9 +39,6 @@ export function humanizeSettingsError(code: string): string {
   if (code === 'validity_out_of_range') return 'תוקף חייב להיות בין 1 ל-3,650 ימים';
   if (code === 'entries_out_of_range') return 'כניסות חייב להיות בין 1 ל-100';
   if (code === 'pitch_length') return 'טקסט שיווקי חייב לכלול בין תו אחד ל-200 תווים';
-  if (code === 'min_companions_out_of_range') return 'מינימום מלווים חייב להיות בין 1 ל-10';
-  if (code === 'max_companions_out_of_range') return 'מקסימום מלווים חייב להיות בין 1 ל-10';
-  if (code === 'companion_range_invalid') return 'מינימום מלווים חייב להיות ≤ מקסימום מלווים';
   if (code === 'lockout_out_of_range') return 'נעילה חייבת להיות בין 0 ל-1440 דקות';
   if (code === 'grace_out_of_range') return 'תקופת חסד חייבת להיות בין 0 ל-90 ימים';
   if (code === 'cancel_reason_length_out_of_range') return 'אורך מינימלי לסיבת ביטול בין 1 ל-500';
