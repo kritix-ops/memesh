@@ -165,8 +165,12 @@ export function Logo({ height = 48 }: LogoProps) {
 export const sunMarkSrc = sunMark;
 export const wordmarkAssetSrc = wordmarkSrc;
 
-// A decorative QR placeholder derived from the serial. The production build
-// renders the real HMAC token via a QR library; this is for the mock UI only.
+/**
+ * @deprecated Use `MemeshQr` (exported from `@memesh/brand`) for any card
+ * UI a customer or cashier actually interacts with. `FauxQr` is a
+ * decorative placeholder that cannot be decoded by a scanner — it exists
+ * only for mock screens and design previews.
+ */
 export function FauxQr({ seed, size = 118 }: { seed: string; size?: number }) {
   const n = 21;
   const m = size / n;

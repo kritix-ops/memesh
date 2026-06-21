@@ -1,4 +1,4 @@
-import { FauxQr, PunchCard, Sun } from '@memesh/brand';
+import { MemeshQr, PunchCard, Sun } from '@memesh/brand';
 import { useStaffSession } from '@memesh/staff-auth';
 import { fmtDate } from '@memesh/web-shared';
 import { Scanner, type IDetectedBarcode, type IScannerError } from '@yudiel/react-qr-scanner';
@@ -544,6 +544,11 @@ export function PosApp() {
       cardId: res.data.card.id,
       serial: res.data.card.serialNumber,
     });
+    console.info('[pos card] qr rendered', {
+      ctx: 'post-sale',
+      serial: res.data.card.serialNumber,
+      tokenLen: res.data.card.qrToken.length,
+    });
     // Refresh the PIN's sliding-window expiry on every successful sale.
     if (sessionUser && pin) {
       writeCachedPin(sessionUser.id, pin, sellControls.pinMemoryMinutes);
@@ -663,6 +668,19 @@ export function PosApp() {
       cancelled = true;
     };
   }, [selectedId]);
+
+  // Diagnostic for the active-card QR render. Length only, never the token —
+  // enough to confirm wiring without giving a console screenshot punch power.
+  useEffect(() => {
+    if (!detail) return;
+    const active = pickActiveCard(detail.cards);
+    if (!active) return;
+    console.info('[pos card] qr rendered', {
+      ctx: 'active-card',
+      serial: active.serialNumber,
+      tokenLen: active.qrToken.length,
+    });
+  }, [detail]);
 
   // Open the companion-count modal. A fresh UUID lives for this intent only.
   const openPunch = () => {
@@ -1138,7 +1156,11 @@ export function PosApp() {
                 gap: 10,
               }}
             >
-              <FauxQr seed={activeCard.serialNumber} size={140} />
+              <MemeshQr
+                value={activeCard.qrToken}
+                size={200}
+                title={`קוד QR — ${activeCard.serialNumber}`}
+              />
               <div style={{ fontSize: 13, color: MUTED }}>{activeCard.serialNumber}</div>
               <div style={{ fontSize: 13, color: MUTED }}>
                 {activeCard.expiresAt === null
@@ -1869,7 +1891,11 @@ export function PosApp() {
               הכרטיסייה זמינה בכרטיס הלקוח. שליחת ה-SMS עם ה-QR תיכנס בעדכון הבא.
             </div>
             <div style={{ display: 'flex', justifyContent: 'center', margin: '18px 0' }}>
-              <FauxQr seed={sellResponse.card.serialNumber} size={140} />
+              <MemeshQr
+                value={sellResponse.card.qrToken}
+                size={200}
+                title={`קוד QR — ${sellResponse.card.serialNumber}`}
+              />
             </div>
             <div style={{ fontSize: 13, color: MUTED, marginBottom: 4 }}>
               {sellResponse.card.serialNumber}

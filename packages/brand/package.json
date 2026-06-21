@@ -8,14 +8,19 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --import tsx src/MemeshQr.test.tsx"
   },
   "peerDependencies": {
     "react": "^19.0.0"
   },
+  "dependencies": {
+    "qrcode.react": "^4.2.0"
+  },
   "devDependencies": {
     "@types/react": "^19.0.0",
     "react": "^19.0.0",
+    "tsx": "^4.19.0",
     "typescript": "^5.7.0"
   }
 }
