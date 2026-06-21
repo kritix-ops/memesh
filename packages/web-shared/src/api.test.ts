@@ -203,3 +203,91 @@ test('apiRequest with audience:customer fires customer callback only', async () 
   assert.equal(customerExpired, 0);
   assert.equal(staffExpired, 0);
 });
+
+// ---------------------------------------------------------------------------
+// Network-error + invalid-response handling. Without these, an outage of
+// api.memesh.co.il (or a misconfigured proxy returning HTML) hangs the
+// session provider's initial fetch and the frontend shows an endless spinner.
+// ---------------------------------------------------------------------------
+
+function stubFetchThrows(err: unknown): void {
+  globalThis.fetch = (async () => {
+    throw err;
+  }) as typeof fetch;
+}
+
+test('apiRequest returns network_error on fetch failure (DNS, offline, etc.)', async () => {
+  stubFetchThrows(new TypeError('fetch failed: getaddrinfo ENOTFOUND'));
+  const res = await apiRequest('/auth/me');
+  assert.equal(res.ok, false);
+  if (!res.ok) {
+    assert.equal(res.status, 0);
+    assert.equal(res.error, 'network_error');
+  }
+});
+
+test('apiRequest on network failure fires onSessionExpired (drops staff to signed-out)', async () => {
+  let expired = 0;
+  setOnSessionExpired(() => {
+    expired += 1;
+  });
+  stubFetchThrows(new TypeError('fetch failed'));
+  await apiRequest('/auth/me');
+  assert.equal(expired, 1);
+});
+
+test('apiRequest on network failure fires onCustomerSessionExpired for audience:customer', async () => {
+  let customerExpired = 0;
+  let staffExpired = 0;
+  setOnCustomerSessionExpired(() => {
+    customerExpired += 1;
+  });
+  setOnSessionExpired(() => {
+    staffExpired += 1;
+  });
+  stubFetchThrows(new TypeError('fetch failed'));
+  await apiRequest('/me', { audience: 'customer' });
+  assert.equal(customerExpired, 1);
+  assert.equal(staffExpired, 0);
+});
+
+test('apiRequest on network failure for /auth/refresh does NOT fire onSessionExpired (skip-list)', async () => {
+  let expired = 0;
+  setOnSessionExpired(() => {
+    expired += 1;
+  });
+  stubFetchThrows(new TypeError('fetch failed'));
+  await apiRequest('/auth/refresh', { method: 'POST' });
+  // /auth/refresh is in SKIP_AUTO_REFRESH — the refresh wrapper handles its
+  // own failure path; firing here would double-fire.
+  assert.equal(expired, 0);
+});
+
+test('apiRequest re-throws AbortError so debounced callers know they cancelled', async () => {
+  const abortErr = new DOMException('aborted', 'AbortError');
+  stubFetchThrows(abortErr);
+  let caught: unknown = null;
+  try {
+    await apiRequest('/customers?q=noa');
+  } catch (err) {
+    caught = err;
+  }
+  assert.ok(caught instanceof DOMException);
+  assert.equal((caught as DOMException).name, 'AbortError');
+});
+
+test('apiRequest returns invalid_response when a 2xx body is not JSON (SPA fallback bleed)', async () => {
+  // Server returned 200 with HTML body (the SPA's index.html).
+  globalThis.fetch = (async () => {
+    return new Response('<!doctype html><html>...</html>', {
+      status: 200,
+      headers: { 'Content-Type': 'text/html' },
+    });
+  }) as typeof fetch;
+  const res = await apiRequest('/auth/me');
+  assert.equal(res.ok, false);
+  if (!res.ok) {
+    assert.equal(res.status, 200);
+    assert.equal(res.error, 'invalid_response');
+  }
+});
