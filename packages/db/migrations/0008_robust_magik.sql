@@ -1,0 +1,3 @@
+ALTER TABLE "card_settings" ADD COLUMN "checkout_thankyou_title" text DEFAULT 'תודה רבה, {{firstName}}! 🎉' NOT NULL;--> statement-breakpoint
+ALTER TABLE "card_settings" ADD COLUMN "checkout_thankyou_body" text DEFAULT 'הכרטיסייה שלך מוכנה ומחכה לך באזור האישי. נשמח לראותך אצלנו בקרוב.' NOT NULL;--> statement-breakpoint
+ALTER TABLE "card_settings" ADD COLUMN "checkout_thankyou_button_text" text DEFAULT 'לאזור האישי שלי' NOT NULL;
