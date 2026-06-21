@@ -108,6 +108,7 @@ export const wcHandoffRoutes: FastifyPluginAsync = async (fastify) => {
       // so the customer + cards exist by the time we try to look them up.
       // The processor is idempotent — running it here is a no-op if the
       // webhook already processed this delivery, and creates rows otherwise.
+      let processorDiag: { status: string; reason?: string; issues?: unknown } | undefined;
       if (parsed.data.order !== undefined) {
         const result = await processWcOrderWebhook(db, {
           deliveryId: `wc-handoff-${parsed.data.orderId}`,
@@ -115,8 +116,15 @@ export const wcHandoffRoutes: FastifyPluginAsync = async (fastify) => {
           payload: parsed.data.order,
           resolver: envKeyResolver,
         });
+        // Capture the issues/reason on failure so the next attempt can
+        // diagnose without another log-chase round-trip.
+        processorDiag = {
+          status: result.status,
+          ...(result.status === 'invalid_payload' && { issues: result.issues }),
+          ...(result.status === 'failure' && { reason: result.reason }),
+        };
         request.log.info(
-          { orderId: parsed.data.orderId, processorStatus: result.status },
+          { orderId: parsed.data.orderId, ...processorDiag },
           '[wc handoff inline-processor]',
         );
       }
@@ -153,7 +161,14 @@ export const wcHandoffRoutes: FastifyPluginAsync = async (fastify) => {
           { orderId: parsed.data.orderId, hasPhone: !!parsed.data.phone, hasEmail: !!parsed.data.email },
           '[wc handoff mint] customer_not_ready',
         );
-        return reply.code(409).send({ error: 'customer_not_ready' });
+        // Surface the processor diagnostic (zod issues / failure reason)
+        // back to the WP caller so it lands in the WP error_log. This
+        // endpoint is server-to-server and authed via the shared secret,
+        // so exposing the diagnostic isn't a leak.
+        return reply.code(409).send({
+          error: 'customer_not_ready',
+          ...(processorDiag !== undefined && { processor: processorDiag }),
+        });
       }
 
       const minted = await mintHandoffToken(db, {
