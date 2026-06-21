@@ -3,6 +3,7 @@ export * from './schema/index.js';
 export * from './punch.js';
 export * from './cards.js';
 export * from './otp.js';
+export * from './handoff-tokens.js';
 export * from './email-otp.js';
 export * from './accounts.js';
 export * from './reports.js';
