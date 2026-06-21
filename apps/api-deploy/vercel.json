@@ -2,6 +2,7 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
   "buildCommand": "if [ \"$VERCEL_ENV\" = \"production\" ]; then (cd ../../packages/db && pnpm db:migrate); fi && node scripts/build-api-bundle.mjs",
+  "outputDirectory": "public",
   "rewrites": [{ "source": "/(.*)", "destination": "/api/server" }],
   "headers": [
     {
