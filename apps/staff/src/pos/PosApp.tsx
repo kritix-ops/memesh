@@ -762,7 +762,7 @@ export function PosApp() {
         {screen === 'customer' && <Customer />}
         {screen === 'new' && <NewCustomer />}
         {screen === 'sell' && <Sell />}
-        {screen === 'scan' && <Scan />}
+        {screen === 'scan' && <Scan onClose={() => setScreen('home')} />}
       </main>
       {pinModalOpen && sessionUser && (
         <SellerPinModal
@@ -1609,290 +1609,6 @@ export function PosApp() {
     );
   }
 
-  function Scan() {
-    // 'loading-preview' fetches /scan/lookup before the modal opens, so the
-    // cashier sees customer + card context (and a red banner for problem
-    // cards) instead of a blank entries picker.
-    type ScanPhase =
-      | 'camera'
-      | 'serial'
-      | 'loading-preview'
-      | 'confirming'
-      | 'submitting'
-      | 'success'
-      | 'error';
-    type Source = { mode: 'token'; token: string } | { mode: 'serial'; serial: string };
-
-    const [phase, setPhase] = useState<ScanPhase>('camera');
-    const [source, setSource] = useState<Source | null>(null);
-    const [scanKey, setScanKey] = useState('');
-    const [cameraError, setCameraError] = useState<string | null>(null);
-    const [result, setResult] = useState<{ remaining: number; total: number } | null>(null);
-    const [punchErrorMsg, setPunchErrorMsg] = useState<string | null>(null);
-    const [serialInput, setSerialInput] = useState('');
-    const [serialFieldError, setSerialFieldError] = useState<string | null>(null);
-    const [preview, setPreview] = useState<ScanLookupResponse | null>(null);
-
-    useEffect(() => {
-      console.info('[web scan] mounted');
-      return () => console.info('[web scan] unmounted');
-    }, []);
-
-    const reset = () => {
-      setPhase('camera');
-      setSource(null);
-      setResult(null);
-      setPunchErrorMsg(null);
-      setSerialInput('');
-      setSerialFieldError(null);
-      setCameraError(null);
-      setPreview(null);
-    };
-
-    // Fetch /scan/lookup using the captured source, then transition to the
-    // confirming phase whether the card is punchable or not. The modal itself
-    // decides whether to show the entries picker or the red banner based on
-    // preview.status.
-    //
-    // TEMP DIAGNOSTIC: on an invalid_signature failure from the token path,
-    // also call /debug/qr/verify so the modal surfaces the precise verifyToken
-    // reason (bad_signature / unknown_key_id / invalid_format / …) instead of
-    // the collapsed "QR לא תקין". Remove once the qr-verify investigation
-    // closes — see _plans/2026-06-21-real-qr-codes.md.
-    const fetchPreview = async (nextSource: Source) => {
-      setPhase('loading-preview');
-      console.info('[web scan] preview fetch', { mode: nextSource.mode });
-      const res =
-        nextSource.mode === 'token'
-          ? await lookupByToken(nextSource.token)
-          : await lookupBySerial(nextSource.serial);
-      if (res.ok) {
-        console.info('[web scan] preview ok', { status: res.data.status });
-        setPreview(res.data);
-        setPhase('confirming');
-        return;
-      }
-      console.warn('[web scan] preview error', { status: res.status, error: res.error });
-      let message = humanizePunchError(res.error);
-      if (res.error === 'invalid_signature' && nextSource.mode === 'token') {
-        const dbg = await debugVerifyToken(nextSource.token);
-        if (dbg.ok) {
-          console.warn('[web scan] debug verify', dbg.data);
-          message = `${message}\n(diag: ${dbg.data.verifyResult}; envKeyId=${dbg.data.envKeyId}; tokenKeyId=${dbg.data.tokenStructure.payloadKeyId ?? 'null'}; serial=${dbg.data.tokenStructure.payloadSerial ?? 'null'})`;
-        } else {
-          console.warn('[web scan] debug verify failed', { status: dbg.status, error: dbg.error });
-          message = `${message}\n(diag unavailable: ${dbg.error})`;
-        }
-      }
-      setPunchErrorMsg(message);
-      setPhase('error');
-    };
-
-    const onScannerDetect = (codes: IDetectedBarcode[]) => {
-      if (phase !== 'camera') return;
-      const first = codes[0];
-      if (!first?.rawValue) return;
-      console.info('[web scan] detected', { tokenPrefix: first.rawValue.slice(0, 8) });
-      const nextSource: Source = { mode: 'token', token: first.rawValue };
-      setSource(nextSource);
-      setScanKey(crypto.randomUUID());
-      void fetchPreview(nextSource);
-    };
-
-    const onScannerError = (err: unknown) => {
-      const scannerErr = err as IScannerError;
-      console.warn('[web scan] error', { kind: scannerErr.kind });
-      setCameraError(humanizeScanError(scannerErr.kind));
-    };
-
-    const submitSerial = () => {
-      const trimmed = serialInput.trim();
-      if (!trimmed) {
-        setSerialFieldError('נא להזין מספר סידורי');
-        return;
-      }
-      setSerialFieldError(null);
-      const nextSource: Source = { mode: 'serial', serial: trimmed };
-      setSource(nextSource);
-      setScanKey(crypto.randomUUID());
-      void fetchPreview(nextSource);
-    };
-
-    const confirmPunch = async (entries: number) => {
-      if (!source) return;
-      setPhase('submitting');
-      setPunchErrorMsg(null);
-      console.info('[web scan] punch submit', { mode: source.mode, entries });
-      const res =
-        source.mode === 'token'
-          ? await punchByToken(source.token, { entries, idempotencyKey: scanKey })
-          : await punchBySerial(source.serial, { entries, idempotencyKey: scanKey });
-      if (res.ok) {
-        console.info('[web scan] punch success', { remaining: res.data.remaining });
-        setResult({ remaining: res.data.remaining, total: res.data.totalEntries });
-        setPhase('success');
-        return;
-      }
-      console.warn('[web scan] punch error', { status: res.status, error: res.error });
-      setPunchErrorMsg(humanizePunchError(res.error));
-      setPhase('error');
-    };
-
-    return (
-      <div>
-        <BackBar label="חזרה" onClick={() => setScreen('home')} />
-        {phase === 'camera' && (
-          <div style={{ ...card, textAlign: 'center' }}>
-            <div
-              style={{
-                borderRadius: 16,
-                overflow: 'hidden',
-                aspectRatio: '4 / 3',
-                background: INK,
-                position: 'relative',
-              }}
-            >
-              {cameraError ? (
-                <div
-                  style={{
-                    color: '#fff',
-                    padding: 24,
-                    fontSize: 14,
-                    height: '100%',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    textAlign: 'center',
-                  }}
-                >
-                  {cameraError}
-                </div>
-              ) : (
-                <Scanner
-                  onScan={onScannerDetect}
-                  onError={onScannerError}
-                  constraints={{ facingMode: 'environment' }}
-                  styles={{
-                    container: { width: '100%', height: '100%' },
-                    video: { width: '100%', height: '100%', objectFit: 'cover' },
-                  }}
-                />
-              )}
-            </div>
-            <div style={{ color: MUTED, fontSize: 13.5, marginTop: 12 }}>
-              מקמו את קוד ה-QR של הכרטיסייה במסגרת
-            </div>
-            <button
-              style={{ ...ghostBtn, width: '100%', marginTop: 12 }}
-              onClick={() => {
-                setSerialInput('');
-                setSerialFieldError(null);
-                setPhase('serial');
-              }}
-            >
-              הזנת מספר סידורי במקום
-            </button>
-          </div>
-        )}
-
-        {phase === 'serial' && (
-          <div style={{ ...card }}>
-            <div style={{ fontSize: 18, fontWeight: 600, marginBottom: 6 }}>הזנת מספר סידורי</div>
-            <div style={{ color: MUTED, fontSize: 13.5, marginBottom: 14 }}>
-              מספר סידורי בפורמט M-YYYYMMDD-NNNN מודפס על הכרטיסייה
-            </div>
-            <input
-              autoFocus
-              value={serialInput}
-              onChange={(e) => setSerialInput(e.target.value)}
-              placeholder="M-20260618-0001"
-              style={{
-                ...inputStyle,
-                borderColor: serialFieldError ? '#e8a4a4' : '#e9e0d9',
-                letterSpacing: 1,
-              }}
-            />
-            {serialFieldError && (
-              <div style={{ fontSize: 12.5, color: '#a23a3a', marginTop: 6 }} role="alert">
-                {serialFieldError}
-              </div>
-            )}
-            <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
-              <button
-                style={{ ...ghostBtn, flex: 1 }}
-                onClick={() => {
-                  setSerialInput('');
-                  setSerialFieldError(null);
-                  setPhase('camera');
-                }}
-              >
-                חזרה לסריקה
-              </button>
-              <button style={{ ...primaryBtn, flex: 1 }} onClick={submitSerial}>
-                המשך
-              </button>
-            </div>
-          </div>
-        )}
-
-        {phase === 'loading-preview' && (
-          <div style={{ ...card, textAlign: 'center', color: MUTED }}>
-            טוען פרטי כרטיסייה…
-          </div>
-        )}
-
-        {(phase === 'confirming' || phase === 'submitting') && (
-          <PunchConfirmModal
-            onClose={() => {
-              if (phase === 'submitting') return;
-              reset();
-            }}
-            onConfirm={confirmPunch}
-            submitting={phase === 'submitting'}
-            {...(preview !== null && { preview })}
-          />
-        )}
-
-        {phase === 'success' && result && (
-          <div style={{ ...card, textAlign: 'center' }}>
-            <div
-              style={{
-                display: 'flex',
-                justifyContent: 'center',
-                animation: 'memesh-burst 0.5s ease',
-              }}
-            >
-              <Sun size={96} />
-            </div>
-            <div style={{ fontSize: 22, fontWeight: 600, marginTop: 12 }}>ניקוב בוצע</div>
-            <div style={{ color: MUTED, marginTop: 6 }}>
-              נותרו {result.remaining} מתוך {result.total}
-            </div>
-            <button style={{ ...primaryBtn, width: '100%', marginTop: 18 }} onClick={reset}>
-              סריקה הבאה
-            </button>
-          </div>
-        )}
-
-        {phase === 'error' && (
-          <div style={{ ...card, textAlign: 'center' }}>
-            <div style={{ fontSize: 20, fontWeight: 600, color: '#c25a5a' }}>הניקוב לא בוצע</div>
-            <div style={{ color: MUTED, marginTop: 8, fontSize: 14, whiteSpace: 'pre-wrap' }}>
-              {punchErrorMsg ?? 'שגיאה לא ידועה.'}
-            </div>
-            <div style={{ display: 'flex', gap: 10, marginTop: 18 }}>
-              <button style={{ ...ghostBtn, flex: 1 }} onClick={() => setPhase('serial')}>
-                מספר סידורי
-              </button>
-              <button style={{ ...primaryBtn, flex: 1 }} onClick={reset}>
-                סריקה חוזרת
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-    );
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -2232,6 +1948,297 @@ function NewCustomerExtras({
               </div>
             </span>
           </label>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Scan — full-screen scan/punch flow: camera scan, fallback serial entry,
+// preview lookup, entries-picker modal, success and error tails. Owns its own
+// phase state internally; the only outer dependency is onClose (navigate back).
+// ---------------------------------------------------------------------------
+
+type ScanPhase =
+  | 'camera'
+  | 'serial'
+  | 'loading-preview'
+  | 'confirming'
+  | 'submitting'
+  | 'success'
+  | 'error';
+type ScanSource = { mode: 'token'; token: string } | { mode: 'serial'; serial: string };
+
+function Scan({ onClose }: { onClose: () => void }) {
+  // 'loading-preview' fetches /scan/lookup before the modal opens, so the
+  // cashier sees customer + card context (and a red banner for problem
+  // cards) instead of a blank entries picker.
+  const [phase, setPhase] = useState<ScanPhase>('camera');
+  const [source, setSource] = useState<ScanSource | null>(null);
+  const [scanKey, setScanKey] = useState('');
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const [result, setResult] = useState<{ remaining: number; total: number } | null>(null);
+  const [punchErrorMsg, setPunchErrorMsg] = useState<string | null>(null);
+  const [serialInput, setSerialInput] = useState('');
+  const [serialFieldError, setSerialFieldError] = useState<string | null>(null);
+  const [preview, setPreview] = useState<ScanLookupResponse | null>(null);
+
+  useEffect(() => {
+    console.info('[web scan] mounted');
+    return () => console.info('[web scan] unmounted');
+  }, []);
+
+  const reset = () => {
+    setPhase('camera');
+    setSource(null);
+    setResult(null);
+    setPunchErrorMsg(null);
+    setSerialInput('');
+    setSerialFieldError(null);
+    setCameraError(null);
+    setPreview(null);
+  };
+
+  // Fetch /scan/lookup using the captured source, then transition to the
+  // confirming phase whether the card is punchable or not. The modal itself
+  // decides whether to show the entries picker or the red banner based on
+  // preview.status.
+  //
+  // TEMP DIAGNOSTIC: on an invalid_signature failure from the token path,
+  // also call /debug/qr/verify so the modal surfaces the precise verifyToken
+  // reason (bad_signature / unknown_key_id / invalid_format / …) instead of
+  // the collapsed "QR לא תקין". Remove once the qr-verify investigation
+  // closes — see _plans/2026-06-21-real-qr-codes.md.
+  const fetchPreview = async (nextSource: ScanSource) => {
+    setPhase('loading-preview');
+    console.info('[web scan] preview fetch', { mode: nextSource.mode });
+    const res =
+      nextSource.mode === 'token'
+        ? await lookupByToken(nextSource.token)
+        : await lookupBySerial(nextSource.serial);
+    if (res.ok) {
+      console.info('[web scan] preview ok', { status: res.data.status });
+      setPreview(res.data);
+      setPhase('confirming');
+      return;
+    }
+    console.warn('[web scan] preview error', { status: res.status, error: res.error });
+    let message = humanizePunchError(res.error);
+    if (res.error === 'invalid_signature' && nextSource.mode === 'token') {
+      const dbg = await debugVerifyToken(nextSource.token);
+      if (dbg.ok) {
+        console.warn('[web scan] debug verify', dbg.data);
+        message = `${message}\n(diag: ${dbg.data.verifyResult}; envKeyId=${dbg.data.envKeyId}; tokenKeyId=${dbg.data.tokenStructure.payloadKeyId ?? 'null'}; serial=${dbg.data.tokenStructure.payloadSerial ?? 'null'})`;
+      } else {
+        console.warn('[web scan] debug verify failed', { status: dbg.status, error: dbg.error });
+        message = `${message}\n(diag unavailable: ${dbg.error})`;
+      }
+    }
+    setPunchErrorMsg(message);
+    setPhase('error');
+  };
+
+  const onScannerDetect = (codes: IDetectedBarcode[]) => {
+    if (phase !== 'camera') return;
+    const first = codes[0];
+    if (!first?.rawValue) return;
+    console.info('[web scan] detected', { tokenPrefix: first.rawValue.slice(0, 8) });
+    const nextSource: ScanSource = { mode: 'token', token: first.rawValue };
+    setSource(nextSource);
+    setScanKey(crypto.randomUUID());
+    void fetchPreview(nextSource);
+  };
+
+  const onScannerError = (err: unknown) => {
+    const scannerErr = err as IScannerError;
+    console.warn('[web scan] error', { kind: scannerErr.kind });
+    setCameraError(humanizeScanError(scannerErr.kind));
+  };
+
+  const submitSerial = () => {
+    const trimmed = serialInput.trim();
+    if (!trimmed) {
+      setSerialFieldError('נא להזין מספר סידורי');
+      return;
+    }
+    setSerialFieldError(null);
+    const nextSource: ScanSource = { mode: 'serial', serial: trimmed };
+    setSource(nextSource);
+    setScanKey(crypto.randomUUID());
+    void fetchPreview(nextSource);
+  };
+
+  const confirmPunch = async (entries: number) => {
+    if (!source) return;
+    setPhase('submitting');
+    setPunchErrorMsg(null);
+    console.info('[web scan] punch submit', { mode: source.mode, entries });
+    const res =
+      source.mode === 'token'
+        ? await punchByToken(source.token, { entries, idempotencyKey: scanKey })
+        : await punchBySerial(source.serial, { entries, idempotencyKey: scanKey });
+    if (res.ok) {
+      console.info('[web scan] punch success', { remaining: res.data.remaining });
+      setResult({ remaining: res.data.remaining, total: res.data.totalEntries });
+      setPhase('success');
+      return;
+    }
+    console.warn('[web scan] punch error', { status: res.status, error: res.error });
+    setPunchErrorMsg(humanizePunchError(res.error));
+    setPhase('error');
+  };
+
+  return (
+    <div>
+      <BackBar label="חזרה" onClick={onClose} />
+      {phase === 'camera' && (
+        <div style={{ ...card, textAlign: 'center' }}>
+          <div
+            style={{
+              borderRadius: 16,
+              overflow: 'hidden',
+              aspectRatio: '4 / 3',
+              background: INK,
+              position: 'relative',
+            }}
+          >
+            {cameraError ? (
+              <div
+                style={{
+                  color: '#fff',
+                  padding: 24,
+                  fontSize: 14,
+                  height: '100%',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  textAlign: 'center',
+                }}
+              >
+                {cameraError}
+              </div>
+            ) : (
+              <Scanner
+                onScan={onScannerDetect}
+                onError={onScannerError}
+                constraints={{ facingMode: 'environment' }}
+                styles={{
+                  container: { width: '100%', height: '100%' },
+                  video: { width: '100%', height: '100%', objectFit: 'cover' },
+                }}
+              />
+            )}
+          </div>
+          <div style={{ color: MUTED, fontSize: 13.5, marginTop: 12 }}>
+            מקמו את קוד ה-QR של הכרטיסייה במסגרת
+          </div>
+          <button
+            style={{ ...ghostBtn, width: '100%', marginTop: 12 }}
+            onClick={() => {
+              setSerialInput('');
+              setSerialFieldError(null);
+              setPhase('serial');
+            }}
+          >
+            הזנת מספר סידורי במקום
+          </button>
+        </div>
+      )}
+
+      {phase === 'serial' && (
+        <div style={{ ...card }}>
+          <div style={{ fontSize: 18, fontWeight: 600, marginBottom: 6 }}>הזנת מספר סידורי</div>
+          <div style={{ color: MUTED, fontSize: 13.5, marginBottom: 14 }}>
+            מספר סידורי בפורמט M-YYYYMMDD-NNNN מודפס על הכרטיסייה
+          </div>
+          <input
+            autoFocus
+            value={serialInput}
+            onChange={(e) => setSerialInput(e.target.value)}
+            placeholder="M-20260618-0001"
+            style={{
+              ...inputStyle,
+              borderColor: serialFieldError ? '#e8a4a4' : '#e9e0d9',
+              letterSpacing: 1,
+            }}
+          />
+          {serialFieldError && (
+            <div style={{ fontSize: 12.5, color: '#a23a3a', marginTop: 6 }} role="alert">
+              {serialFieldError}
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
+            <button
+              style={{ ...ghostBtn, flex: 1 }}
+              onClick={() => {
+                setSerialInput('');
+                setSerialFieldError(null);
+                setPhase('camera');
+              }}
+            >
+              חזרה לסריקה
+            </button>
+            <button style={{ ...primaryBtn, flex: 1 }} onClick={submitSerial}>
+              המשך
+            </button>
+          </div>
+        </div>
+      )}
+
+      {phase === 'loading-preview' && (
+        <div style={{ ...card, textAlign: 'center', color: MUTED }}>
+          טוען פרטי כרטיסייה…
+        </div>
+      )}
+
+      {(phase === 'confirming' || phase === 'submitting') && (
+        <PunchConfirmModal
+          onClose={() => {
+            if (phase === 'submitting') return;
+            reset();
+          }}
+          onConfirm={confirmPunch}
+          submitting={phase === 'submitting'}
+          {...(preview !== null && { preview })}
+        />
+      )}
+
+      {phase === 'success' && result && (
+        <div style={{ ...card, textAlign: 'center' }}>
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'center',
+              animation: 'memesh-burst 0.5s ease',
+            }}
+          >
+            <Sun size={96} />
+          </div>
+          <div style={{ fontSize: 22, fontWeight: 600, marginTop: 12 }}>ניקוב בוצע</div>
+          <div style={{ color: MUTED, marginTop: 6 }}>
+            נותרו {result.remaining} מתוך {result.total}
+          </div>
+          <button style={{ ...primaryBtn, width: '100%', marginTop: 18 }} onClick={reset}>
+            סריקה הבאה
+          </button>
+        </div>
+      )}
+
+      {phase === 'error' && (
+        <div style={{ ...card, textAlign: 'center' }}>
+          <div style={{ fontSize: 20, fontWeight: 600, color: '#c25a5a' }}>הניקוב לא בוצע</div>
+          <div style={{ color: MUTED, marginTop: 8, fontSize: 14, whiteSpace: 'pre-wrap' }}>
+            {punchErrorMsg ?? 'שגיאה לא ידועה.'}
+          </div>
+          <div style={{ display: 'flex', gap: 10, marginTop: 18 }}>
+            <button style={{ ...ghostBtn, flex: 1 }} onClick={() => setPhase('serial')}>
+              מספר סידורי
+            </button>
+            <button style={{ ...primaryBtn, flex: 1 }} onClick={reset}>
+              סריקה חוזרת
+            </button>
+          </div>
         </div>
       )}
     </div>
