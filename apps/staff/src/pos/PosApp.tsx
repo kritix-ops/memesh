@@ -758,7 +758,17 @@ export function PosApp() {
     <>
       <main style={{ maxWidth: 920, margin: '0 auto', padding: '24px 20px 64px' }}>
         {screen === 'home' && <Home />}
-        {screen === 'search' && <Search />}
+        {screen === 'search' && (
+          <Search
+            query={query}
+            setQuery={setQuery}
+            searchLoading={searchLoading}
+            searchError={searchError}
+            searchResults={searchResults}
+            onOpenCustomer={openCustomer}
+            onClose={() => setScreen('home')}
+          />
+        )}
         {screen === 'customer' && <Customer />}
         {screen === 'new' && <NewCustomer />}
         {screen === 'sell' && (
@@ -949,81 +959,6 @@ export function PosApp() {
     );
   }
 
-  function Search() {
-    const q = query.trim();
-    const showEmpty = q.length > 0 && !searchLoading && !searchError && searchResults.length === 0;
-    return (
-      <div>
-        <BackBar label="חזרה" onClick={() => setScreen('home')} />
-        <input
-          autoFocus
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="שם, טלפון או מספר לקוח…"
-          style={inputStyle}
-        />
-        <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {searchLoading && <div style={{ ...card, textAlign: 'center', color: MUTED }}>מחפש…</div>}
-          {searchError && (
-            <div style={{ ...card, textAlign: 'center', color: '#a23a3a' }}>
-              שגיאה בחיפוש. נסו שוב בעוד רגע.
-            </div>
-          )}
-          {searchResults.map((c) => {
-            const a = realAvatar(c.id);
-            return (
-              <button
-                key={c.id}
-                onClick={() => openCustomer(c.id)}
-                style={{
-                  ...card,
-                  padding: 14,
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 14,
-                  cursor: 'pointer',
-                  border: 'none',
-                  textAlign: 'right',
-                }}
-              >
-                <div
-                  style={{
-                    width: 44,
-                    height: 44,
-                    borderRadius: 12,
-                    background: a.bg,
-                    color: a.color,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontWeight: 600,
-                  }}
-                >
-                  {realInitials(c)}
-                </div>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 600 }}>{realFullName(c)}</div>
-                  <div style={{ fontSize: 13, color: MUTED }}>
-                    {c.phone} · {c.customerNumber}
-                  </div>
-                </div>
-              </button>
-            );
-          })}
-          {searchResults.length === 20 && (
-            <div style={{ ...card, textAlign: 'center', color: MUTED, fontSize: 13 }}>
-              מוצגים 20 הראשונים. המשיכו לסנן לחיפוש מדויק יותר.
-            </div>
-          )}
-          {showEmpty && (
-            <div style={{ ...card, textAlign: 'center', color: MUTED }}>
-              לא נמצאו לקוחות שמתאימים לחיפוש
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  }
 
   function Customer() {
     if (detailLoading) {
@@ -1765,6 +1700,105 @@ function NewCustomerExtras({
           </label>
         </div>
       )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Search — query input + debounced result list. Search state and the
+// debounce effect live on PosApp (so the input value persists when the
+// cashier navigates away and back); the screen receives the values to
+// render and the setter for the input.
+// ---------------------------------------------------------------------------
+
+function Search({
+  query,
+  setQuery,
+  searchLoading,
+  searchError,
+  searchResults,
+  onOpenCustomer,
+  onClose,
+}: {
+  query: string;
+  setQuery: (next: string) => void;
+  searchLoading: boolean;
+  searchError: string | null;
+  searchResults: Customer[];
+  onOpenCustomer: (id: string) => void;
+  onClose: () => void;
+}) {
+  const q = query.trim();
+  const showEmpty = q.length > 0 && !searchLoading && !searchError && searchResults.length === 0;
+  return (
+    <div>
+      <BackBar label="חזרה" onClick={onClose} />
+      <input
+        autoFocus
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder="שם, טלפון או מספר לקוח…"
+        style={inputStyle}
+      />
+      <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {searchLoading && <div style={{ ...card, textAlign: 'center', color: MUTED }}>מחפש…</div>}
+        {searchError && (
+          <div style={{ ...card, textAlign: 'center', color: '#a23a3a' }}>
+            שגיאה בחיפוש. נסו שוב בעוד רגע.
+          </div>
+        )}
+        {searchResults.map((c) => {
+          const a = realAvatar(c.id);
+          return (
+            <button
+              key={c.id}
+              onClick={() => onOpenCustomer(c.id)}
+              style={{
+                ...card,
+                padding: 14,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 14,
+                cursor: 'pointer',
+                border: 'none',
+                textAlign: 'right',
+              }}
+            >
+              <div
+                style={{
+                  width: 44,
+                  height: 44,
+                  borderRadius: 12,
+                  background: a.bg,
+                  color: a.color,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontWeight: 600,
+                }}
+              >
+                {realInitials(c)}
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 600 }}>{realFullName(c)}</div>
+                <div style={{ fontSize: 13, color: MUTED }}>
+                  {c.phone} · {c.customerNumber}
+                </div>
+              </div>
+            </button>
+          );
+        })}
+        {searchResults.length === 20 && (
+          <div style={{ ...card, textAlign: 'center', color: MUTED, fontSize: 13 }}>
+            מוצגים 20 הראשונים. המשיכו לסנן לחיפוש מדויק יותר.
+          </div>
+        )}
+        {showEmpty && (
+          <div style={{ ...card, textAlign: 'center', color: MUTED }}>
+            לא נמצאו לקוחות שמתאימים לחיפוש
+          </div>
+        )}
+      </div>
     </div>
   );
 }
