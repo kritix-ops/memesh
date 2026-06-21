@@ -770,7 +770,36 @@ export function PosApp() {
           />
         )}
         {screen === 'customer' && <Customer />}
-        {screen === 'new' && <NewCustomer />}
+        {screen === 'new' && (
+          <NewCustomer
+            newFirst={newFirst}
+            setNewFirst={setNewFirst}
+            newLast={newLast}
+            setNewLast={setNewLast}
+            newPhone={newPhone}
+            setNewPhone={setNewPhone}
+            newEmail={newEmail}
+            setNewEmail={setNewEmail}
+            newFieldErrors={newFieldErrors}
+            newTopError={newTopError}
+            newSubmitting={newSubmitting}
+            newExtrasOpen={newExtrasOpen}
+            onToggleExtras={() => setNewExtrasOpen((v) => !v)}
+            newSource={newSource}
+            setNewSource={setNewSource}
+            newMarketingConsent={newMarketingConsent}
+            setNewMarketingConsent={setNewMarketingConsent}
+            newChildren={newChildren}
+            setNewChildren={setNewChildren}
+            formRules={formRules}
+            sellControls={sellControls}
+            onSubmit={() => void submitNewCustomer()}
+            onClose={() => {
+              resetNewCustomerForm();
+              setScreen('home');
+            }}
+          />
+        )}
         {screen === 'sell' && (
           <Sell
             sellStep={sellStep}
@@ -1228,137 +1257,6 @@ export function PosApp() {
     );
   }
 
-  function NewCustomer() {
-    return (
-      <div>
-        <BackBar
-          label="חזרה"
-          onClick={() => {
-            resetNewCustomerForm();
-            setScreen('home');
-          }}
-        />
-        <div style={{ ...card }}>
-          <div style={{ fontSize: 20, fontWeight: 600, marginBottom: 4 }}>לקוח חדש</div>
-          <div style={{ color: MUTED, fontSize: 14, marginBottom: 18 }}>
-            פרטי הלקוח יישמרו וניתן יהיה למכור כרטיסייה מיד
-          </div>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              void submitNewCustomer();
-            }}
-          >
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))',
-                gap: 14,
-              }}
-            >
-              <NewCustomerField
-                label="שם פרטי"
-                required
-                value={newFirst}
-                onChange={setNewFirst}
-                error={newFieldErrors.firstName}
-                autoComplete="given-name"
-                submitting={newSubmitting}
-              />
-              <NewCustomerField
-                label="שם משפחה"
-                required
-                value={newLast}
-                onChange={setNewLast}
-                error={newFieldErrors.lastName}
-                autoComplete="family-name"
-                submitting={newSubmitting}
-              />
-              <NewCustomerField
-                label="טלפון"
-                required
-                value={newPhone}
-                onChange={setNewPhone}
-                error={newFieldErrors.phone}
-                type="tel"
-                inputMode="tel"
-                autoComplete="tel"
-                placeholder="050-000-0000"
-                submitting={newSubmitting}
-              />
-              <NewCustomerField
-                label="מייל"
-                required={formRules.requireEmail}
-                badge={formRules.requireEmail ? undefined : 'מומלץ'}
-                value={newEmail}
-                onChange={setNewEmail}
-                error={newFieldErrors.email}
-                type="email"
-                inputMode="email"
-                autoComplete="email"
-                submitting={newSubmitting}
-              />
-            </div>
-            {!formRules.requireEmail && (
-              <div
-                style={{
-                  fontSize: 12.5,
-                  color: MUTED,
-                  marginTop: 6,
-                  lineHeight: 1.4,
-                }}
-              >
-                {sellControls.emailNudgeText}
-              </div>
-            )}
-
-            <NewCustomerExtras
-              open={newExtrasOpen}
-              onToggle={() => setNewExtrasOpen((v) => !v)}
-              source={newSource}
-              onSourceChange={setNewSource}
-              marketingConsent={newMarketingConsent}
-              onMarketingConsentChange={setNewMarketingConsent}
-              children={newChildren}
-              onChildrenChange={setNewChildren}
-              submitting={newSubmitting}
-              childrenError={newFieldErrors.children}
-            />
-
-            {newTopError && (
-              <div
-                role="alert"
-                style={{
-                  marginTop: 16,
-                  padding: '10px 14px',
-                  background: '#fbecec',
-                  color: '#a23a3a',
-                  borderRadius: 10,
-                  fontSize: 14,
-                }}
-              >
-                {newTopError}
-              </div>
-            )}
-            <button
-              type="submit"
-              disabled={newSubmitting}
-              style={{
-                ...primaryBtn,
-                width: '100%',
-                marginTop: 20,
-                opacity: newSubmitting ? 0.6 : 1,
-                cursor: newSubmitting ? 'default' : 'pointer',
-              }}
-            >
-              {newSubmitting ? 'שומר…' : 'שמור ומכור כרטיסייה'}
-            </button>
-          </form>
-        </div>
-      </div>
-    );
-  }
-
 }
 
 // ---------------------------------------------------------------------------
@@ -1798,6 +1696,195 @@ function Search({
             לא נמצאו לקוחות שמתאימים לחיפוש
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// NewCustomer — full New Customer form. State lives on PosApp so the form
+// can survive navigation away (and so the post-submit handoff into the sell
+// flow has the customer id ready). Props are wide because the screen reads
+// every form field; setters travel as raw setters to match the existing
+// NewCustomerField/NewCustomerExtras prop shapes.
+// ---------------------------------------------------------------------------
+
+interface NewCustomerFieldErrors {
+  firstName?: string;
+  lastName?: string;
+  phone?: string;
+  email?: string;
+  children?: string;
+}
+
+function NewCustomer({
+  newFirst,
+  setNewFirst,
+  newLast,
+  setNewLast,
+  newPhone,
+  setNewPhone,
+  newEmail,
+  setNewEmail,
+  newFieldErrors,
+  newTopError,
+  newSubmitting,
+  newExtrasOpen,
+  onToggleExtras,
+  newSource,
+  setNewSource,
+  newMarketingConsent,
+  setNewMarketingConsent,
+  newChildren,
+  setNewChildren,
+  formRules,
+  sellControls,
+  onSubmit,
+  onClose,
+}: {
+  newFirst: string;
+  setNewFirst: (next: string) => void;
+  newLast: string;
+  setNewLast: (next: string) => void;
+  newPhone: string;
+  setNewPhone: (next: string) => void;
+  newEmail: string;
+  setNewEmail: (next: string) => void;
+  newFieldErrors: NewCustomerFieldErrors;
+  newTopError: string | null;
+  newSubmitting: boolean;
+  newExtrasOpen: boolean;
+  onToggleExtras: () => void;
+  newSource: CustomerSourceValue | '';
+  setNewSource: (next: CustomerSourceValue | '') => void;
+  newMarketingConsent: boolean;
+  setNewMarketingConsent: (next: boolean) => void;
+  newChildren: ChildRecord[];
+  setNewChildren: (next: ChildRecord[]) => void;
+  formRules: CustomerFormRules;
+  sellControls: PosSellControls;
+  onSubmit: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <div>
+      <BackBar label="חזרה" onClick={onClose} />
+      <div style={{ ...card }}>
+        <div style={{ fontSize: 20, fontWeight: 600, marginBottom: 4 }}>לקוח חדש</div>
+        <div style={{ color: MUTED, fontSize: 14, marginBottom: 18 }}>
+          פרטי הלקוח יישמרו וניתן יהיה למכור כרטיסייה מיד
+        </div>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            onSubmit();
+          }}
+        >
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))',
+              gap: 14,
+            }}
+          >
+            <NewCustomerField
+              label="שם פרטי"
+              required
+              value={newFirst}
+              onChange={setNewFirst}
+              error={newFieldErrors.firstName}
+              autoComplete="given-name"
+              submitting={newSubmitting}
+            />
+            <NewCustomerField
+              label="שם משפחה"
+              required
+              value={newLast}
+              onChange={setNewLast}
+              error={newFieldErrors.lastName}
+              autoComplete="family-name"
+              submitting={newSubmitting}
+            />
+            <NewCustomerField
+              label="טלפון"
+              required
+              value={newPhone}
+              onChange={setNewPhone}
+              error={newFieldErrors.phone}
+              type="tel"
+              inputMode="tel"
+              autoComplete="tel"
+              placeholder="050-000-0000"
+              submitting={newSubmitting}
+            />
+            <NewCustomerField
+              label="מייל"
+              required={formRules.requireEmail}
+              badge={formRules.requireEmail ? undefined : 'מומלץ'}
+              value={newEmail}
+              onChange={setNewEmail}
+              error={newFieldErrors.email}
+              type="email"
+              inputMode="email"
+              autoComplete="email"
+              submitting={newSubmitting}
+            />
+          </div>
+          {!formRules.requireEmail && (
+            <div
+              style={{
+                fontSize: 12.5,
+                color: MUTED,
+                marginTop: 6,
+                lineHeight: 1.4,
+              }}
+            >
+              {sellControls.emailNudgeText}
+            </div>
+          )}
+
+          <NewCustomerExtras
+            open={newExtrasOpen}
+            onToggle={onToggleExtras}
+            source={newSource}
+            onSourceChange={setNewSource}
+            marketingConsent={newMarketingConsent}
+            onMarketingConsentChange={setNewMarketingConsent}
+            children={newChildren}
+            onChildrenChange={setNewChildren}
+            submitting={newSubmitting}
+            childrenError={newFieldErrors.children}
+          />
+
+          {newTopError && (
+            <div
+              role="alert"
+              style={{
+                marginTop: 16,
+                padding: '10px 14px',
+                background: '#fbecec',
+                color: '#a23a3a',
+                borderRadius: 10,
+                fontSize: 14,
+              }}
+            >
+              {newTopError}
+            </div>
+          )}
+          <button
+            type="submit"
+            disabled={newSubmitting}
+            style={{
+              ...primaryBtn,
+              width: '100%',
+              marginTop: 20,
+              opacity: newSubmitting ? 0.6 : 1,
+              cursor: newSubmitting ? 'default' : 'pointer',
+            }}
+          >
+            {newSubmitting ? 'שומר…' : 'שמור ומכור כרטיסייה'}
+          </button>
+        </form>
       </div>
     </div>
   );
