@@ -53,7 +53,7 @@ test('constructor throws when fromNumber is missing', () => {
   );
 });
 
-test('send POSTs to the documented endpoint with X-Api-Key header and JSON body', async () => {
+test('send POSTs to the documented endpoint with APIKEY header and JSON body', async () => {
   const p = make({ responses: [{ status: 200, body: { status: 0, id: 'srv-1' } }] });
   const res = await p.send({ to: '052-345-6789', body: 'hello' });
 
@@ -65,7 +65,11 @@ test('send POSTs to the documented endpoint with X-Api-Key header and JSON body'
   assert.equal(calls[0]?.url, 'https://api.pulseem.com/api/v1/SmsApi/SendSms');
 
   const headers = calls[0]?.init.headers as Record<string, string> | undefined;
-  assert.equal(headers?.['X-Api-Key'], 'pk-test-abc');
+  // Pulseem's server expects the literal header name "APIKEY", not the
+  // swagger-documented "X-Api-Key". Anything else produces a 403
+  // "Invalid API Key!" response.
+  assert.equal(headers?.['APIKEY'], 'pk-test-abc');
+  assert.equal(headers?.['X-Api-Key'], undefined);
   assert.equal(headers?.['Content-Type'], 'application/json');
   // Must NOT use Bearer auth — that's the 019 provider's pattern, not Pulseem's.
   assert.equal(headers?.['Authorization'], undefined);

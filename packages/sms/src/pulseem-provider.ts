@@ -10,7 +10,10 @@ import type { SmsMessage, SmsProvider, SmsSendResult } from './provider.js';
  * different per-message economics.
  *
  * API reference: https://api.pulseem.com/swagger/index.html
- *   - Auth: X-Api-Key header
+ *   - Auth: APIKEY header (the literal string "APIKEY", not "X-Api-Key" —
+ *     verified with Pulseem support 2026-06-21; the swagger says "X-Api-Key"
+ *     but their server only looks for "APIKEY", which produces a 403
+ *     "Invalid API Key!" response on the wrong header name)
  *   - SMS endpoint: POST /api/v1/SmsApi/SendSms
  *   - Recipients are array-shaped (toNumberList + textList, parallel arrays).
  *     We send one message at a time per the SmsProvider contract, so each
@@ -101,7 +104,7 @@ export class PulseemProvider implements SmsProvider {
       response = await this.fetchImpl(this.endpoint, {
         method: 'POST',
         headers: {
-          'X-Api-Key': this.apiKey,
+          APIKEY: this.apiKey,
           'Content-Type': 'application/json',
           Accept: 'application/json',
         },
