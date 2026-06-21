@@ -16,7 +16,6 @@ import { meRoutes } from './routes/me.js';
 import { punchRoutes } from './routes/punch.js';
 import { cronWcReconcileRoutes } from './routes/cron-wc-reconcile.js';
 import { reportsRoutes } from './routes/reports.js';
-import { rolePermissionsRoutes } from './routes/role-permissions.js';
 import { staffRoutes } from './routes/staff.js';
 import { staffPinRoutes } from './routes/staff-pin.js';
 import { wcHandoffRoutes } from './routes/wc-handoff.js';
@@ -92,7 +91,6 @@ export const buildApp = async (): Promise<FastifyInstance> => {
   await fastify.register(debugQrRoutes);
   await fastify.register(staffRoutes);
   await fastify.register(staffPinRoutes);
-  await fastify.register(rolePermissionsRoutes);
   await fastify.register(adminRoutes);
   await fastify.register(reportsRoutes);
   await fastify.register(webhooksWcRoutes);
