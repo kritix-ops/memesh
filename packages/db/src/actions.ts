@@ -14,6 +14,8 @@ export type StaffActionType =
   | 'refund_entry'
   | 'reassign_card'
   | 'edit_card'
+  | 'update_role_permission'
+  | 'reset_role_permissions'
   | 'other';
 
 export interface LogStaffActionInput {
