@@ -757,7 +757,17 @@ export function PosApp() {
   return (
     <>
       <main style={{ maxWidth: 920, margin: '0 auto', padding: '24px 20px 64px' }}>
-        {screen === 'home' && <Home />}
+        {screen === 'home' && (
+          <Home
+            firstName={sessionUser?.firstName}
+            requireSellerPin={sellControls.requireSellerPin}
+            onGoSearch={() => setScreen('search')}
+            onGoNew={() => setScreen('new')}
+            onGoScan={() => setScreen('scan')}
+            onSwitchCashier={switchCashier}
+            onOpenSelfPinModal={() => setSelfPinModalOpen(true)}
+          />
+        )}
         {screen === 'search' && (
           <Search
             query={query}
@@ -866,155 +876,6 @@ export function PosApp() {
     </>
   );
 
-  function Home() {
-    const tiles = [
-      {
-        label: 'חיפוש לקוח',
-        sub: 'לפי שם, טלפון או מספר',
-        bg: 'linear-gradient(160deg,#fff,#fff8f3)',
-        border: '#ffe3d4',
-        tint: '#fff4ee',
-        onClick: () => setScreen('search'),
-      },
-      {
-        label: 'לקוח חדש',
-        sub: 'רישום ומכירת כרטיסייה',
-        bg: 'linear-gradient(160deg,#fff,#f8fbef)',
-        border: '#e7eed6',
-        tint: '#f3f7e8',
-        onClick: () => setScreen('new'),
-      },
-      {
-        label: 'סריקת QR',
-        sub: 'ניקוב כניסה מהיר',
-        bg: ORANGE,
-        border: ORANGE,
-        tint: 'rgba(255,255,255,0.28)',
-        onClick: () => setScreen('scan'),
-      },
-    ];
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'flex-start',
-            justifyContent: 'space-between',
-            gap: 12,
-            flexWrap: 'wrap',
-          }}
-        >
-          <div>
-            <div style={{ fontSize: 24, fontWeight: 600 }}>
-              {greetingFor(new Date())}
-              {sessionUser ? `, ${sessionUser.firstName}` : ''}
-            </div>
-            <div style={{ color: MUTED, marginTop: 4 }}>{hebrewDate(new Date())}</div>
-          </div>
-          {sellControls.requireSellerPin && (
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              <button
-                type="button"
-                onClick={switchCashier}
-                title="מחק את הקוד שנזכר בדפדפן כדי שהקופאי הבא יזין את שלו"
-                style={{
-                  border: '1.5px solid #e9e0d9',
-                  background: '#fff',
-                  color: MUTED,
-                  borderRadius: 10,
-                  padding: '8px 14px',
-                  fontWeight: 600,
-                  fontSize: 13,
-                  cursor: 'pointer',
-                }}
-              >
-                החלף קופאי
-              </button>
-              <button
-                type="button"
-                onClick={() => setSelfPinModalOpen(true)}
-                style={{
-                  border: '1.5px solid #e9e0d9',
-                  background: '#fff',
-                  color: MUTED,
-                  borderRadius: 10,
-                  padding: '8px 14px',
-                  fontWeight: 600,
-                  fontSize: 13,
-                  cursor: 'pointer',
-                }}
-              >
-                ניהול הקוד שלי
-              </button>
-            </div>
-          )}
-        </div>
-        <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
-          <Stat label="כניסות היום" value="0" />
-          <Stat label="כרטיסיות שנמכרו היום" value="0" />
-        </div>
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))',
-            gap: 16,
-          }}
-        >
-          {tiles.map((t) => {
-            const onOrange = t.label === 'סריקת QR';
-            return (
-              <button
-                key={t.label}
-                onClick={t.onClick}
-                style={{
-                  cursor: 'pointer',
-                  textAlign: 'right',
-                  border: `1px solid ${t.border}`,
-                  background: t.bg,
-                  borderRadius: 18,
-                  boxShadow: SHADOW,
-                  padding: '28px 24px',
-                  minHeight: 180,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  justifyContent: 'space-between',
-                  color: onOrange ? '#fff' : INK,
-                }}
-              >
-                <div
-                  style={{
-                    width: 56,
-                    height: 56,
-                    borderRadius: 16,
-                    background: t.tint,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                  }}
-                >
-                  <Sun size={34} ring={!onOrange} />
-                </div>
-                <div>
-                  <div style={{ fontSize: 22, fontWeight: 600 }}>{t.label}</div>
-                  <div
-                    style={{
-                      fontSize: 14,
-                      marginTop: 4,
-                      color: onOrange ? 'rgba(255,255,255,0.9)' : MUTED,
-                    }}
-                  >
-                    {t.sub}
-                  </div>
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-    );
-  }
-
-
 
 }
 
@@ -1053,6 +914,176 @@ function Stat({ label, value }: { label: string; value: string }) {
     <div style={{ ...card, padding: '14px 22px', minWidth: 150 }}>
       <div style={{ fontSize: 30, fontWeight: 600, color: ORANGE }}>{value}</div>
       <div style={{ fontSize: 13.5, color: MUTED, marginTop: 2 }}>{label}</div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Home — POS landing screen: greeting, two daily stats, three primary tiles
+// (search / new customer / scan), and the cashier PIN management strip.
+// Pure presentation; everything else is driven by parent props.
+// ---------------------------------------------------------------------------
+
+function Home({
+  firstName,
+  requireSellerPin,
+  onGoSearch,
+  onGoNew,
+  onGoScan,
+  onSwitchCashier,
+  onOpenSelfPinModal,
+}: {
+  firstName: string | undefined;
+  requireSellerPin: boolean;
+  onGoSearch: () => void;
+  onGoNew: () => void;
+  onGoScan: () => void;
+  onSwitchCashier: () => void;
+  onOpenSelfPinModal: () => void;
+}) {
+  const tiles = [
+    {
+      label: 'חיפוש לקוח',
+      sub: 'לפי שם, טלפון או מספר',
+      bg: 'linear-gradient(160deg,#fff,#fff8f3)',
+      border: '#ffe3d4',
+      tint: '#fff4ee',
+      onClick: onGoSearch,
+    },
+    {
+      label: 'לקוח חדש',
+      sub: 'רישום ומכירת כרטיסייה',
+      bg: 'linear-gradient(160deg,#fff,#f8fbef)',
+      border: '#e7eed6',
+      tint: '#f3f7e8',
+      onClick: onGoNew,
+    },
+    {
+      label: 'סריקת QR',
+      sub: 'ניקוב כניסה מהיר',
+      bg: ORANGE,
+      border: ORANGE,
+      tint: 'rgba(255,255,255,0.28)',
+      onClick: onGoScan,
+    },
+  ];
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'flex-start',
+          justifyContent: 'space-between',
+          gap: 12,
+          flexWrap: 'wrap',
+        }}
+      >
+        <div>
+          <div style={{ fontSize: 24, fontWeight: 600 }}>
+            {greetingFor(new Date())}
+            {firstName ? `, ${firstName}` : ''}
+          </div>
+          <div style={{ color: MUTED, marginTop: 4 }}>{hebrewDate(new Date())}</div>
+        </div>
+        {requireSellerPin && (
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              onClick={onSwitchCashier}
+              title="מחק את הקוד שנזכר בדפדפן כדי שהקופאי הבא יזין את שלו"
+              style={{
+                border: '1.5px solid #e9e0d9',
+                background: '#fff',
+                color: MUTED,
+                borderRadius: 10,
+                padding: '8px 14px',
+                fontWeight: 600,
+                fontSize: 13,
+                cursor: 'pointer',
+              }}
+            >
+              החלף קופאי
+            </button>
+            <button
+              type="button"
+              onClick={onOpenSelfPinModal}
+              style={{
+                border: '1.5px solid #e9e0d9',
+                background: '#fff',
+                color: MUTED,
+                borderRadius: 10,
+                padding: '8px 14px',
+                fontWeight: 600,
+                fontSize: 13,
+                cursor: 'pointer',
+              }}
+            >
+              ניהול הקוד שלי
+            </button>
+          </div>
+        )}
+      </div>
+      <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
+        <Stat label="כניסות היום" value="0" />
+        <Stat label="כרטיסיות שנמכרו היום" value="0" />
+      </div>
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))',
+          gap: 16,
+        }}
+      >
+        {tiles.map((t) => {
+          const onOrange = t.label === 'סריקת QR';
+          return (
+            <button
+              key={t.label}
+              onClick={t.onClick}
+              style={{
+                cursor: 'pointer',
+                textAlign: 'right',
+                border: `1px solid ${t.border}`,
+                background: t.bg,
+                borderRadius: 18,
+                boxShadow: SHADOW,
+                padding: '28px 24px',
+                minHeight: 180,
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'space-between',
+                color: onOrange ? '#fff' : INK,
+              }}
+            >
+              <div
+                style={{
+                  width: 56,
+                  height: 56,
+                  borderRadius: 16,
+                  background: t.tint,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <Sun size={34} />
+              </div>
+              <div>
+                <div style={{ fontSize: 22, fontWeight: 600 }}>{t.label}</div>
+                <div
+                  style={{
+                    fontSize: 14,
+                    marginTop: 4,
+                    color: onOrange ? 'rgba(255,255,255,0.9)' : MUTED,
+                  }}
+                >
+                  {t.sub}
+                </div>
+              </div>
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
