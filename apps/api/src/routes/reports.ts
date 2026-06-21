@@ -1,9 +1,11 @@
 import {
+  cancellationsReport,
   cardsReport,
   customersReport,
   db,
   entriesReport,
   revenueReport,
+  type CancellationsReportFilters,
   type CardsReportFilters,
   type CustomersReportFilters,
   type EntriesReportFilters,
@@ -63,6 +65,15 @@ const revenueQuery = z.object({
   from: isoDate.optional(),
   to: isoDate.optional(),
   groupBy: z.enum(['day', 'week', 'month']).optional(),
+});
+
+const cancellationsQuery = z.object({
+  from: isoDate.optional(),
+  to: isoDate.optional(),
+  kind: z.enum(['card', 'entry']).optional(),
+  q: z.string().trim().min(1).max(120).optional(),
+  limit: z.coerce.number().int().min(1).max(1000).optional(),
+  offset: z.coerce.number().int().min(0).optional(),
 });
 
 const toDate = (s: string | undefined): Date | undefined =>
@@ -174,6 +185,31 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
         '[reports.revenue]',
       );
       return res;
+    },
+  );
+
+  fastify.get(
+    '/admin/reports/cancellations',
+    { preHandler: requireRoleHook(...MANAGER_OR_ADMIN) },
+    async (request, reply) => {
+      const parsed = cancellationsQuery.safeParse(request.query);
+      if (!parsed.success) return reply.code(400).send({ error: 'invalid_query' });
+      const f: CancellationsReportFilters = {};
+      const from = toDate(parsed.data.from);
+      const to = toDate(parsed.data.to);
+      if (from) f.from = from;
+      if (to) f.to = to;
+      if (parsed.data.kind) f.kind = parsed.data.kind;
+      if (parsed.data.q !== undefined) f.q = parsed.data.q;
+      if (parsed.data.limit !== undefined) f.limit = parsed.data.limit;
+      if (parsed.data.offset !== undefined) f.offset = parsed.data.offset;
+
+      const page = await cancellationsReport(db, f);
+      request.log.info(
+        { rows: page.rows.length, total: page.total, cards: page.cardCount, entries: page.entryCount },
+        '[reports.cancellations]',
+      );
+      return page;
     },
   );
 };

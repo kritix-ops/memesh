@@ -7,6 +7,11 @@ import { staffLogin, staffLogout, staffMe, type StaffUser } from './api/auth';
  * provider hydrates from /auth/me on mount, exposes signIn / signOut, and
  * gates the staff + admin surfaces. Customer-area auth (phone + OTP) uses a
  * separate provider with a different token audience.
+ *
+ * The signed-out branch also exposes a sub-view selector (login | forgot |
+ * reset) so the login form can switch in place between sign-in, request-reset,
+ * and finish-reset without each consuming app needing a router. The `reset`
+ * view auto-activates when the URL carries `?reset_token=...`.
  */
 
 export type StaffSessionState =
@@ -16,16 +21,48 @@ export type StaffSessionState =
 
 export type SignInResult = { ok: true } | { ok: false; error: string };
 
+export type SignedOutView = 'login' | 'forgot' | 'reset';
+
 interface StaffSessionContextValue {
   state: StaffSessionState;
-  signIn: (phone: string, password: string) => Promise<SignInResult>;
+  signIn: (email: string, password: string) => Promise<SignInResult>;
   signOut: () => Promise<void>;
+  signedOutView: SignedOutView;
+  setSignedOutView: (view: SignedOutView) => void;
+  /** Raw reset token detected in the URL when signedOutView is 'reset'. */
+  resetToken: string | null;
+  /**
+   * Called by the reset flow after a successful password reset. Strips
+   * `?reset_token=...` from the URL so a page refresh does not re-enter the
+   * reset view, and returns the user to the login screen.
+   */
+  clearResetToken: () => void;
 }
 
 const StaffSessionContext = createContext<StaffSessionContextValue | undefined>(undefined);
 
+/**
+ * Read the reset token from the URL (if any), without consuming it. We don't
+ * strip the param here because the token has to survive the React mount — the
+ * reset form needs to POST it. `clearResetToken` strips it after success.
+ */
+function readResetTokenFromUrl(): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('reset_token');
+    return token && token.length >= 16 ? token : null;
+  } catch {
+    return null;
+  }
+}
+
 export function StaffSessionProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<StaffSessionState>({ status: 'loading' });
+  const [resetToken, setResetToken] = useState<string | null>(() => readResetTokenFromUrl());
+  const [signedOutView, setSignedOutView] = useState<SignedOutView>(() =>
+    readResetTokenFromUrl() ? 'reset' : 'login',
+  );
 
   // Hydrate from /auth/me on mount. Any 401 (or missing user) lands us in
   // signed-out; the login form takes over from there. Also register the
@@ -39,10 +76,20 @@ export function StaffSessionProvider({ children }: { children: ReactNode }) {
       setState({ status: 'signed-out' });
     });
     (async () => {
-      console.info('[web auth] hydrating');
+      console.info('[web auth] hydrating', { hasResetToken: !!resetToken });
       const res = await staffMe();
       if (cancelled) return;
       if (res.ok && res.data.user) {
+        // If the URL has a reset token, prefer the reset flow over an already
+        // signed-in session: someone clicking a reset link probably wants to
+        // act on it, not bypass it because a stale cookie happens to be valid.
+        if (resetToken) {
+          console.info('[web auth] hydrated signed in but reset token present, signing out');
+          await staffLogout().catch(() => undefined);
+          setState({ status: 'signed-out' });
+          setSignedOutView('reset');
+          return;
+        }
         console.info('[web auth] hydrated signed in', { role: res.data.user.role });
         setState({ status: 'signed-in', user: res.data.user });
       } else {
@@ -54,11 +101,13 @@ export function StaffSessionProvider({ children }: { children: ReactNode }) {
       cancelled = true;
       setOnSessionExpired(null);
     };
+    // resetToken is read once on mount; setting it later is a no-op for hydration.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const signIn = useCallback(async (phone: string, password: string): Promise<SignInResult> => {
-    console.info('[web auth] login attempt', { phone });
-    const loginRes = await staffLogin(phone, password);
+  const signIn = useCallback(async (email: string, password: string): Promise<SignInResult> => {
+    console.info('[web auth] login attempt', { email });
+    const loginRes = await staffLogin(email, password);
     if (!loginRes.ok) {
       console.warn('[web auth] login failed', {
         status: loginRes.status,
@@ -89,11 +138,33 @@ export function StaffSessionProvider({ children }: { children: ReactNode }) {
       console.warn('[web auth] logout request threw', err);
     }
     setState({ status: 'signed-out' });
+    setSignedOutView('login');
     console.info('[web auth] signed out');
   }, []);
 
+  const clearResetToken = useCallback(() => {
+    console.info('[web auth] clearing reset token from URL');
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      url.searchParams.delete('reset_token');
+      window.history.replaceState({}, '', url.toString());
+    }
+    setResetToken(null);
+    setSignedOutView('login');
+  }, []);
+
   return (
-    <StaffSessionContext.Provider value={{ state, signIn, signOut }}>
+    <StaffSessionContext.Provider
+      value={{
+        state,
+        signIn,
+        signOut,
+        signedOutView,
+        setSignedOutView,
+        resetToken,
+        clearResetToken,
+      }}
+    >
       {children}
     </StaffSessionContext.Provider>
   );

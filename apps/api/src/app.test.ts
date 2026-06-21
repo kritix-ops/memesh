@@ -29,6 +29,60 @@ test('POST /auth/login rejects an invalid body with 400', async () => {
   assert.equal(res.statusCode, 400);
 });
 
+test('POST /auth/login rejects a missing email with 400', async () => {
+  const res = await app.inject({
+    method: 'POST',
+    url: '/auth/login',
+    payload: { password: 'whatever' },
+  });
+  assert.equal(res.statusCode, 400);
+});
+
+test('POST /auth/login rejects a malformed email with 400', async () => {
+  const res = await app.inject({
+    method: 'POST',
+    url: '/auth/login',
+    payload: { email: 'not-an-email', password: 'whatever' },
+  });
+  assert.equal(res.statusCode, 400);
+});
+
+test('POST /auth/forgot-password rejects a missing email with 400', async () => {
+  const res = await app.inject({
+    method: 'POST',
+    url: '/auth/forgot-password',
+    payload: {},
+  });
+  assert.equal(res.statusCode, 400);
+});
+
+test('POST /auth/forgot-password rejects a malformed email with 400', async () => {
+  const res = await app.inject({
+    method: 'POST',
+    url: '/auth/forgot-password',
+    payload: { email: 'not-an-email' },
+  });
+  assert.equal(res.statusCode, 400);
+});
+
+test('POST /auth/reset-password rejects a missing token with 400', async () => {
+  const res = await app.inject({
+    method: 'POST',
+    url: '/auth/reset-password',
+    payload: { newPassword: 'a-fresh-strong-password' },
+  });
+  assert.equal(res.statusCode, 400);
+});
+
+test('POST /auth/reset-password rejects a too-short password with 400', async () => {
+  const res = await app.inject({
+    method: 'POST',
+    url: '/auth/reset-password',
+    payload: { token: 'a'.repeat(40), newPassword: 'short' },
+  });
+  assert.equal(res.statusCode, 400);
+});
+
 test('POST /punch without auth returns 401', async () => {
   const res = await app.inject({ method: 'POST', url: '/punch', payload: { token: 'x' } });
   assert.equal(res.statusCode, 401);

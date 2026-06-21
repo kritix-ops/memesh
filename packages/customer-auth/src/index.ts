@@ -5,6 +5,7 @@ export {
   verifyEmailOtp,
   verifyHandoffToken,
   verifyOtp,
+  type HandoffThankyou,
   type HandoffVerifyResponse,
   type RequestOtpResponse,
   type VerifyOtpResponse,

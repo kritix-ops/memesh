@@ -14,8 +14,6 @@ export const cardSettings = pgTable('card_settings', {
   pitchLabel: text('pitch_label').notNull().default('משלמים על 10, מקבלים 12 · תקף לשנה'),
 
   // --- Card mechanics ---
-  minCompanions: integer('min_companions').notNull().default(1),
-  maxCompanions: integer('max_companions').notNull().default(4),
   /** Minutes the cashier must wait before re-punching the same card. 0 disables. */
   sameDayLockoutMinutes: integer('same_day_lockout_minutes').notNull().default(0),
   /** Extra days past expiresAt where the card still works but is flagged 'grace'. */
@@ -85,6 +83,24 @@ export const cardSettings = pgTable('card_settings', {
     .default(
       'שלום {{firstName}},\n\nקוד הכניסה שלך הוא: {{code}}\n\nהקוד תקף ל-10 דקות.\nאם לא ביקשת קוד זה, אפשר להתעלם מההודעה.\n\nצוות ממש',
     ),
+
+  // --- Checkout-handoff thank-you page on my.memesh.co.il ---
+  // After a successful WooCommerce checkout the buyer lands on
+  // my.memesh.co.il/checkout-complete and sees a thank-you card with a CTA
+  // button to their personal area. The three strings below are the
+  // editable copy. Placeholder: {{firstName}} (falls back to "לקוח/ה").
+  /** Big headline at the top of the thank-you card. */
+  checkoutThankyouTitle: text('checkout_thankyou_title')
+    .notNull()
+    .default('תודה רבה, {{firstName}}! 🎉'),
+  /** Body line under the headline. Same {{firstName}} placeholder. */
+  checkoutThankyouBody: text('checkout_thankyou_body')
+    .notNull()
+    .default('הכרטיסייה שלך מוכנה ומחכה לך באזור האישי. נשמח לראותך אצלנו בקרוב.'),
+  /** Text on the CTA button that takes the buyer into the personal area. */
+  checkoutThankyouButtonText: text('checkout_thankyou_button_text')
+    .notNull()
+    .default('לאזור האישי שלי'),
 
   updatedBy: uuid('updated_by').references(() => staff.id),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),

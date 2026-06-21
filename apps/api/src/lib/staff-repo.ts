@@ -1,7 +1,6 @@
 import { verifyPassword, type StaffRole } from '@memesh/auth';
-import { db, staff } from '@memesh/db';
-import { normalizeIsraeliPhone } from '@memesh/sms';
-import { eq } from 'drizzle-orm';
+import { getStaffByEmailWithSecret } from '@memesh/db';
+import { db } from '@memesh/db';
 
 export interface StaffLogin {
   id: string;
@@ -9,27 +8,22 @@ export interface StaffLogin {
 }
 
 /**
- * Verify a staff phone + password/PIN. Returns the staff identity on success,
- * or undefined on any failure. Never distinguishes "no such phone" from "wrong
- * password" so the caller cannot probe which phones exist.
+ * Verify a staff email + password. Returns the staff identity on success, or
+ * undefined on any failure. Never distinguishes "no such email" from "wrong
+ * password" so the caller cannot probe which emails exist.
  *
- * Phone is normalized to the canonical 05XXXXXXXX form before lookup so the
- * login works regardless of whether the caller typed dashes, spaces, +972,
- * etc. Defense-in-depth: the route layer also normalizes via phoneSchema, so
- * this is a guard against a future caller that bypasses the schema.
+ * Email is looked up case-insensitively (the DB has a partial unique index on
+ * lower(email)) so the login works regardless of how the user typed it.
+ *
+ * Username moved from phone to email on 2026-06-21. Phone is still a unique
+ * contact id in the schema but is no longer a credential — a phone change no
+ * longer invalidates the login.
  */
 export const verifyStaffLogin = async (
-  phone: string,
+  email: string,
   password: string,
 ): Promise<StaffLogin | undefined> => {
-  let normalized: string;
-  try {
-    normalized = normalizeIsraeliPhone(phone);
-  } catch {
-    return undefined;
-  }
-  const rows = await db.select().from(staff).where(eq(staff.phone, normalized)).limit(1);
-  const row = rows[0];
+  const row = await getStaffByEmailWithSecret(db, email);
   if (!row || !row.isActive || !row.passwordHash) return undefined;
   const ok = await verifyPassword(password, row.passwordHash);
   if (!ok) return undefined;

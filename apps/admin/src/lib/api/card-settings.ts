@@ -13,8 +13,6 @@ export interface CardSettings {
   totalEntries: number;
   pitchLabel: string;
   // Mechanics
-  minCompanions: number;
-  maxCompanions: number;
   sameDayLockoutMinutes: number;
   gracePeriodDays: number;
   // Cancellation
@@ -43,6 +41,12 @@ export interface CardSettings {
   posEmailNudgeText: string;
   emailOtpSubject: string;
   emailOtpBodyTemplate: string;
+  // Editable thank-you page (my.memesh.co.il/checkout-complete after a WC
+  // checkout). Same {{firstName}} placeholder semantics as the email-OTP
+  // body template.
+  checkoutThankyouTitle: string;
+  checkoutThankyouBody: string;
+  checkoutThankyouButtonText: string;
 
   updatedBy: string | null;
   updatedAt: string;
@@ -74,18 +78,11 @@ export interface CancelContext {
   cancelRole: CancelRole;
 }
 
-export interface CompanionLimits {
-  min: number;
-  max: number;
-}
-
 export interface CardSettingsPatch {
   priceShekels?: number;
   validityDays?: number;
   totalEntries?: number;
   pitchLabel?: string;
-  minCompanions?: number;
-  maxCompanions?: number;
   sameDayLockoutMinutes?: number;
   gracePeriodDays?: number;
   allowCancelAfterFirstPunch?: boolean;
@@ -109,6 +106,9 @@ export interface CardSettingsPatch {
   posEmailNudgeText?: string;
   emailOtpSubject?: string;
   emailOtpBodyTemplate?: string;
+  checkoutThankyouTitle?: string;
+  checkoutThankyouBody?: string;
+  checkoutThankyouButtonText?: string;
 }
 
 export const getCardSettings = (): Promise<ApiResult<CardSettingsResponse>> =>
@@ -127,9 +127,6 @@ export const getCustomerFormRules = (): Promise<ApiResult<CustomerFormRules>> =>
 
 export const getCancelContext = (): Promise<ApiResult<CancelContext>> =>
   apiRequest('/admin/cancel-context');
-
-export const getCompanionLimits = (): Promise<ApiResult<CompanionLimits>> =>
-  apiRequest('/pos/companion-limits');
 
 // Sell-flow controls exposed to the cashier POS so the modal can render the
 // right inputs (receipt number, PIN prompt) and the editable Hebrew labels

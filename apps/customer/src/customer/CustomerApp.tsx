@@ -1,4 +1,4 @@
-import { FauxQr, PunchCard, Sun } from '@memesh/brand';
+import { MemeshQr, PunchCard, Sun } from '@memesh/brand';
 import {
   getMyCards,
   updateMe,
@@ -469,6 +469,19 @@ function Home({
     };
   }, []);
 
+  // Per-card diagnostic when the QR actually has a token to render. We log
+  // length, not value: enough to confirm the token reached the client, not
+  // enough to forge a punch from a console screenshot.
+  useEffect(() => {
+    if (!cards) return;
+    for (const c of cards) {
+      console.info('[customer card] qr rendered', {
+        serial: c.serialNumber,
+        tokenLen: c.qrToken.length,
+      });
+    }
+  }, [cards]);
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -527,7 +540,7 @@ function Home({
             }}
           >
             <PunchCard used={c.usedEntries} total={c.totalEntries} compact />
-            <FauxQr seed={c.serialNumber} size={130} />
+            <MemeshQr value={c.qrToken} size={180} title={`קוד QR — ${c.serialNumber}`} />
             <div style={{ fontSize: 13, color: MUTED }}>{c.serialNumber}</div>
             <div style={{ fontSize: 13, color: MUTED }}>
               {c.expiresAt === null

@@ -15,10 +15,11 @@ import {
   editCard,
   listCards,
   reassignCard,
+  reMintAllPunchCardTokens,
   scanCardLookup,
 } from './cards';
 import { punchCard, refundEntry } from './punch';
-import { punchCardEntries } from './schema/index';
+import { punchCardEntries, punchCards } from './schema/index';
 import { eq, sql } from 'drizzle-orm';
 
 async function freshDb() {
@@ -266,8 +267,8 @@ test('cardDetail returns the card joined with the customer + entries (newest fir
   const card = await createPunchCard(db, resolver, { customerId: cust.id });
 
   // Punch twice so there are two entries.
-  await punchCard(db, { punchCardId: card.id, method: 'qr_scan', companionCount: 2 });
-  await punchCard(db, { punchCardId: card.id, method: 'serial', companionCount: 1 });
+  await punchCard(db, { punchCardId: card.id, method: 'qr_scan' });
+  await punchCard(db, { punchCardId: card.id, method: 'serial' });
 
   const detail = await cardDetail(db, card.id);
   assert.ok(detail);
@@ -357,8 +358,8 @@ test('scanCardLookup returns customer children and the full entry history newest
     children: [{ name: 'Itamar', dob: '2021-04-12' }],
   });
   const card = await createPunchCard(db, resolver, { customerId: cust.id });
-  await punchCard(db, { punchCardId: card.id, method: 'qr_scan', companionCount: 2 });
-  await punchCard(db, { punchCardId: card.id, method: 'serial', companionCount: 1 });
+  await punchCard(db, { punchCardId: card.id, method: 'qr_scan' });
+  await punchCard(db, { punchCardId: card.id, method: 'serial' });
 
   const preview = await scanCardLookup(db, card.id);
   assert.ok(preview);
@@ -462,41 +463,13 @@ test('scanCardLookup echoes expiryBadgeThresholdDays from settings', async () =>
 });
 
 // ---------------------------------------------------------------------------
-// punchCard — companion limits, lockout, grace acceptance
+// punchCard — entries bound, lockout, grace acceptance
+//
+// Entries-out-of-range bounds (entries < 1 and entries > remaining) and the
+// happy multi-entry path live in punch.test.ts. This block focuses on lockout
+// + grace because those depend on createPunchCard/updateCardSettings setup
+// that only this file's helpers know how to construct.
 // ---------------------------------------------------------------------------
-
-test('punchCard rejects companions below the configured minimum', async () => {
-  const db = await freshDb();
-  await updateCardSettings(db, { minCompanions: 2, maxCompanions: 4 });
-  const cust = await makeCustomer(db);
-  const card = await createPunchCard(db, resolver, { customerId: cust.id });
-
-  const res = await punchCard(db, {
-    punchCardId: card.id,
-    method: 'qr_scan',
-    companionCount: 1,
-  });
-  assert.equal(res.ok, false);
-  if (!res.ok) {
-    assert.equal(res.reason, 'companions_out_of_range');
-    assert.deepEqual(res.allowedRange, { min: 2, max: 4 });
-  }
-});
-
-test('punchCard rejects companions above the configured maximum', async () => {
-  const db = await freshDb();
-  await updateCardSettings(db, { minCompanions: 1, maxCompanions: 3 });
-  const cust = await makeCustomer(db);
-  const card = await createPunchCard(db, resolver, { customerId: cust.id });
-
-  const res = await punchCard(db, {
-    punchCardId: card.id,
-    method: 'qr_scan',
-    companionCount: 5,
-  });
-  assert.equal(res.ok, false);
-  if (!res.ok) assert.equal(res.reason, 'companions_out_of_range');
-});
 
 test('punchCard enforces sameDayLockoutMinutes between successful punches', async () => {
   const db = await freshDb();
@@ -1174,4 +1147,63 @@ test('listCards search matches receipt_number so Yanay can drill into a suspect 
   assert.equal(results.length, 1);
   assert.equal(results[0]?.receiptNumber, '99887766');
   assert.equal(results[0]?.soldByFirstName, 'Test');
+});
+
+test('reMintAllPunchCardTokens rescues cards minted under a foreign secret', async () => {
+  const db = await freshDb();
+  const customer = await makeCustomer(db);
+
+  // Mint a card under the "old" secret — simulates production state where
+  // SERVER_SECRET_KEY was rotated mid-flight without re-signing rows.
+  const oldResolver: KeyResolver = {
+    resolveSigningKey: () => ({ keyId: 'test-key', secret: 'OLD_SECRET-aaaaaaaaaaaaaaaaaaaaaaaaaa' }),
+    resolveVerifyKey: (k) =>
+      k === 'test-key' ? 'OLD_SECRET-aaaaaaaaaaaaaaaaaaaaaaaaaa' : undefined,
+  };
+  const card = await createPunchCard(db, oldResolver, { customerId: customer.id });
+
+  // Under the *current* resolver (different secret, same keyId) the stored
+  // token must fail — that's the production regression we're modeling.
+  const beforeResult = verifyToken(card.qrToken, resolver);
+  assert.equal(beforeResult.ok, false);
+
+  const result = await reMintAllPunchCardTokens(db, resolver);
+  assert.equal(result.scanned, 1);
+  assert.equal(result.updated, 1);
+
+  // cardDetail doesn't surface qrToken (admin views never need it), so go
+  // straight to the row for the post-mint verify.
+  const fresh = await db
+    .select({ qrToken: punchCards.qrToken, keyId: punchCards.keyId })
+    .from(punchCards)
+    .where(eq(punchCards.id, card.id))
+    .limit(1);
+  const afterToken = fresh[0]?.qrToken;
+  assert.ok(afterToken);
+  assert.notEqual(afterToken, card.qrToken);
+  assert.equal(fresh[0]?.keyId, 'test-key');
+  const afterVerify = verifyToken(afterToken, resolver);
+  assert.equal(afterVerify.ok, true);
+  // Re-signed payload still points at the same card.
+  if (afterVerify.ok) {
+    assert.equal(afterVerify.payload.punchCardId, card.id);
+    assert.equal(afterVerify.payload.serial, card.serialNumber);
+  }
+});
+
+test('reMintAllPunchCardTokens is idempotent — second call updates nothing', async () => {
+  const db = await freshDb();
+  const customer = await makeCustomer(db);
+  await createPunchCard(db, resolver, { customerId: customer.id });
+  await createPunchCard(db, resolver, { customerId: customer.id });
+
+  const first = await reMintAllPunchCardTokens(db, resolver);
+  // First pass: tokens already match the current resolver (created under it),
+  // so nothing changes — that confirms the equality short-circuit works.
+  assert.equal(first.scanned, 2);
+  assert.equal(first.updated, 0);
+
+  const second = await reMintAllPunchCardTokens(db, resolver);
+  assert.equal(second.scanned, 2);
+  assert.equal(second.updated, 0);
 });

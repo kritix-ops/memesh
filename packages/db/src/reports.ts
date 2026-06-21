@@ -14,7 +14,7 @@ import {
   or,
   sql,
 } from 'drizzle-orm';
-import type { PgDatabase } from 'drizzle-orm/pg-core';
+import { alias, type PgDatabase } from 'drizzle-orm/pg-core';
 import { getCustomerById } from './accounts';
 import { getCardSettings } from './card-settings';
 import {
@@ -480,7 +480,7 @@ export interface EntriesReportRow {
   id: string;
   punchedAt: string;
   method: string;
-  companionCount: number;
+  entriesConsumed: number;
   refundedAt: string | null;
   refundReason: string | null;
   cardId: string;
@@ -522,7 +522,7 @@ export const entriesReport = async (
       id: punchCardEntries.id,
       punchedAt: punchCardEntries.punchedAt,
       method: punchCardEntries.method,
-      companionCount: punchCardEntries.companionCount,
+      entriesConsumed: punchCardEntries.entriesConsumed,
       refundedAt: punchCardEntries.refundedAt,
       refundReason: punchCardEntries.refundReason,
       cardId: punchCards.id,
@@ -560,7 +560,7 @@ export const entriesReport = async (
     id: r.id,
     punchedAt: r.punchedAt instanceof Date ? r.punchedAt.toISOString() : String(r.punchedAt),
     method: r.method,
-    companionCount: r.companionCount,
+    entriesConsumed: r.entriesConsumed,
     refundedAt:
       r.refundedAt instanceof Date ? r.refundedAt.toISOString() : (r.refundedAt as string | null),
     refundReason: r.refundReason,
@@ -654,5 +654,221 @@ export const revenueReport = async (
     estimatedFromPriceShekels,
     totalCardsSold,
     totalEstimatedRevenueShekels,
+  };
+};
+
+// ---------------------------------------------------------------------------
+// Cancellations report — unified feed of card cancellations + entry refunds.
+// Both event types share an "occurred → reason → who did it" shape, so the
+// admin sees one chronological list and can drill into either.
+// ---------------------------------------------------------------------------
+
+export type CancellationKind = 'card' | 'entry';
+
+export interface CancellationsReportFilters {
+  /** Earliest occurredAt (cancelledAt / refundedAt). */
+  from?: Date;
+  /** Latest occurredAt. */
+  to?: Date;
+  /** Restrict to card cancellations or entry refunds. Default: both. */
+  kind?: CancellationKind;
+  /** ILIKE across card serial + customer name / phone / number. */
+  q?: string;
+  /** Page size after merging the two sources. Capped at REPORT_MAX_LIMIT. */
+  limit?: number;
+  offset?: number;
+}
+
+export interface CancellationsReportRow {
+  kind: CancellationKind;
+  /** card.id when kind='card', entry.id when kind='entry'. Unique within its kind. */
+  id: string;
+  occurredAt: string;
+  reason: string | null;
+  cardId: string;
+  cardSerial: string;
+  customerId: string;
+  customerNumber: string | null;
+  customerFirstName: string | null;
+  customerLastName: string | null;
+  /** Staff who cancelled the card / refunded the entry. */
+  actorId: string | null;
+  actorFirstName: string | null;
+  actorLastName: string | null;
+  // Entry-only fields:
+  method: string | null;
+  entriesConsumed: number | null;
+  originalPunchedAt: string | null;
+  // Card-only fields:
+  source: string | null;
+  usedEntries: number | null;
+  totalEntries: number | null;
+}
+
+export interface CancellationsReportPage {
+  rows: CancellationsReportRow[];
+  total: number;
+  /** Total card-cancellation events that matched the filter (pre-pagination). */
+  cardCount: number;
+  /** Total entry-refund events that matched the filter (pre-pagination). */
+  entryCount: number;
+}
+
+export const cancellationsReport = async (
+  db: AnyPgDatabase,
+  filters: CancellationsReportFilters = {},
+): Promise<CancellationsReportPage> => {
+  const limit = Math.min(filters.limit ?? REPORT_DEFAULT_LIMIT, REPORT_MAX_LIMIT);
+  const offset = Math.max(0, filters.offset ?? 0);
+  const q = filters.q?.trim();
+  const qPattern = q ? `%${q}%` : null;
+
+  // ----- Card cancellations -----
+  let cardRows: CancellationsReportRow[] = [];
+  if (filters.kind !== 'entry') {
+    const cardConds = [isNotNull(punchCards.cancelledAt)];
+    if (filters.from) cardConds.push(gte(punchCards.cancelledAt, filters.from));
+    if (filters.to) cardConds.push(lte(punchCards.cancelledAt, filters.to));
+    if (qPattern) {
+      const qC = or(
+        ilike(punchCards.serialNumber, qPattern),
+        ilike(customers.firstName, qPattern),
+        ilike(customers.lastName, qPattern),
+        ilike(customers.phone, qPattern),
+        ilike(customers.customerNumber, qPattern),
+      );
+      if (qC) cardConds.push(qC);
+    }
+
+    const raw = await db
+      .select({
+        id: punchCards.id,
+        cancelledAt: punchCards.cancelledAt,
+        cancelReason: punchCards.cancelReason,
+        cardSerial: punchCards.serialNumber,
+        customerId: punchCards.customerId,
+        customerNumber: customers.customerNumber,
+        customerFirstName: customers.firstName,
+        customerLastName: customers.lastName,
+        actorId: punchCards.cancelledBy,
+        actorFirstName: staff.firstName,
+        actorLastName: staff.lastName,
+        source: punchCards.source,
+        usedEntries: punchCards.usedEntries,
+        totalEntries: punchCards.totalEntries,
+      })
+      .from(punchCards)
+      .leftJoin(customers, eq(customers.id, punchCards.customerId))
+      .leftJoin(staff, eq(staff.id, punchCards.cancelledBy))
+      .where(and(...cardConds))
+      .orderBy(desc(punchCards.cancelledAt));
+
+    cardRows = raw.map((r) => ({
+      kind: 'card',
+      id: r.id,
+      occurredAt:
+        r.cancelledAt instanceof Date ? r.cancelledAt.toISOString() : String(r.cancelledAt),
+      reason: r.cancelReason,
+      cardId: r.id,
+      cardSerial: r.cardSerial,
+      customerId: r.customerId ?? '',
+      customerNumber: r.customerNumber,
+      customerFirstName: r.customerFirstName,
+      customerLastName: r.customerLastName,
+      actorId: r.actorId,
+      actorFirstName: r.actorFirstName,
+      actorLastName: r.actorLastName,
+      method: null,
+      entriesConsumed: null,
+      originalPunchedAt: null,
+      source: r.source,
+      usedEntries: r.usedEntries,
+      totalEntries: r.totalEntries,
+    }));
+  }
+
+  // ----- Entry refunds -----
+  let entryRows: CancellationsReportRow[] = [];
+  if (filters.kind !== 'card') {
+    // Alias the staff join so it stays unambiguous if a future change adds
+    // another staff join here (e.g. approvedBy).
+    const refundActor = alias(staff, 'refund_actor');
+
+    const entryConds = [isNotNull(punchCardEntries.refundedAt)];
+    if (filters.from) entryConds.push(gte(punchCardEntries.refundedAt, filters.from));
+    if (filters.to) entryConds.push(lte(punchCardEntries.refundedAt, filters.to));
+    if (qPattern) {
+      const qC = or(
+        ilike(punchCards.serialNumber, qPattern),
+        ilike(customers.firstName, qPattern),
+        ilike(customers.lastName, qPattern),
+        ilike(customers.phone, qPattern),
+        ilike(customers.customerNumber, qPattern),
+      );
+      if (qC) entryConds.push(qC);
+    }
+
+    const raw = await db
+      .select({
+        id: punchCardEntries.id,
+        refundedAt: punchCardEntries.refundedAt,
+        refundReason: punchCardEntries.refundReason,
+        method: punchCardEntries.method,
+        entriesConsumed: punchCardEntries.entriesConsumed,
+        originalPunchedAt: punchCardEntries.punchedAt,
+        cardId: punchCards.id,
+        cardSerial: punchCards.serialNumber,
+        customerId: punchCards.customerId,
+        customerNumber: customers.customerNumber,
+        customerFirstName: customers.firstName,
+        customerLastName: customers.lastName,
+        actorId: punchCardEntries.refundedBy,
+        actorFirstName: refundActor.firstName,
+        actorLastName: refundActor.lastName,
+      })
+      .from(punchCardEntries)
+      .leftJoin(punchCards, eq(punchCards.id, punchCardEntries.punchCardId))
+      .leftJoin(customers, eq(customers.id, punchCards.customerId))
+      .leftJoin(refundActor, eq(refundActor.id, punchCardEntries.refundedBy))
+      .where(and(...entryConds))
+      .orderBy(desc(punchCardEntries.refundedAt));
+
+    entryRows = raw.map((r) => ({
+      kind: 'entry',
+      id: r.id,
+      occurredAt:
+        r.refundedAt instanceof Date ? r.refundedAt.toISOString() : String(r.refundedAt),
+      reason: r.refundReason,
+      cardId: r.cardId ?? '',
+      cardSerial: r.cardSerial ?? '',
+      customerId: r.customerId ?? '',
+      customerNumber: r.customerNumber,
+      customerFirstName: r.customerFirstName,
+      customerLastName: r.customerLastName,
+      actorId: r.actorId,
+      actorFirstName: r.actorFirstName,
+      actorLastName: r.actorLastName,
+      method: r.method,
+      entriesConsumed: r.entriesConsumed,
+      originalPunchedAt:
+        r.originalPunchedAt instanceof Date
+          ? r.originalPunchedAt.toISOString()
+          : String(r.originalPunchedAt),
+      source: null,
+      usedEntries: null,
+      totalEntries: null,
+    }));
+  }
+
+  // Merge both sources, newest first, then page.
+  const merged = [...cardRows, ...entryRows].sort(
+    (a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime(),
+  );
+
+  return {
+    rows: merged.slice(offset, offset + limit),
+    total: merged.length,
+    cardCount: cardRows.length,
+    entryCount: entryRows.length,
   };
 };

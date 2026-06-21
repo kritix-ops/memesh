@@ -3,7 +3,9 @@ import {
   consumeHandoffToken,
   customers,
   db,
+  getCardSettings,
   mintHandoffToken,
+  renderHandoffThankyou,
 } from '@memesh/db';
 import { normalizeIsraeliPhone } from '@memesh/sms';
 import { eq } from 'drizzle-orm';
@@ -238,6 +240,22 @@ export const wcHandoffRoutes: FastifyPluginAsync = async (fastify) => {
 
       const sessionToken = await signCustomerToken(customer.id, customerAuthConfig);
       setCustomerCookie(reply, sessionToken);
+
+      // Render the editable thank-you copy from card_settings so the
+      // /checkout-complete page shows operator-tweakable text without an
+      // extra round-trip. {{firstName}} is the only supported placeholder
+      // today; renderer falls back to "לקוח/ה" when missing.
+      const settings = await getCardSettings(db);
+      const thankyou = {
+        title: renderHandoffThankyou(settings.checkoutThankyouTitle, {
+          firstName: customer.firstName,
+        }),
+        body: renderHandoffThankyou(settings.checkoutThankyouBody, {
+          firstName: customer.firstName,
+        }),
+        buttonText: settings.checkoutThankyouButtonText,
+      };
+
       request.log.info(
         {
           customerId: customer.id,
@@ -247,7 +265,7 @@ export const wcHandoffRoutes: FastifyPluginAsync = async (fastify) => {
         },
         '[wc handoff verify] token_consumed',
       );
-      return { ok: true, profile: customer };
+      return { ok: true, profile: customer, thankyou };
     },
   );
 };

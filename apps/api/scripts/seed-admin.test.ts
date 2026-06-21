@@ -28,6 +28,7 @@ const phone = () => {
   seq += 1;
   return `050-900-${String(seq).padStart(4, '0')}`;
 };
+const email = () => `seed-admin-${seq}@example.com`;
 
 test('seedAdmin creates the first admin and stores a verifiable scrypt hash', async () => {
   const db = await freshDb();
@@ -40,6 +41,7 @@ test('seedAdmin creates the first admin and stores a verifiable scrypt hash', as
   const result = await seedAdmin(db, {
     phone: p,
     password: 'a-strong-password-1!',
+    email: email(),
     firstName: 'Yanay',
     lastName: 'Owner',
   });
@@ -66,10 +68,15 @@ test('seedAdmin creates the first admin and stores a verifiable scrypt hash', as
 test('seedAdmin is idempotent — second call with the same phone is a no-op', async () => {
   const db = await freshDb();
   const p = phone();
-  const first = await seedAdmin(db, { phone: p, password: 'first-password-123!' });
+  const e = email();
+  const first = await seedAdmin(db, { phone: p, password: 'first-password-123!', email: e });
   assert.equal(first.kind, 'created');
 
-  const second = await seedAdmin(db, { phone: p, password: 'a-different-password-456!' });
+  const second = await seedAdmin(db, {
+    phone: p,
+    password: 'a-different-password-456!',
+    email: e,
+  });
   assert.equal(second.kind, 'already_seeded');
   assert.equal(second.id, first.id);
 
@@ -83,15 +90,27 @@ test('seedAdmin is idempotent — second call with the same phone is a no-op', a
 test('seedAdmin rejects passwords shorter than 12 characters', async () => {
   const db = await freshDb();
   await assert.rejects(
-    () => seedAdmin(db, { phone: phone(), password: 'too-short' }),
+    () => seedAdmin(db, { phone: phone(), password: 'too-short', email: email() }),
     /at least 12 characters/,
+  );
+});
+
+test('seedAdmin rejects an empty email (login uses email as the username)', async () => {
+  const db = await freshDb();
+  await assert.rejects(
+    () => seedAdmin(db, { phone: phone(), password: 'long-enough-password-1!', email: '   ' }),
+    /email is required/,
   );
 });
 
 test('seedAdmin uses default Admin/User name when not provided', async () => {
   const db = await freshDb();
   const p = phone();
-  const result = await seedAdmin(db, { phone: p, password: 'default-name-pw-1!' });
+  const result = await seedAdmin(db, {
+    phone: p,
+    password: 'default-name-pw-1!',
+    email: email(),
+  });
   assert.equal(result.kind, 'created');
   const verifies = await verifySeededPassword(db, p, 'default-name-pw-1!');
   assert.equal(verifies, true);

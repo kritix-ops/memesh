@@ -1,4 +1,5 @@
 import { type CSSProperties, useState } from 'react';
+import { CancellationsReport } from './CancellationsReport';
 import { CardsReport } from './CardsReport';
 import { CustomersReport } from './CustomersReport';
 import { EntriesReport } from './EntriesReport';
@@ -6,13 +7,14 @@ import { OverviewReport } from './OverviewReport';
 import { RevenueReport } from './RevenueReport';
 import { card as cardStyle, MUTED, ORANGE, SHADOW } from './shared';
 
-type SectionKey = 'overview' | 'customers' | 'cards' | 'entries' | 'revenue';
+type SectionKey = 'overview' | 'customers' | 'cards' | 'entries' | 'cancellations' | 'revenue';
 
 const SECTIONS: { key: SectionKey; label: string }[] = [
   { key: 'overview', label: 'סקירה' },
   { key: 'customers', label: 'לקוחות' },
   { key: 'cards', label: 'כרטיסיות' },
   { key: 'entries', label: 'כניסות' },
+  { key: 'cancellations', label: 'ביטולים' },
   { key: 'revenue', label: 'הכנסות' },
 ];
 
@@ -83,6 +85,7 @@ export function Reports() {
         {active === 'customers' && <CustomersReport />}
         {active === 'cards' && <CardsReport />}
         {active === 'entries' && <EntriesReport />}
+        {active === 'cancellations' && <CancellationsReport />}
         {active === 'revenue' && <RevenueReport />}
       </div>
     </div>

@@ -1,15 +1,13 @@
-import { FauxQr, PunchCard, Sun } from '@memesh/brand';
+import { MemeshQr, PunchCard, Sun } from '@memesh/brand';
 import { useStaffSession } from '@memesh/staff-auth';
 import { fmtDate } from '@memesh/web-shared';
 import { Scanner, type IDetectedBarcode, type IScannerError } from '@yudiel/react-qr-scanner';
 import { type CSSProperties, useEffect, useRef, useState } from 'react';
 import {
   getCardPricing,
-  getCompanionLimits,
   getCustomerFormRules,
   getPosSellControls,
   type CardPricing,
-  type CompanionLimits,
   type CustomerFormRules,
   type PosSellControls,
 } from '../lib/api/card-settings';
@@ -25,6 +23,7 @@ import {
   type PunchCard as ApiPunchCard,
 } from '../lib/api/customers';
 import {
+  debugVerifyToken,
   lookupBySerial,
   lookupByToken,
   punchBySerial,
@@ -32,7 +31,7 @@ import {
   type ScanLookupResponse,
 } from '../lib/api/punch';
 import { getMyPinStatus, setMyPin } from '../lib/api/staff';
-import { companionLabel } from '../mock';
+import { entriesLabel } from '../mock';
 import { PunchConfirmModal } from './PunchConfirmModal';
 import { RefundEntryModal } from './RefundEntryModal';
 
@@ -202,7 +201,6 @@ const FALLBACK_PRICING: CardPricing = {
   priceShekels: 320,
   pitchLabel: 'משלמים על 10, מקבלים 12 · תקף לשנה',
 };
-const FALLBACK_COMPANION_LIMITS: CompanionLimits = { min: 1, max: 4 };
 const FALLBACK_FORM_RULES: CustomerFormRules = { requireEmail: false, requireChild: false };
 // Fail-closed defaults for the sell-flow controls: assume the anti-fraud
 // requirements are ON if the API call fails, so a transient failure doesn't
@@ -262,20 +260,20 @@ export function PosApp() {
   const [query, setQuery] = useState('');
   const [sellStep, setSellStep] = useState<SellStep>('choose');
 
-  // Card price + pitch text + companion bounds + customer-form rules all come
+  // Card price + pitch text + customer-form rules + sell controls all come
   // from /pos/* endpoints (admin-editable in 'הגדרות'). Fetched together on
   // mount; each independently falls back to hardcoded defaults if its call
-  // fails so the cashier is never blocked from working.
+  // fails so the cashier is never blocked from working. The entries-per-scan
+  // picker is no longer settings-driven — the cashier picks at the till,
+  // bounded by the card's remaining entries.
   const [pricing, setPricing] = useState<CardPricing>(FALLBACK_PRICING);
-  const [companionLimits, setCompanionLimits] = useState<CompanionLimits>(FALLBACK_COMPANION_LIMITS);
   const [formRules, setFormRules] = useState<CustomerFormRules>(FALLBACK_FORM_RULES);
   const [sellControls, setSellControls] = useState<PosSellControls>(FALLBACK_SELL_CONTROLS);
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [p, c, r, s] = await Promise.all([
+      const [p, r, s] = await Promise.all([
         getCardPricing(),
-        getCompanionLimits(),
         getCustomerFormRules(),
         getPosSellControls(),
       ]);
@@ -285,12 +283,6 @@ export function PosApp() {
         setPricing(p.data);
       } else {
         console.warn('[web pos pricing] fallback', { error: p.error });
-      }
-      if (c.ok) {
-        console.info('[web pos companion-limits] fetched', c.data);
-        setCompanionLimits(c.data);
-      } else {
-        console.warn('[web pos companion-limits] fallback', { error: c.error });
       }
       if (r.ok) {
         console.info('[web pos form-rules] fetched', r.data);
@@ -544,6 +536,11 @@ export function PosApp() {
       cardId: res.data.card.id,
       serial: res.data.card.serialNumber,
     });
+    console.info('[pos card] qr rendered', {
+      ctx: 'post-sale',
+      serial: res.data.card.serialNumber,
+      tokenLen: res.data.card.qrToken.length,
+    });
     // Refresh the PIN's sliding-window expiry on every successful sale.
     if (sessionUser && pin) {
       writeCachedPin(sessionUser.id, pin, sellControls.pinMemoryMinutes);
@@ -664,7 +661,20 @@ export function PosApp() {
     };
   }, [selectedId]);
 
-  // Open the companion-count modal. A fresh UUID lives for this intent only.
+  // Diagnostic for the active-card QR render. Length only, never the token —
+  // enough to confirm wiring without giving a console screenshot punch power.
+  useEffect(() => {
+    if (!detail) return;
+    const active = pickActiveCard(detail.cards);
+    if (!active) return;
+    console.info('[pos card] qr rendered', {
+      ctx: 'active-card',
+      serial: active.serialNumber,
+      tokenLen: active.qrToken.length,
+    });
+  }, [detail]);
+
+  // Open the entries-to-consume modal. A fresh UUID lives for this intent only.
   const openPunch = () => {
     setPunchKey(crypto.randomUUID());
     setAskPunch(true);
@@ -674,14 +684,14 @@ export function PosApp() {
 
   // The actual call. Closes the modal, posts to the API, refetches detail on
   // success, surfaces a Hebrew error otherwise.
-  const confirmPunch = async (companionsArg: number) => {
+  const confirmPunch = async (entriesArg: number) => {
     if (!detail) return;
     const active = pickActiveCard(detail.cards);
     if (!active) return;
     setPunching(true);
-    console.info('[web punch] submit', { companions: companionsArg });
+    console.info('[web punch] submit', { entries: entriesArg });
     const res = await punchBySerial(active.serialNumber, {
-      companions: companionsArg,
+      entries: entriesArg,
       idempotencyKey: punchKey,
     });
     setPunching(false);
@@ -748,11 +758,67 @@ export function PosApp() {
     <>
       <main style={{ maxWidth: 920, margin: '0 auto', padding: '24px 20px 64px' }}>
         {screen === 'home' && <Home />}
-        {screen === 'search' && <Search />}
+        {screen === 'search' && (
+          <Search
+            query={query}
+            setQuery={setQuery}
+            searchLoading={searchLoading}
+            searchError={searchError}
+            searchResults={searchResults}
+            onOpenCustomer={openCustomer}
+            onClose={() => setScreen('home')}
+          />
+        )}
         {screen === 'customer' && <Customer />}
-        {screen === 'new' && <NewCustomer />}
-        {screen === 'sell' && <Sell />}
-        {screen === 'scan' && <Scan />}
+        {screen === 'new' && (
+          <NewCustomer
+            newFirst={newFirst}
+            setNewFirst={setNewFirst}
+            newLast={newLast}
+            setNewLast={setNewLast}
+            newPhone={newPhone}
+            setNewPhone={setNewPhone}
+            newEmail={newEmail}
+            setNewEmail={setNewEmail}
+            newFieldErrors={newFieldErrors}
+            newTopError={newTopError}
+            newSubmitting={newSubmitting}
+            newExtrasOpen={newExtrasOpen}
+            onToggleExtras={() => setNewExtrasOpen((v) => !v)}
+            newSource={newSource}
+            setNewSource={setNewSource}
+            newMarketingConsent={newMarketingConsent}
+            setNewMarketingConsent={setNewMarketingConsent}
+            newChildren={newChildren}
+            setNewChildren={setNewChildren}
+            formRules={formRules}
+            sellControls={sellControls}
+            onSubmit={() => void submitNewCustomer()}
+            onClose={() => {
+              resetNewCustomerForm();
+              setScreen('home');
+            }}
+          />
+        )}
+        {screen === 'sell' && (
+          <Sell
+            sellStep={sellStep}
+            setSellStep={setSellStep}
+            pricing={pricing}
+            sellControls={sellControls}
+            receiptNumber={receiptNumber}
+            setReceiptNumber={setReceiptNumber}
+            sellSubmitting={sellSubmitting}
+            nameOnReceiptChecked={nameOnReceiptChecked}
+            setNameOnReceiptChecked={setNameOnReceiptChecked}
+            sellError={sellError}
+            onSubmit={() => void submitSell()}
+            sellResponse={sellResponse}
+            onClose={() => setScreen('home')}
+            onGoToCustomer={() => setScreen(selectedId !== null ? 'customer' : 'home')}
+          />
+        )}
+        {screen === 'scan' && <Scan onClose={() => setScreen('home')} />}
       </main>
       {pinModalOpen && sessionUser && (
         <SellerPinModal
@@ -773,28 +839,6 @@ export function PosApp() {
       )}
     </>
   );
-
-  function BackBar({ label, to, onBack }: { label: string; to: Screen; onBack?: () => void }) {
-    return (
-      <button
-        onClick={() => {
-          if (onBack) onBack();
-          setScreen(to);
-        }}
-        style={{
-          border: 'none',
-          background: 'transparent',
-          color: MUTED,
-          cursor: 'pointer',
-          fontSize: 15,
-          padding: '4px 0',
-          marginBottom: 12,
-        }}
-      >
-        ← {label}
-      </button>
-    );
-  }
 
   function Home() {
     const tiles = [
@@ -944,96 +988,12 @@ export function PosApp() {
     );
   }
 
-  function Stat({ label, value }: { label: string; value: string }) {
-    return (
-      <div style={{ ...card, padding: '14px 22px', minWidth: 150 }}>
-        <div style={{ fontSize: 30, fontWeight: 600, color: ORANGE }}>{value}</div>
-        <div style={{ fontSize: 13.5, color: MUTED, marginTop: 2 }}>{label}</div>
-      </div>
-    );
-  }
-
-  function Search() {
-    const q = query.trim();
-    const showEmpty = q.length > 0 && !searchLoading && !searchError && searchResults.length === 0;
-    return (
-      <div>
-        <BackBar label="חזרה" to="home" />
-        <input
-          autoFocus
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="שם, טלפון או מספר לקוח…"
-          style={inputStyle}
-        />
-        <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {searchLoading && <div style={{ ...card, textAlign: 'center', color: MUTED }}>מחפש…</div>}
-          {searchError && (
-            <div style={{ ...card, textAlign: 'center', color: '#a23a3a' }}>
-              שגיאה בחיפוש. נסו שוב בעוד רגע.
-            </div>
-          )}
-          {searchResults.map((c) => {
-            const a = realAvatar(c.id);
-            return (
-              <button
-                key={c.id}
-                onClick={() => openCustomer(c.id)}
-                style={{
-                  ...card,
-                  padding: 14,
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 14,
-                  cursor: 'pointer',
-                  border: 'none',
-                  textAlign: 'right',
-                }}
-              >
-                <div
-                  style={{
-                    width: 44,
-                    height: 44,
-                    borderRadius: 12,
-                    background: a.bg,
-                    color: a.color,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontWeight: 600,
-                  }}
-                >
-                  {realInitials(c)}
-                </div>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 600 }}>{realFullName(c)}</div>
-                  <div style={{ fontSize: 13, color: MUTED }}>
-                    {c.phone} · {c.customerNumber}
-                  </div>
-                </div>
-              </button>
-            );
-          })}
-          {searchResults.length === 20 && (
-            <div style={{ ...card, textAlign: 'center', color: MUTED, fontSize: 13 }}>
-              מוצגים 20 הראשונים. המשיכו לסנן לחיפוש מדויק יותר.
-            </div>
-          )}
-          {showEmpty && (
-            <div style={{ ...card, textAlign: 'center', color: MUTED }}>
-              לא נמצאו לקוחות שמתאימים לחיפוש
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  }
 
   function Customer() {
     if (detailLoading) {
       return (
         <div>
-          <BackBar label="חזרה לחיפוש" to="search" />
+          <BackBar label="חזרה לחיפוש" onClick={() => setScreen('search')} />
           <div style={{ ...card, textAlign: 'center', color: MUTED }}>טוען פרטי לקוח…</div>
         </div>
       );
@@ -1041,7 +1001,7 @@ export function PosApp() {
     if (detailError || !detail) {
       return (
         <div>
-          <BackBar label="חזרה לחיפוש" to="search" />
+          <BackBar label="חזרה לחיפוש" onClick={() => setScreen('search')} />
           <div style={{ ...card, textAlign: 'center', color: '#a23a3a' }}>
             לא הצלחנו לטעון את פרטי הלקוח. חזרו לחיפוש ונסו שוב.
           </div>
@@ -1053,7 +1013,7 @@ export function PosApp() {
     const activeCard = pickActiveCard(cards);
     return (
       <div>
-        <BackBar label="חזרה לחיפוש" to="search" />
+        <BackBar label="חזרה לחיפוש" onClick={() => setScreen('search')} />
         <div style={{ ...card, display: 'flex', alignItems: 'center', gap: 14, marginBottom: 16 }}>
           <div
             style={{
@@ -1138,7 +1098,11 @@ export function PosApp() {
                 gap: 10,
               }}
             >
-              <FauxQr seed={activeCard.serialNumber} size={140} />
+              <MemeshQr
+                value={activeCard.qrToken}
+                size={200}
+                title={`קוד QR — ${activeCard.serialNumber}`}
+              />
               <div style={{ fontSize: 13, color: MUTED }}>{activeCard.serialNumber}</div>
               <div style={{ fontSize: 13, color: MUTED }}>
                 {activeCard.expiresAt === null
@@ -1198,7 +1162,7 @@ export function PosApp() {
                   >
                     {fmtDate(yyyyMmDd(h.punchedAt))} · {hhMm(h.punchedAt)}
                     <span style={{ color: MUTED, marginInlineStart: 8 }}>
-                      · {companionLabel(h.companionCount)}
+                      · {entriesLabel(h.entriesConsumed)}
                     </span>
                   </div>
                   {refunded && (
@@ -1265,7 +1229,7 @@ export function PosApp() {
             onClose={() => setAskPunch(false)}
             onConfirm={confirmPunch}
             submitting={punching}
-            companionRange={companionLimits}
+            maxEntries={Math.max(1, activeCard.totalEntries - activeCard.usedEntries)}
           />
         )}
 
@@ -1273,8 +1237,8 @@ export function PosApp() {
           (() => {
             const target = entries.find((e) => e.id === refundEntryId);
             if (!target) return null;
-            const summary = `${fmtDate(yyyyMmDd(target.punchedAt))} · ${hhMm(target.punchedAt)} · ${companionLabel(
-              target.companionCount,
+            const summary = `${fmtDate(yyyyMmDd(target.punchedAt))} · ${hhMm(target.punchedAt)} · ${entriesLabel(
+              target.entriesConsumed,
             )}`;
             return (
               <RefundEntryModal
@@ -1293,888 +1257,1153 @@ export function PosApp() {
     );
   }
 
-  function NewCustomer() {
-    return (
-      <div>
-        <BackBar
-          label="חזרה"
-          to="home"
-          onBack={() => {
-            resetNewCustomerForm();
-          }}
-        />
-        <div style={{ ...card }}>
-          <div style={{ fontSize: 20, fontWeight: 600, marginBottom: 4 }}>לקוח חדש</div>
-          <div style={{ color: MUTED, fontSize: 14, marginBottom: 18 }}>
-            פרטי הלקוח יישמרו וניתן יהיה למכור כרטיסייה מיד
-          </div>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              void submitNewCustomer();
+}
+
+// ---------------------------------------------------------------------------
+// BackBar — top-of-screen back link. Lifted to module scope so it has a stable
+// component identity across PosApp re-renders; declaring it inside PosApp
+// caused every sibling <input> to unmount on each keystroke.
+// ---------------------------------------------------------------------------
+
+function BackBar({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        border: 'none',
+        background: 'transparent',
+        color: MUTED,
+        cursor: 'pointer',
+        fontSize: 15,
+        padding: '4px 0',
+        marginBottom: 12,
+      }}
+    >
+      ← {label}
+    </button>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Stat — small metric tile on the home screen. Pure presentational; lifted
+// alongside BackBar for the same render-stability reason.
+// ---------------------------------------------------------------------------
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ ...card, padding: '14px 22px', minWidth: 150 }}>
+      <div style={{ fontSize: 30, fontWeight: 600, color: ORANGE }}>{value}</div>
+      <div style={{ fontSize: 13.5, color: MUTED, marginTop: 2 }}>{label}</div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// NewCustomerField — labelled text input used by the New Customer form. The
+// `submitting` prop replaces a closure over the parent's newSubmitting state;
+// lifting eliminates the per-keystroke remount that wiped focus mid-typing.
+// ---------------------------------------------------------------------------
+
+function NewCustomerField({
+  label,
+  value,
+  onChange,
+  required,
+  badge,
+  error,
+  type,
+  inputMode,
+  autoComplete,
+  placeholder,
+  submitting,
+}: {
+  label: string;
+  value: string;
+  onChange: (next: string) => void;
+  required?: boolean | undefined;
+  badge?: string | undefined;
+  error?: string | undefined;
+  type?: 'text' | 'tel' | 'email' | undefined;
+  inputMode?: 'tel' | 'email' | 'text' | undefined;
+  autoComplete?: string | undefined;
+  placeholder?: string | undefined;
+  submitting: boolean;
+}) {
+  return (
+    <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <span
+        style={{
+          fontSize: 13.5,
+          color: MUTED,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+        }}
+      >
+        <span>
+          {label}
+          {required ? ' *' : ''}
+        </span>
+        {badge && (
+          <span
+            style={{
+              fontSize: 11,
+              fontWeight: 600,
+              color: '#a8643d',
+              background: '#fff4ee',
+              border: '1px solid #ffe3d4',
+              borderRadius: 999,
+              padding: '2px 8px',
             }}
           >
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))',
-                gap: 14,
-              }}
-            >
-              <NewCustomerField
-                label="שם פרטי"
-                required
-                value={newFirst}
-                onChange={setNewFirst}
-                error={newFieldErrors.firstName}
-                autoComplete="given-name"
-              />
-              <NewCustomerField
-                label="שם משפחה"
-                required
-                value={newLast}
-                onChange={setNewLast}
-                error={newFieldErrors.lastName}
-                autoComplete="family-name"
-              />
-              <NewCustomerField
-                label="טלפון"
-                required
-                value={newPhone}
-                onChange={setNewPhone}
-                error={newFieldErrors.phone}
-                type="tel"
-                inputMode="tel"
-                autoComplete="tel"
-                placeholder="050-000-0000"
-              />
-              <NewCustomerField
-                label="מייל"
-                required={formRules.requireEmail}
-                badge={formRules.requireEmail ? undefined : 'מומלץ'}
-                value={newEmail}
-                onChange={setNewEmail}
-                error={newFieldErrors.email}
-                type="email"
-                inputMode="email"
-                autoComplete="email"
-              />
-            </div>
-            {!formRules.requireEmail && (
-              <div
-                style={{
-                  fontSize: 12.5,
-                  color: MUTED,
-                  marginTop: 6,
-                  lineHeight: 1.4,
-                }}
-              >
-                {sellControls.emailNudgeText}
-              </div>
-            )}
-
-            <NewCustomerExtras
-              open={newExtrasOpen}
-              onToggle={() => setNewExtrasOpen((v) => !v)}
-              source={newSource}
-              onSourceChange={setNewSource}
-              marketingConsent={newMarketingConsent}
-              onMarketingConsentChange={setNewMarketingConsent}
-              children={newChildren}
-              onChildrenChange={setNewChildren}
-              submitting={newSubmitting}
-              childrenError={newFieldErrors.children}
-            />
-
-            {newTopError && (
-              <div
-                role="alert"
-                style={{
-                  marginTop: 16,
-                  padding: '10px 14px',
-                  background: '#fbecec',
-                  color: '#a23a3a',
-                  borderRadius: 10,
-                  fontSize: 14,
-                }}
-              >
-                {newTopError}
-              </div>
-            )}
-            <button
-              type="submit"
-              disabled={newSubmitting}
-              style={{
-                ...primaryBtn,
-                width: '100%',
-                marginTop: 20,
-                opacity: newSubmitting ? 0.6 : 1,
-                cursor: newSubmitting ? 'default' : 'pointer',
-              }}
-            >
-              {newSubmitting ? 'שומר…' : 'שמור ומכור כרטיסייה'}
-            </button>
-          </form>
-        </div>
-      </div>
-    );
-  }
-
-  function NewCustomerField({
-    label,
-    value,
-    onChange,
-    required,
-    badge,
-    error,
-    type,
-    inputMode,
-    autoComplete,
-    placeholder,
-  }: {
-    label: string;
-    value: string;
-    onChange: (next: string) => void;
-    required?: boolean | undefined;
-    badge?: string | undefined;
-    error?: string | undefined;
-    type?: 'text' | 'tel' | 'email' | undefined;
-    inputMode?: 'tel' | 'email' | 'text' | undefined;
-    autoComplete?: string | undefined;
-    placeholder?: string | undefined;
-  }) {
-    return (
-      <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        <span
-          style={{
-            fontSize: 13.5,
-            color: MUTED,
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-          }}
-        >
-          <span>
-            {label}
-            {required ? ' *' : ''}
-          </span>
-          {badge && (
-            <span
-              style={{
-                fontSize: 11,
-                fontWeight: 600,
-                color: '#a8643d',
-                background: '#fff4ee',
-                border: '1px solid #ffe3d4',
-                borderRadius: 999,
-                padding: '2px 8px',
-              }}
-            >
-              {badge}
-            </span>
-          )}
-        </span>
-        <input
-          style={{
-            ...inputStyle,
-            borderColor: error ? '#e8a4a4' : '#e9e0d9',
-          }}
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          type={type ?? 'text'}
-          {...(inputMode !== undefined && { inputMode })}
-          {...(autoComplete !== undefined && { autoComplete })}
-          {...(placeholder !== undefined && { placeholder })}
-          disabled={newSubmitting}
-          aria-invalid={Boolean(error)}
-        />
-        {error && (
-          <span style={{ fontSize: 12.5, color: '#a23a3a' }} role="alert">
-            {error}
+            {badge}
           </span>
         )}
-      </label>
-    );
-  }
+      </span>
+      <input
+        style={{
+          ...inputStyle,
+          borderColor: error ? '#e8a4a4' : '#e9e0d9',
+        }}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        type={type ?? 'text'}
+        {...(inputMode !== undefined && { inputMode })}
+        {...(autoComplete !== undefined && { autoComplete })}
+        {...(placeholder !== undefined && { placeholder })}
+        disabled={submitting}
+        aria-invalid={Boolean(error)}
+      />
+      {error && (
+        <span style={{ fontSize: 12.5, color: '#a23a3a' }} role="alert">
+          {error}
+        </span>
+      )}
+    </label>
+  );
+}
 
-  function NewCustomerExtras({
-    open,
-    onToggle,
-    source,
-    onSourceChange,
-    marketingConsent,
-    onMarketingConsentChange,
-    children: kids,
-    onChildrenChange,
-    submitting,
-    childrenError,
-  }: {
-    open: boolean;
-    onToggle: () => void;
-    source: CustomerSourceValue | '';
-    onSourceChange: (next: CustomerSourceValue | '') => void;
-    marketingConsent: boolean;
-    onMarketingConsentChange: (next: boolean) => void;
-    children: ChildRecord[];
-    onChildrenChange: (next: ChildRecord[]) => void;
-    submitting: boolean;
-    childrenError?: string | undefined;
-  }) {
-    const sourceOptions: { value: CustomerSourceValue | ''; label: string }[] = [
-      { value: '', label: 'לא צוין' },
-      { value: 'referral', label: 'חבר/ה' },
-      { value: 'social', label: 'רשתות חברתיות' },
-      { value: 'walk_by', label: 'עברתי ברחוב' },
-      { value: 'website', label: 'אתר אינטרנט' },
-      { value: 'other', label: 'אחר' },
-    ];
+// ---------------------------------------------------------------------------
+// NewCustomerExtras — collapsible "more details" panel inside the New Customer
+// form: marketing source, children list, marketing consent. Already fully
+// prop-driven, so the lift is mechanical; gains the same render-stability
+// benefit as NewCustomerField.
+// ---------------------------------------------------------------------------
 
-    const updateChild = (i: number, patch: Partial<ChildRecord>) => {
-      onChildrenChange(kids.map((c, idx) => (idx === i ? { ...c, ...patch } : c)));
-    };
-    const removeChild = (i: number) => {
-      onChildrenChange(kids.filter((_, idx) => idx !== i));
-    };
-    const addChild = () => {
-      onChildrenChange([...kids, { name: '', dob: '' }]);
-    };
+function NewCustomerExtras({
+  open,
+  onToggle,
+  source,
+  onSourceChange,
+  marketingConsent,
+  onMarketingConsentChange,
+  children: kids,
+  onChildrenChange,
+  submitting,
+  childrenError,
+}: {
+  open: boolean;
+  onToggle: () => void;
+  source: CustomerSourceValue | '';
+  onSourceChange: (next: CustomerSourceValue | '') => void;
+  marketingConsent: boolean;
+  onMarketingConsentChange: (next: boolean) => void;
+  children: ChildRecord[];
+  onChildrenChange: (next: ChildRecord[]) => void;
+  submitting: boolean;
+  childrenError?: string | undefined;
+}) {
+  const sourceOptions: { value: CustomerSourceValue | ''; label: string }[] = [
+    { value: '', label: 'לא צוין' },
+    { value: 'referral', label: 'חבר/ה' },
+    { value: 'social', label: 'רשתות חברתיות' },
+    { value: 'walk_by', label: 'עברתי ברחוב' },
+    { value: 'website', label: 'אתר אינטרנט' },
+    { value: 'other', label: 'אחר' },
+  ];
 
-    return (
-      <div style={{ marginTop: 16 }}>
-        <button
-          type="button"
-          onClick={onToggle}
-          aria-expanded={open}
+  const updateChild = (i: number, patch: Partial<ChildRecord>) => {
+    onChildrenChange(kids.map((c, idx) => (idx === i ? { ...c, ...patch } : c)));
+  };
+  const removeChild = (i: number) => {
+    onChildrenChange(kids.filter((_, idx) => idx !== i));
+  };
+  const addChild = () => {
+    onChildrenChange([...kids, { name: '', dob: '' }]);
+  };
+
+  return (
+    <div style={{ marginTop: 16 }}>
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        style={{
+          background: '#fff8f3',
+          border: '1px solid #ffe3d4',
+          color: '#a8643d',
+          borderRadius: 10,
+          padding: '10px 14px',
+          fontSize: 14,
+          fontWeight: 600,
+          cursor: 'pointer',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          width: '100%',
+          justifyContent: 'space-between',
+        }}
+      >
+        <span>פרטים נוספים (לא חובה)</span>
+        <span aria-hidden="true">{open ? '−' : '+'}</span>
+      </button>
+
+      {open && (
+        <div
           style={{
-            background: '#fff8f3',
-            border: '1px solid #ffe3d4',
-            color: '#a8643d',
+            border: '1px solid #f3efea',
             borderRadius: 10,
-            padding: '10px 14px',
-            fontSize: 14,
-            fontWeight: 600,
-            cursor: 'pointer',
+            padding: 14,
+            marginTop: 10,
             display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            width: '100%',
-            justifyContent: 'space-between',
+            flexDirection: 'column',
+            gap: 14,
           }}
         >
-          <span>פרטים נוספים (לא חובה)</span>
-          <span aria-hidden="true">{open ? '−' : '+'}</span>
-        </button>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <span style={{ fontSize: 13.5, color: MUTED }}>איך שמעת עלינו?</span>
+            <select
+              value={source}
+              onChange={(e) => onSourceChange(e.target.value as CustomerSourceValue | '')}
+              disabled={submitting}
+              style={{ ...inputStyle, paddingInlineEnd: 32 }}
+            >
+              {sourceOptions.map((o) => (
+                <option key={o.value || 'none'} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </label>
 
-        {open && (
+          <div>
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                marginBottom: 8,
+              }}
+            >
+              <span style={{ fontSize: 13.5, color: MUTED }}>ילדים</span>
+              <button
+                type="button"
+                onClick={addChild}
+                disabled={submitting}
+                style={{
+                  background: '#fff',
+                  border: '1.5px solid #e9e0d9',
+                  color: MUTED,
+                  borderRadius: 8,
+                  padding: '6px 12px',
+                  fontSize: 13,
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                + הוסף ילד
+              </button>
+            </div>
+            {kids.length === 0 ? (
+              <div style={{ fontSize: 13, color: MUTED, fontStyle: 'italic' }}>
+                לא נרשמו ילדים. הוספה מועילה לתזכורות יום-הולדת בהמשך.
+              </div>
+            ) : (
+              kids.map((c, i) => (
+                <div
+                  key={i}
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: '1fr 140px auto',
+                    gap: 8,
+                    alignItems: 'center',
+                    marginTop: 8,
+                  }}
+                >
+                  <input
+                    type="text"
+                    value={c.name}
+                    onChange={(e) => updateChild(i, { name: e.target.value })}
+                    placeholder="שם הילד/ה"
+                    disabled={submitting}
+                    style={inputStyle}
+                  />
+                  <input
+                    type="date"
+                    value={c.dob}
+                    onChange={(e) => updateChild(i, { dob: e.target.value })}
+                    disabled={submitting}
+                    style={inputStyle}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removeChild(i)}
+                    disabled={submitting}
+                    aria-label={`הסר ילד ${i + 1}`}
+                    style={{
+                      border: '1.5px solid #e8a4a4',
+                      background: '#fff',
+                      color: '#c25a5a',
+                      borderRadius: 8,
+                      padding: '8px 10px',
+                      fontSize: 14,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    ×
+                  </button>
+                </div>
+              ))
+            )}
+            {childrenError && (
+              <div style={{ fontSize: 12.5, color: '#a23a3a', marginTop: 8 }} role="alert">
+                {childrenError}
+              </div>
+            )}
+          </div>
+
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: 10,
+              fontSize: 14,
+              color: INK,
+              cursor: 'pointer',
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={marketingConsent}
+              onChange={(e) => onMarketingConsentChange(e.target.checked)}
+              disabled={submitting}
+              style={{ marginTop: 3 }}
+            />
+            <span>
+              אני מסכים/ה לקבל הודעות על מבצעים ואירועים
+              <div style={{ fontSize: 12.5, color: MUTED, marginTop: 2 }}>
+                לא נשלח שום הודעת שיווק ללא הסימון הזה.
+              </div>
+            </span>
+          </label>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Search — query input + debounced result list. Search state and the
+// debounce effect live on PosApp (so the input value persists when the
+// cashier navigates away and back); the screen receives the values to
+// render and the setter for the input.
+// ---------------------------------------------------------------------------
+
+function Search({
+  query,
+  setQuery,
+  searchLoading,
+  searchError,
+  searchResults,
+  onOpenCustomer,
+  onClose,
+}: {
+  query: string;
+  setQuery: (next: string) => void;
+  searchLoading: boolean;
+  searchError: string | null;
+  searchResults: Customer[];
+  onOpenCustomer: (id: string) => void;
+  onClose: () => void;
+}) {
+  const q = query.trim();
+  const showEmpty = q.length > 0 && !searchLoading && !searchError && searchResults.length === 0;
+  return (
+    <div>
+      <BackBar label="חזרה" onClick={onClose} />
+      <input
+        autoFocus
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder="שם, טלפון או מספר לקוח…"
+        style={inputStyle}
+      />
+      <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {searchLoading && <div style={{ ...card, textAlign: 'center', color: MUTED }}>מחפש…</div>}
+        {searchError && (
+          <div style={{ ...card, textAlign: 'center', color: '#a23a3a' }}>
+            שגיאה בחיפוש. נסו שוב בעוד רגע.
+          </div>
+        )}
+        {searchResults.map((c) => {
+          const a = realAvatar(c.id);
+          return (
+            <button
+              key={c.id}
+              onClick={() => onOpenCustomer(c.id)}
+              style={{
+                ...card,
+                padding: 14,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 14,
+                cursor: 'pointer',
+                border: 'none',
+                textAlign: 'right',
+              }}
+            >
+              <div
+                style={{
+                  width: 44,
+                  height: 44,
+                  borderRadius: 12,
+                  background: a.bg,
+                  color: a.color,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontWeight: 600,
+                }}
+              >
+                {realInitials(c)}
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 600 }}>{realFullName(c)}</div>
+                <div style={{ fontSize: 13, color: MUTED }}>
+                  {c.phone} · {c.customerNumber}
+                </div>
+              </div>
+            </button>
+          );
+        })}
+        {searchResults.length === 20 && (
+          <div style={{ ...card, textAlign: 'center', color: MUTED, fontSize: 13 }}>
+            מוצגים 20 הראשונים. המשיכו לסנן לחיפוש מדויק יותר.
+          </div>
+        )}
+        {showEmpty && (
+          <div style={{ ...card, textAlign: 'center', color: MUTED }}>
+            לא נמצאו לקוחות שמתאימים לחיפוש
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// NewCustomer — full New Customer form. State lives on PosApp so the form
+// can survive navigation away (and so the post-submit handoff into the sell
+// flow has the customer id ready). Props are wide because the screen reads
+// every form field; setters travel as raw setters to match the existing
+// NewCustomerField/NewCustomerExtras prop shapes.
+// ---------------------------------------------------------------------------
+
+interface NewCustomerFieldErrors {
+  firstName?: string;
+  lastName?: string;
+  phone?: string;
+  email?: string;
+  children?: string;
+}
+
+function NewCustomer({
+  newFirst,
+  setNewFirst,
+  newLast,
+  setNewLast,
+  newPhone,
+  setNewPhone,
+  newEmail,
+  setNewEmail,
+  newFieldErrors,
+  newTopError,
+  newSubmitting,
+  newExtrasOpen,
+  onToggleExtras,
+  newSource,
+  setNewSource,
+  newMarketingConsent,
+  setNewMarketingConsent,
+  newChildren,
+  setNewChildren,
+  formRules,
+  sellControls,
+  onSubmit,
+  onClose,
+}: {
+  newFirst: string;
+  setNewFirst: (next: string) => void;
+  newLast: string;
+  setNewLast: (next: string) => void;
+  newPhone: string;
+  setNewPhone: (next: string) => void;
+  newEmail: string;
+  setNewEmail: (next: string) => void;
+  newFieldErrors: NewCustomerFieldErrors;
+  newTopError: string | null;
+  newSubmitting: boolean;
+  newExtrasOpen: boolean;
+  onToggleExtras: () => void;
+  newSource: CustomerSourceValue | '';
+  setNewSource: (next: CustomerSourceValue | '') => void;
+  newMarketingConsent: boolean;
+  setNewMarketingConsent: (next: boolean) => void;
+  newChildren: ChildRecord[];
+  setNewChildren: (next: ChildRecord[]) => void;
+  formRules: CustomerFormRules;
+  sellControls: PosSellControls;
+  onSubmit: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <div>
+      <BackBar label="חזרה" onClick={onClose} />
+      <div style={{ ...card }}>
+        <div style={{ fontSize: 20, fontWeight: 600, marginBottom: 4 }}>לקוח חדש</div>
+        <div style={{ color: MUTED, fontSize: 14, marginBottom: 18 }}>
+          פרטי הלקוח יישמרו וניתן יהיה למכור כרטיסייה מיד
+        </div>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            onSubmit();
+          }}
+        >
           <div
             style={{
-              border: '1px solid #f3efea',
-              borderRadius: 10,
-              padding: 14,
-              marginTop: 10,
-              display: 'flex',
-              flexDirection: 'column',
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))',
               gap: 14,
             }}
           >
-            <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <span style={{ fontSize: 13.5, color: MUTED }}>איך שמעת עלינו?</span>
-              <select
-                value={source}
-                onChange={(e) => onSourceChange(e.target.value as CustomerSourceValue | '')}
-                disabled={submitting}
-                style={{ ...inputStyle, paddingInlineEnd: 32 }}
-              >
-                {sourceOptions.map((o) => (
-                  <option key={o.value || 'none'} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <div>
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  marginBottom: 8,
-                }}
-              >
-                <span style={{ fontSize: 13.5, color: MUTED }}>ילדים</span>
-                <button
-                  type="button"
-                  onClick={addChild}
-                  disabled={submitting}
-                  style={{
-                    background: '#fff',
-                    border: '1.5px solid #e9e0d9',
-                    color: MUTED,
-                    borderRadius: 8,
-                    padding: '6px 12px',
-                    fontSize: 13,
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                  }}
-                >
-                  + הוסף ילד
-                </button>
-              </div>
-              {kids.length === 0 ? (
-                <div style={{ fontSize: 13, color: MUTED, fontStyle: 'italic' }}>
-                  לא נרשמו ילדים. הוספה מועילה לתזכורות יום-הולדת בהמשך.
-                </div>
-              ) : (
-                kids.map((c, i) => (
-                  <div
-                    key={i}
-                    style={{
-                      display: 'grid',
-                      gridTemplateColumns: '1fr 140px auto',
-                      gap: 8,
-                      alignItems: 'center',
-                      marginTop: 8,
-                    }}
-                  >
-                    <input
-                      type="text"
-                      value={c.name}
-                      onChange={(e) => updateChild(i, { name: e.target.value })}
-                      placeholder="שם הילד/ה"
-                      disabled={submitting}
-                      style={inputStyle}
-                    />
-                    <input
-                      type="date"
-                      value={c.dob}
-                      onChange={(e) => updateChild(i, { dob: e.target.value })}
-                      disabled={submitting}
-                      style={inputStyle}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => removeChild(i)}
-                      disabled={submitting}
-                      aria-label={`הסר ילד ${i + 1}`}
-                      style={{
-                        border: '1.5px solid #e8a4a4',
-                        background: '#fff',
-                        color: '#c25a5a',
-                        borderRadius: 8,
-                        padding: '8px 10px',
-                        fontSize: 14,
-                        cursor: 'pointer',
-                      }}
-                    >
-                      ×
-                    </button>
-                  </div>
-                ))
-              )}
-              {childrenError && (
-                <div style={{ fontSize: 12.5, color: '#a23a3a', marginTop: 8 }} role="alert">
-                  {childrenError}
-                </div>
-              )}
-            </div>
-
-            <label
-              style={{
-                display: 'flex',
-                alignItems: 'flex-start',
-                gap: 10,
-                fontSize: 14,
-                color: INK,
-                cursor: 'pointer',
-              }}
-            >
-              <input
-                type="checkbox"
-                checked={marketingConsent}
-                onChange={(e) => onMarketingConsentChange(e.target.checked)}
-                disabled={submitting}
-                style={{ marginTop: 3 }}
-              />
-              <span>
-                אני מסכים/ה לקבל הודעות על מבצעים ואירועים
-                <div style={{ fontSize: 12.5, color: MUTED, marginTop: 2 }}>
-                  לא נשלח שום הודעת שיווק ללא הסימון הזה.
-                </div>
-              </span>
-            </label>
+            <NewCustomerField
+              label="שם פרטי"
+              required
+              value={newFirst}
+              onChange={setNewFirst}
+              error={newFieldErrors.firstName}
+              autoComplete="given-name"
+              submitting={newSubmitting}
+            />
+            <NewCustomerField
+              label="שם משפחה"
+              required
+              value={newLast}
+              onChange={setNewLast}
+              error={newFieldErrors.lastName}
+              autoComplete="family-name"
+              submitting={newSubmitting}
+            />
+            <NewCustomerField
+              label="טלפון"
+              required
+              value={newPhone}
+              onChange={setNewPhone}
+              error={newFieldErrors.phone}
+              type="tel"
+              inputMode="tel"
+              autoComplete="tel"
+              placeholder="050-000-0000"
+              submitting={newSubmitting}
+            />
+            <NewCustomerField
+              label="מייל"
+              required={formRules.requireEmail}
+              badge={formRules.requireEmail ? undefined : 'מומלץ'}
+              value={newEmail}
+              onChange={setNewEmail}
+              error={newFieldErrors.email}
+              type="email"
+              inputMode="email"
+              autoComplete="email"
+              submitting={newSubmitting}
+            />
           </div>
-        )}
-      </div>
-    );
-  }
-
-  function Sell() {
-    return (
-      <div>
-        <BackBar label="חזרה" to="home" />
-        {sellStep === 'choose' && (
-          <div style={{ ...card }}>
-            <div style={{ fontSize: 20, fontWeight: 600 }}>מכירת כרטיסייה</div>
+          {!formRules.requireEmail && (
             <div
               style={{
-                ...card,
-                background: '#fff8f3',
-                boxShadow: 'none',
-                border: '1px solid #ffe3d4',
-                marginTop: 16,
+                fontSize: 12.5,
+                color: MUTED,
+                marginTop: 6,
+                lineHeight: 1.4,
               }}
             >
-              <div style={{ fontWeight: 600, fontSize: 18 }}>כרטיסייה</div>
-              <div style={{ color: MUTED, fontSize: 14, marginTop: 4 }}>{pricing.pitchLabel}</div>
-              <div style={{ fontSize: 36, fontWeight: 600, color: ORANGE, marginTop: 12 }}>
-                ₪{pricing.priceShekels}
-              </div>
-              <div style={{ color: MUTED, fontSize: 13.5, marginTop: 4 }}>
-                כל כניסה = ילד אחד + מלווה אחד
-              </div>
+              {sellControls.emailNudgeText}
             </div>
-            <button
-              style={{ ...primaryBtn, width: '100%', marginTop: 18 }}
-              onClick={() => setSellStep('confirm')}
+          )}
+
+          <NewCustomerExtras
+            open={newExtrasOpen}
+            onToggle={onToggleExtras}
+            source={newSource}
+            onSourceChange={setNewSource}
+            marketingConsent={newMarketingConsent}
+            onMarketingConsentChange={setNewMarketingConsent}
+            children={newChildren}
+            onChildrenChange={setNewChildren}
+            submitting={newSubmitting}
+            childrenError={newFieldErrors.children}
+          />
+
+          {newTopError && (
+            <div
+              role="alert"
+              style={{
+                marginTop: 16,
+                padding: '10px 14px',
+                background: '#fbecec',
+                color: '#a23a3a',
+                borderRadius: 10,
+                fontSize: 14,
+              }}
             >
-              המשך לתשלום
-            </button>
-          </div>
-        )}
-        {sellStep === 'confirm' && (
-          <div style={{ ...card }}>
-            <div style={{ fontSize: 20, fontWeight: 600 }}>סכום לתשלום</div>
-            <div style={{ fontSize: 40, fontWeight: 600, color: ORANGE, margin: '8px 0 14px' }}>
+              {newTopError}
+            </div>
+          )}
+          <button
+            type="submit"
+            disabled={newSubmitting}
+            style={{
+              ...primaryBtn,
+              width: '100%',
+              marginTop: 20,
+              opacity: newSubmitting ? 0.6 : 1,
+              cursor: newSubmitting ? 'default' : 'pointer',
+            }}
+          >
+            {newSubmitting ? 'שומר…' : 'שמור ומכור כרטיסייה'}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Sell — three-step sell flow: choose, confirm payment + receipt + PIN nudge,
+// then done with the freshly-issued QR. All state lives on PosApp because
+// the PIN modal at PosApp's root needs to resume submitSell after the cashier
+// enters their PIN; props expose everything the screen reads or mutates.
+// ---------------------------------------------------------------------------
+
+function Sell({
+  sellStep,
+  setSellStep,
+  pricing,
+  sellControls,
+  receiptNumber,
+  setReceiptNumber,
+  sellSubmitting,
+  nameOnReceiptChecked,
+  setNameOnReceiptChecked,
+  sellError,
+  onSubmit,
+  sellResponse,
+  onClose,
+  onGoToCustomer,
+}: {
+  sellStep: SellStep;
+  setSellStep: (next: SellStep) => void;
+  pricing: CardPricing;
+  sellControls: PosSellControls;
+  receiptNumber: string;
+  setReceiptNumber: (next: string) => void;
+  sellSubmitting: boolean;
+  nameOnReceiptChecked: boolean;
+  setNameOnReceiptChecked: (next: boolean) => void;
+  sellError: string | null;
+  onSubmit: () => void;
+  sellResponse: SellCardResponse | null;
+  onClose: () => void;
+  onGoToCustomer: () => void;
+}) {
+  return (
+    <div>
+      <BackBar label="חזרה" onClick={onClose} />
+      {sellStep === 'choose' && (
+        <div style={{ ...card }}>
+          <div style={{ fontSize: 20, fontWeight: 600 }}>מכירת כרטיסייה</div>
+          <div
+            style={{
+              ...card,
+              background: '#fff8f3',
+              boxShadow: 'none',
+              border: '1px solid #ffe3d4',
+              marginTop: 16,
+            }}
+          >
+            <div style={{ fontWeight: 600, fontSize: 18 }}>כרטיסייה</div>
+            <div style={{ color: MUTED, fontSize: 14, marginTop: 4 }}>{pricing.pitchLabel}</div>
+            <div style={{ fontSize: 36, fontWeight: 600, color: ORANGE, marginTop: 12 }}>
               ₪{pricing.priceShekels}
             </div>
-            <div style={{ color: MUTED, fontSize: 14 }}>
-              החיוב מתבצע בקופה החיצונית. לאחר אישור התשלום, לחצו "אושר".
+            <div style={{ color: MUTED, fontSize: 13.5, marginTop: 4 }}>
+              ניקוב גמיש — בוחרים בקופה כמה כניסות לסמן בכל סריקה
             </div>
+          </div>
+          <button
+            style={{ ...primaryBtn, width: '100%', marginTop: 18 }}
+            onClick={() => setSellStep('confirm')}
+          >
+            המשך לתשלום
+          </button>
+        </div>
+      )}
+      {sellStep === 'confirm' && (
+        <div style={{ ...card }}>
+          <div style={{ fontSize: 20, fontWeight: 600 }}>סכום לתשלום</div>
+          <div style={{ fontSize: 40, fontWeight: 600, color: ORANGE, margin: '8px 0 14px' }}>
+            ₪{pricing.priceShekels}
+          </div>
+          <div style={{ color: MUTED, fontSize: 14 }}>
+            החיוב מתבצע בקופה החיצונית. לאחר אישור התשלום, לחצו "אושר".
+          </div>
 
-            {sellControls.requireReceiptNumberOnPos && (
-              <div style={{ marginTop: 18 }}>
-                <label
-                  htmlFor="pos-receipt-number"
-                  style={{
-                    display: 'block',
-                    fontSize: 13.5,
-                    color: MUTED,
-                    marginBottom: 6,
-                    fontWeight: 600,
-                  }}
-                >
-                  מספר קבלה *
-                </label>
-                <input
-                  id="pos-receipt-number"
-                  value={receiptNumber}
-                  onChange={(e) => setReceiptNumber(e.target.value)}
-                  inputMode="text"
-                  autoComplete="off"
-                  placeholder="מספר הקבלה שהדפסת בקופה"
-                  disabled={sellSubmitting}
-                  style={{
-                    width: '100%',
-                    fontSize: 16,
-                    padding: '12px 14px',
-                    border: '1.5px solid #e9e0d9',
-                    borderRadius: 10,
-                    background: '#fff',
-                    outline: 'none',
-                    boxSizing: 'border-box',
-                  }}
-                />
-              </div>
-            )}
-
-            <label
-              style={{
-                display: 'flex',
-                alignItems: 'flex-start',
-                gap: 10,
-                marginTop: 14,
-                padding: '10px 12px',
-                border: '1.5px solid #e9e0d9',
-                borderRadius: 10,
-                background: '#fffaf5',
-                cursor: 'pointer',
-              }}
-            >
+          {sellControls.requireReceiptNumberOnPos && (
+            <div style={{ marginTop: 18 }}>
+              <label
+                htmlFor="pos-receipt-number"
+                style={{
+                  display: 'block',
+                  fontSize: 13.5,
+                  color: MUTED,
+                  marginBottom: 6,
+                  fontWeight: 600,
+                }}
+              >
+                מספר קבלה *
+              </label>
               <input
-                type="checkbox"
-                checked={nameOnReceiptChecked}
-                onChange={(e) => setNameOnReceiptChecked(e.target.checked)}
+                id="pos-receipt-number"
+                value={receiptNumber}
+                onChange={(e) => setReceiptNumber(e.target.value)}
+                inputMode="text"
+                autoComplete="off"
+                placeholder="מספר הקבלה שהדפסת בקופה"
                 disabled={sellSubmitting}
-                style={{ marginTop: 3 }}
-              />
-              <span style={{ fontSize: 14, color: INK, lineHeight: 1.4 }}>
-                {sellControls.nameOnReceiptLabel}
-              </span>
-            </label>
-
-            <div style={{ fontWeight: 600, margin: '18px 0 10px' }}>הלקוח שולם בקופה?</div>
-            {sellError && (
-              <div
-                role="alert"
                 style={{
-                  marginBottom: 12,
-                  padding: '10px 14px',
-                  background: '#fbecec',
-                  color: '#a23a3a',
+                  width: '100%',
+                  fontSize: 16,
+                  padding: '12px 14px',
+                  border: '1.5px solid #e9e0d9',
                   borderRadius: 10,
-                  fontSize: 14,
+                  background: '#fff',
+                  outline: 'none',
+                  boxSizing: 'border-box',
                 }}
-              >
-                {sellError}
-              </div>
-            )}
-            <div style={{ display: 'flex', gap: 10 }}>
-              <button
-                style={{ ...ghostBtn, flex: 1 }}
-                onClick={() => setSellStep('choose')}
-                disabled={sellSubmitting}
-              >
-                ביטול
-              </button>
-              <button
-                style={{
-                  ...primaryBtn,
-                  flex: 1,
-                  opacity: sellSubmitting || !nameOnReceiptChecked ? 0.6 : 1,
-                  cursor:
-                    sellSubmitting || !nameOnReceiptChecked ? 'not-allowed' : 'pointer',
-                }}
-                onClick={() => void submitSell()}
-                disabled={sellSubmitting || !nameOnReceiptChecked}
-              >
-                {sellSubmitting ? 'יוצר…' : 'אושר'}
-              </button>
+              />
             </div>
-          </div>
-        )}
-        {sellStep === 'done' && sellResponse && (
-          <div style={{ ...card, textAlign: 'center' }}>
+          )}
+
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: 10,
+              marginTop: 14,
+              padding: '10px 12px',
+              border: '1.5px solid #e9e0d9',
+              borderRadius: 10,
+              background: '#fffaf5',
+              cursor: 'pointer',
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={nameOnReceiptChecked}
+              onChange={(e) => setNameOnReceiptChecked(e.target.checked)}
+              disabled={sellSubmitting}
+              style={{ marginTop: 3 }}
+            />
+            <span style={{ fontSize: 14, color: INK, lineHeight: 1.4 }}>
+              {sellControls.nameOnReceiptLabel}
+            </span>
+          </label>
+
+          <div style={{ fontWeight: 600, margin: '18px 0 10px' }}>הלקוח שולם בקופה?</div>
+          {sellError && (
             <div
+              role="alert"
               style={{
-                display: 'flex',
-                justifyContent: 'center',
-                animation: 'memesh-burst 0.5s ease',
+                marginBottom: 12,
+                padding: '10px 14px',
+                background: '#fbecec',
+                color: '#a23a3a',
+                borderRadius: 10,
+                fontSize: 14,
               }}
             >
-              <Sun size={96} />
+              {sellError}
             </div>
-            <div style={{ fontSize: 22, fontWeight: 600, marginTop: 12 }}>הכרטיסייה נוצרה!</div>
-            <div style={{ color: MUTED, fontSize: 14, marginTop: 6 }}>
-              הכרטיסייה זמינה בכרטיס הלקוח. שליחת ה-SMS עם ה-QR תיכנס בעדכון הבא.
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'center', margin: '18px 0' }}>
-              <FauxQr seed={sellResponse.card.serialNumber} size={140} />
-            </div>
-            <div style={{ fontSize: 13, color: MUTED, marginBottom: 4 }}>
-              {sellResponse.card.serialNumber}
-            </div>
-            <div style={{ fontSize: 13, color: MUTED, marginBottom: 14 }}>
-              {sellResponse.card.expiresAt === null
-                ? 'ללא תפוגה'
-                : `תוקף עד ${fmtDate(yyyyMmDd(sellResponse.card.expiresAt))}`}
-            </div>
-            <div style={{ display: 'flex', gap: 10 }}>
-              <button
-                style={{ ...ghostBtn, flex: 1 }}
-                onClick={() => {
-                  if (selectedId) {
-                    setScreen('customer');
-                  } else {
-                    setScreen('home');
-                  }
-                }}
-              >
-                לכרטיס הלקוח
-              </button>
-              <button
-                style={{ ...primaryBtn, flex: 1 }}
-                onClick={() => {
-                  setScreen('home');
-                }}
-              >
-                חזרה למסך הראשי
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  function Scan() {
-    // 'loading-preview' fetches /scan/lookup before the modal opens, so the
-    // cashier sees customer + card context (and a red banner for problem
-    // cards) instead of a blank companion picker.
-    type ScanPhase =
-      | 'camera'
-      | 'serial'
-      | 'loading-preview'
-      | 'confirming'
-      | 'submitting'
-      | 'success'
-      | 'error';
-    type Source = { mode: 'token'; token: string } | { mode: 'serial'; serial: string };
-
-    const [phase, setPhase] = useState<ScanPhase>('camera');
-    const [source, setSource] = useState<Source | null>(null);
-    const [scanKey, setScanKey] = useState('');
-    const [cameraError, setCameraError] = useState<string | null>(null);
-    const [result, setResult] = useState<{ remaining: number; total: number } | null>(null);
-    const [punchErrorMsg, setPunchErrorMsg] = useState<string | null>(null);
-    const [serialInput, setSerialInput] = useState('');
-    const [serialFieldError, setSerialFieldError] = useState<string | null>(null);
-    const [preview, setPreview] = useState<ScanLookupResponse | null>(null);
-
-    useEffect(() => {
-      console.info('[web scan] mounted');
-      return () => console.info('[web scan] unmounted');
-    }, []);
-
-    const reset = () => {
-      setPhase('camera');
-      setSource(null);
-      setResult(null);
-      setPunchErrorMsg(null);
-      setSerialInput('');
-      setSerialFieldError(null);
-      setCameraError(null);
-      setPreview(null);
-    };
-
-    // Fetch /scan/lookup using the captured source, then transition to the
-    // confirming phase whether the card is punchable or not. The modal itself
-    // decides whether to show the companion picker or the red banner based on
-    // preview.status.
-    const fetchPreview = async (nextSource: Source) => {
-      setPhase('loading-preview');
-      console.info('[web scan] preview fetch', { mode: nextSource.mode });
-      const res =
-        nextSource.mode === 'token'
-          ? await lookupByToken(nextSource.token)
-          : await lookupBySerial(nextSource.serial);
-      if (res.ok) {
-        console.info('[web scan] preview ok', { status: res.data.status });
-        setPreview(res.data);
-        setPhase('confirming');
-        return;
-      }
-      console.warn('[web scan] preview error', { status: res.status, error: res.error });
-      setPunchErrorMsg(humanizePunchError(res.error));
-      setPhase('error');
-    };
-
-    const onScannerDetect = (codes: IDetectedBarcode[]) => {
-      if (phase !== 'camera') return;
-      const first = codes[0];
-      if (!first?.rawValue) return;
-      console.info('[web scan] detected', { tokenPrefix: first.rawValue.slice(0, 8) });
-      const nextSource: Source = { mode: 'token', token: first.rawValue };
-      setSource(nextSource);
-      setScanKey(crypto.randomUUID());
-      void fetchPreview(nextSource);
-    };
-
-    const onScannerError = (err: unknown) => {
-      const scannerErr = err as IScannerError;
-      console.warn('[web scan] error', { kind: scannerErr.kind });
-      setCameraError(humanizeScanError(scannerErr.kind));
-    };
-
-    const submitSerial = () => {
-      const trimmed = serialInput.trim();
-      if (!trimmed) {
-        setSerialFieldError('נא להזין מספר סידורי');
-        return;
-      }
-      setSerialFieldError(null);
-      const nextSource: Source = { mode: 'serial', serial: trimmed };
-      setSource(nextSource);
-      setScanKey(crypto.randomUUID());
-      void fetchPreview(nextSource);
-    };
-
-    const confirmPunch = async (companions: number) => {
-      if (!source) return;
-      setPhase('submitting');
-      setPunchErrorMsg(null);
-      console.info('[web scan] punch submit', { mode: source.mode, companions });
-      const res =
-        source.mode === 'token'
-          ? await punchByToken(source.token, { companions, idempotencyKey: scanKey })
-          : await punchBySerial(source.serial, { companions, idempotencyKey: scanKey });
-      if (res.ok) {
-        console.info('[web scan] punch success', { remaining: res.data.remaining });
-        setResult({ remaining: res.data.remaining, total: res.data.totalEntries });
-        setPhase('success');
-        return;
-      }
-      console.warn('[web scan] punch error', { status: res.status, error: res.error });
-      setPunchErrorMsg(humanizePunchError(res.error));
-      setPhase('error');
-    };
-
-    return (
-      <div>
-        <BackBar label="חזרה" to="home" />
-        {phase === 'camera' && (
-          <div style={{ ...card, textAlign: 'center' }}>
-            <div
-              style={{
-                borderRadius: 16,
-                overflow: 'hidden',
-                aspectRatio: '4 / 3',
-                background: INK,
-                position: 'relative',
-              }}
-            >
-              {cameraError ? (
-                <div
-                  style={{
-                    color: '#fff',
-                    padding: 24,
-                    fontSize: 14,
-                    height: '100%',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    textAlign: 'center',
-                  }}
-                >
-                  {cameraError}
-                </div>
-              ) : (
-                <Scanner
-                  onScan={onScannerDetect}
-                  onError={onScannerError}
-                  constraints={{ facingMode: 'environment' }}
-                  styles={{
-                    container: { width: '100%', height: '100%' },
-                    video: { width: '100%', height: '100%', objectFit: 'cover' },
-                  }}
-                />
-              )}
-            </div>
-            <div style={{ color: MUTED, fontSize: 13.5, marginTop: 12 }}>
-              מקמו את קוד ה-QR של הכרטיסייה במסגרת
-            </div>
+          )}
+          <div style={{ display: 'flex', gap: 10 }}>
             <button
-              style={{ ...ghostBtn, width: '100%', marginTop: 12 }}
+              style={{ ...ghostBtn, flex: 1 }}
+              onClick={() => setSellStep('choose')}
+              disabled={sellSubmitting}
+            >
+              ביטול
+            </button>
+            <button
+              style={{
+                ...primaryBtn,
+                flex: 1,
+                opacity: sellSubmitting || !nameOnReceiptChecked ? 0.6 : 1,
+                cursor:
+                  sellSubmitting || !nameOnReceiptChecked ? 'not-allowed' : 'pointer',
+              }}
+              onClick={onSubmit}
+              disabled={sellSubmitting || !nameOnReceiptChecked}
+            >
+              {sellSubmitting ? 'יוצר…' : 'אושר'}
+            </button>
+          </div>
+        </div>
+      )}
+      {sellStep === 'done' && sellResponse && (
+        <div style={{ ...card, textAlign: 'center' }}>
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'center',
+              animation: 'memesh-burst 0.5s ease',
+            }}
+          >
+            <Sun size={96} />
+          </div>
+          <div style={{ fontSize: 22, fontWeight: 600, marginTop: 12 }}>הכרטיסייה נוצרה!</div>
+          <div style={{ color: MUTED, fontSize: 14, marginTop: 6 }}>
+            הכרטיסייה זמינה בכרטיס הלקוח. שליחת ה-SMS עם ה-QR תיכנס בעדכון הבא.
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'center', margin: '18px 0' }}>
+            <MemeshQr
+              value={sellResponse.card.qrToken}
+              size={200}
+              title={`קוד QR — ${sellResponse.card.serialNumber}`}
+            />
+          </div>
+          <div style={{ fontSize: 13, color: MUTED, marginBottom: 4 }}>
+            {sellResponse.card.serialNumber}
+          </div>
+          <div style={{ fontSize: 13, color: MUTED, marginBottom: 14 }}>
+            {sellResponse.card.expiresAt === null
+              ? 'ללא תפוגה'
+              : `תוקף עד ${fmtDate(yyyyMmDd(sellResponse.card.expiresAt))}`}
+          </div>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button style={{ ...ghostBtn, flex: 1 }} onClick={onGoToCustomer}>
+              לכרטיס הלקוח
+            </button>
+            <button style={{ ...primaryBtn, flex: 1 }} onClick={onClose}>
+              חזרה למסך הראשי
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Scan — full-screen scan/punch flow: camera scan, fallback serial entry,
+// preview lookup, entries-picker modal, success and error tails. Owns its own
+// phase state internally; the only outer dependency is onClose (navigate back).
+// ---------------------------------------------------------------------------
+
+type ScanPhase =
+  | 'camera'
+  | 'serial'
+  | 'loading-preview'
+  | 'confirming'
+  | 'submitting'
+  | 'success'
+  | 'error';
+type ScanSource = { mode: 'token'; token: string } | { mode: 'serial'; serial: string };
+
+function Scan({ onClose }: { onClose: () => void }) {
+  // 'loading-preview' fetches /scan/lookup before the modal opens, so the
+  // cashier sees customer + card context (and a red banner for problem
+  // cards) instead of a blank entries picker.
+  const [phase, setPhase] = useState<ScanPhase>('camera');
+  const [source, setSource] = useState<ScanSource | null>(null);
+  const [scanKey, setScanKey] = useState('');
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const [result, setResult] = useState<{ remaining: number; total: number } | null>(null);
+  const [punchErrorMsg, setPunchErrorMsg] = useState<string | null>(null);
+  const [serialInput, setSerialInput] = useState('');
+  const [serialFieldError, setSerialFieldError] = useState<string | null>(null);
+  const [preview, setPreview] = useState<ScanLookupResponse | null>(null);
+
+  useEffect(() => {
+    console.info('[web scan] mounted');
+    return () => console.info('[web scan] unmounted');
+  }, []);
+
+  const reset = () => {
+    setPhase('camera');
+    setSource(null);
+    setResult(null);
+    setPunchErrorMsg(null);
+    setSerialInput('');
+    setSerialFieldError(null);
+    setCameraError(null);
+    setPreview(null);
+  };
+
+  // Fetch /scan/lookup using the captured source, then transition to the
+  // confirming phase whether the card is punchable or not. The modal itself
+  // decides whether to show the entries picker or the red banner based on
+  // preview.status.
+  //
+  // TEMP DIAGNOSTIC: on an invalid_signature failure from the token path,
+  // also call /debug/qr/verify so the modal surfaces the precise verifyToken
+  // reason (bad_signature / unknown_key_id / invalid_format / …) instead of
+  // the collapsed "QR לא תקין". Remove once the qr-verify investigation
+  // closes — see _plans/2026-06-21-real-qr-codes.md.
+  const fetchPreview = async (nextSource: ScanSource) => {
+    setPhase('loading-preview');
+    console.info('[web scan] preview fetch', { mode: nextSource.mode });
+    const res =
+      nextSource.mode === 'token'
+        ? await lookupByToken(nextSource.token)
+        : await lookupBySerial(nextSource.serial);
+    if (res.ok) {
+      console.info('[web scan] preview ok', { status: res.data.status });
+      setPreview(res.data);
+      setPhase('confirming');
+      return;
+    }
+    console.warn('[web scan] preview error', { status: res.status, error: res.error });
+    let message = humanizePunchError(res.error);
+    if (res.error === 'invalid_signature' && nextSource.mode === 'token') {
+      const dbg = await debugVerifyToken(nextSource.token);
+      if (dbg.ok) {
+        console.warn('[web scan] debug verify', dbg.data);
+        message = `${message}\n(diag: ${dbg.data.verifyResult}; envKeyId=${dbg.data.envKeyId}; tokenKeyId=${dbg.data.tokenStructure.payloadKeyId ?? 'null'}; serial=${dbg.data.tokenStructure.payloadSerial ?? 'null'})`;
+      } else {
+        console.warn('[web scan] debug verify failed', { status: dbg.status, error: dbg.error });
+        message = `${message}\n(diag unavailable: ${dbg.error})`;
+      }
+    }
+    setPunchErrorMsg(message);
+    setPhase('error');
+  };
+
+  const onScannerDetect = (codes: IDetectedBarcode[]) => {
+    if (phase !== 'camera') return;
+    const first = codes[0];
+    if (!first?.rawValue) return;
+    console.info('[web scan] detected', { tokenPrefix: first.rawValue.slice(0, 8) });
+    const nextSource: ScanSource = { mode: 'token', token: first.rawValue };
+    setSource(nextSource);
+    setScanKey(crypto.randomUUID());
+    void fetchPreview(nextSource);
+  };
+
+  const onScannerError = (err: unknown) => {
+    const scannerErr = err as IScannerError;
+    console.warn('[web scan] error', { kind: scannerErr.kind });
+    setCameraError(humanizeScanError(scannerErr.kind));
+  };
+
+  const submitSerial = () => {
+    const trimmed = serialInput.trim();
+    if (!trimmed) {
+      setSerialFieldError('נא להזין מספר סידורי');
+      return;
+    }
+    setSerialFieldError(null);
+    const nextSource: ScanSource = { mode: 'serial', serial: trimmed };
+    setSource(nextSource);
+    setScanKey(crypto.randomUUID());
+    void fetchPreview(nextSource);
+  };
+
+  const confirmPunch = async (entries: number) => {
+    if (!source) return;
+    setPhase('submitting');
+    setPunchErrorMsg(null);
+    console.info('[web scan] punch submit', { mode: source.mode, entries });
+    const res =
+      source.mode === 'token'
+        ? await punchByToken(source.token, { entries, idempotencyKey: scanKey })
+        : await punchBySerial(source.serial, { entries, idempotencyKey: scanKey });
+    if (res.ok) {
+      console.info('[web scan] punch success', { remaining: res.data.remaining });
+      setResult({ remaining: res.data.remaining, total: res.data.totalEntries });
+      setPhase('success');
+      return;
+    }
+    console.warn('[web scan] punch error', { status: res.status, error: res.error });
+    setPunchErrorMsg(humanizePunchError(res.error));
+    setPhase('error');
+  };
+
+  return (
+    <div>
+      <BackBar label="חזרה" onClick={onClose} />
+      {phase === 'camera' && (
+        <div style={{ ...card, textAlign: 'center' }}>
+          <div
+            style={{
+              borderRadius: 16,
+              overflow: 'hidden',
+              aspectRatio: '4 / 3',
+              background: INK,
+              position: 'relative',
+            }}
+          >
+            {cameraError ? (
+              <div
+                style={{
+                  color: '#fff',
+                  padding: 24,
+                  fontSize: 14,
+                  height: '100%',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  textAlign: 'center',
+                }}
+              >
+                {cameraError}
+              </div>
+            ) : (
+              <Scanner
+                onScan={onScannerDetect}
+                onError={onScannerError}
+                constraints={{ facingMode: 'environment' }}
+                styles={{
+                  container: { width: '100%', height: '100%' },
+                  video: { width: '100%', height: '100%', objectFit: 'cover' },
+                }}
+              />
+            )}
+          </div>
+          <div style={{ color: MUTED, fontSize: 13.5, marginTop: 12 }}>
+            מקמו את קוד ה-QR של הכרטיסייה במסגרת
+          </div>
+          <button
+            style={{ ...ghostBtn, width: '100%', marginTop: 12 }}
+            onClick={() => {
+              setSerialInput('');
+              setSerialFieldError(null);
+              setPhase('serial');
+            }}
+          >
+            הזנת מספר סידורי במקום
+          </button>
+        </div>
+      )}
+
+      {phase === 'serial' && (
+        <div style={{ ...card }}>
+          <div style={{ fontSize: 18, fontWeight: 600, marginBottom: 6 }}>הזנת מספר סידורי</div>
+          <div style={{ color: MUTED, fontSize: 13.5, marginBottom: 14 }}>
+            מספר סידורי בפורמט M-YYYYMMDD-NNNN מודפס על הכרטיסייה
+          </div>
+          <input
+            autoFocus
+            value={serialInput}
+            onChange={(e) => setSerialInput(e.target.value)}
+            placeholder="M-20260618-0001"
+            style={{
+              ...inputStyle,
+              borderColor: serialFieldError ? '#e8a4a4' : '#e9e0d9',
+              letterSpacing: 1,
+            }}
+          />
+          {serialFieldError && (
+            <div style={{ fontSize: 12.5, color: '#a23a3a', marginTop: 6 }} role="alert">
+              {serialFieldError}
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
+            <button
+              style={{ ...ghostBtn, flex: 1 }}
               onClick={() => {
                 setSerialInput('');
                 setSerialFieldError(null);
-                setPhase('serial');
+                setPhase('camera');
               }}
             >
-              הזנת מספר סידורי במקום
+              חזרה לסריקה
+            </button>
+            <button style={{ ...primaryBtn, flex: 1 }} onClick={submitSerial}>
+              המשך
             </button>
           </div>
-        )}
+        </div>
+      )}
 
-        {phase === 'serial' && (
-          <div style={{ ...card }}>
-            <div style={{ fontSize: 18, fontWeight: 600, marginBottom: 6 }}>הזנת מספר סידורי</div>
-            <div style={{ color: MUTED, fontSize: 13.5, marginBottom: 14 }}>
-              מספר סידורי בפורמט M-YYYYMMDD-NNNN מודפס על הכרטיסייה
-            </div>
-            <input
-              autoFocus
-              value={serialInput}
-              onChange={(e) => setSerialInput(e.target.value)}
-              placeholder="M-20260618-0001"
-              style={{
-                ...inputStyle,
-                borderColor: serialFieldError ? '#e8a4a4' : '#e9e0d9',
-                letterSpacing: 1,
-              }}
-            />
-            {serialFieldError && (
-              <div style={{ fontSize: 12.5, color: '#a23a3a', marginTop: 6 }} role="alert">
-                {serialFieldError}
-              </div>
-            )}
-            <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
-              <button
-                style={{ ...ghostBtn, flex: 1 }}
-                onClick={() => {
-                  setSerialInput('');
-                  setSerialFieldError(null);
-                  setPhase('camera');
-                }}
-              >
-                חזרה לסריקה
-              </button>
-              <button style={{ ...primaryBtn, flex: 1 }} onClick={submitSerial}>
-                המשך
-              </button>
-            </div>
-          </div>
-        )}
+      {phase === 'loading-preview' && (
+        <div style={{ ...card, textAlign: 'center', color: MUTED }}>
+          טוען פרטי כרטיסייה…
+        </div>
+      )}
 
-        {phase === 'loading-preview' && (
-          <div style={{ ...card, textAlign: 'center', color: MUTED }}>
-            טוען פרטי כרטיסייה…
-          </div>
-        )}
+      {(phase === 'confirming' || phase === 'submitting') && (
+        <PunchConfirmModal
+          onClose={() => {
+            if (phase === 'submitting') return;
+            reset();
+          }}
+          onConfirm={confirmPunch}
+          submitting={phase === 'submitting'}
+          {...(preview !== null && { preview })}
+        />
+      )}
 
-        {(phase === 'confirming' || phase === 'submitting') && (
-          <PunchConfirmModal
-            onClose={() => {
-              if (phase === 'submitting') return;
-              reset();
+      {phase === 'success' && result && (
+        <div style={{ ...card, textAlign: 'center' }}>
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'center',
+              animation: 'memesh-burst 0.5s ease',
             }}
-            onConfirm={confirmPunch}
-            submitting={phase === 'submitting'}
-            companionRange={companionLimits}
-            {...(preview !== null && { preview })}
-          />
-        )}
+          >
+            <Sun size={96} />
+          </div>
+          <div style={{ fontSize: 22, fontWeight: 600, marginTop: 12 }}>ניקוב בוצע</div>
+          <div style={{ color: MUTED, marginTop: 6 }}>
+            נותרו {result.remaining} מתוך {result.total}
+          </div>
+          <button style={{ ...primaryBtn, width: '100%', marginTop: 18 }} onClick={reset}>
+            סריקה הבאה
+          </button>
+        </div>
+      )}
 
-        {phase === 'success' && result && (
-          <div style={{ ...card, textAlign: 'center' }}>
-            <div
-              style={{
-                display: 'flex',
-                justifyContent: 'center',
-                animation: 'memesh-burst 0.5s ease',
-              }}
-            >
-              <Sun size={96} />
-            </div>
-            <div style={{ fontSize: 22, fontWeight: 600, marginTop: 12 }}>ניקוב בוצע</div>
-            <div style={{ color: MUTED, marginTop: 6 }}>
-              נותרו {result.remaining} מתוך {result.total}
-            </div>
-            <button style={{ ...primaryBtn, width: '100%', marginTop: 18 }} onClick={reset}>
-              סריקה הבאה
+      {phase === 'error' && (
+        <div style={{ ...card, textAlign: 'center' }}>
+          <div style={{ fontSize: 20, fontWeight: 600, color: '#c25a5a' }}>הניקוב לא בוצע</div>
+          <div style={{ color: MUTED, marginTop: 8, fontSize: 14, whiteSpace: 'pre-wrap' }}>
+            {punchErrorMsg ?? 'שגיאה לא ידועה.'}
+          </div>
+          <div style={{ display: 'flex', gap: 10, marginTop: 18 }}>
+            <button style={{ ...ghostBtn, flex: 1 }} onClick={() => setPhase('serial')}>
+              מספר סידורי
+            </button>
+            <button style={{ ...primaryBtn, flex: 1 }} onClick={reset}>
+              סריקה חוזרת
             </button>
           </div>
-        )}
-
-        {phase === 'error' && (
-          <div style={{ ...card, textAlign: 'center' }}>
-            <div style={{ fontSize: 20, fontWeight: 600, color: '#c25a5a' }}>הניקוב לא בוצע</div>
-            <div style={{ color: MUTED, marginTop: 8, fontSize: 14 }}>
-              {punchErrorMsg ?? 'שגיאה לא ידועה.'}
-            </div>
-            <div style={{ display: 'flex', gap: 10, marginTop: 18 }}>
-              <button style={{ ...ghostBtn, flex: 1 }} onClick={() => setPhase('serial')}>
-                מספר סידורי
-              </button>
-              <button style={{ ...primaryBtn, flex: 1 }} onClick={reset}>
-                סריקה חוזרת
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-    );
-  }
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------

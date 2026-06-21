@@ -22,7 +22,9 @@ const bodySchema = z
   .object({
     token: z.string().min(1).max(2048).optional(),
     serial: z.string().min(1).max(32).optional(),
-    companions: z.number().int().min(1).max(4).optional(),
+    /** How many entries this scan should consume. 1..100 (server caps further by
+     *  the card's remaining entries). Defaults to 1 when omitted. */
+    entries: z.number().int().min(1).max(100).optional(),
     idempotencyKey: z.string().min(1).max(64).optional(),
     terminalId: z.string().min(1).max(64).optional(),
   })
@@ -30,7 +32,7 @@ const bodySchema = z
     message: 'token or serial is required',
   });
 
-// Same input as /punch (token or serial) but without companions / idempotency —
+// Same input as /punch (token or serial) but without entries / idempotency —
 // the preview is a pure read.
 const lookupBodySchema = z
   .object({
@@ -43,7 +45,7 @@ const lookupBodySchema = z
   });
 
 // Failures map to HTTP: 404 for unknown, 409 for a card that exists but cannot
-// be punched, 400 for a malformed request (out-of-range companions), 429 for
+// be punched, 400 for a malformed request (entries < 1 or > remaining), 429 for
 // a settings-driven rate limit (same-day lockout).
 const reasonStatus: Record<string, number> = {
   not_found: 404,
@@ -51,7 +53,7 @@ const reasonStatus: Record<string, number> = {
   expired: 409,
   exhausted: 409,
   locked_out: 429,
-  companions_out_of_range: 400,
+  entries_out_of_range: 400,
 };
 
 const hashToken = (token: string): string => createHash('sha256').update(token).digest('hex');
@@ -68,7 +70,7 @@ export const punchRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       const parsed = bodySchema.safeParse(request.body);
       if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
-      const { token, serial, companions, idempotencyKey, terminalId } = parsed.data;
+      const { token, serial, entries, idempotencyKey, terminalId } = parsed.data;
 
       let punchCardId: string | undefined;
       let method: 'qr_scan' | 'serial' = 'serial';
@@ -113,7 +115,7 @@ export const punchRoutes: FastifyPluginAsync = async (fastify) => {
         punchCardId,
         method,
         ...(request.user && { punchedBy: request.user.id }),
-        ...(companions !== undefined && { companionCount: companions }),
+        ...(entries !== undefined && { entries }),
         ...(idempotencyKey !== undefined && { idempotencyKey }),
         audit: {
           ...(qrTokenHash !== undefined && { qrTokenHash }),
@@ -127,7 +129,7 @@ export const punchRoutes: FastifyPluginAsync = async (fastify) => {
         if (result.reason === 'locked_out' && result.retryAfterMinutes !== undefined) {
           body.retryAfterMinutes = result.retryAfterMinutes;
         }
-        if (result.reason === 'companions_out_of_range' && result.allowedRange) {
+        if (result.reason === 'entries_out_of_range' && result.allowedRange) {
           body.allowedRange = result.allowedRange;
         }
         return reply.code(reasonStatus[result.reason] ?? 409).send(body);
@@ -176,6 +178,7 @@ export const punchRoutes: FastifyPluginAsync = async (fastify) => {
       return {
         ok: true,
         replay: result.replay,
+        entriesConsumed: result.entriesConsumed,
         remaining: result.remaining,
         usedEntries: result.usedEntries,
         totalEntries: result.totalEntries,

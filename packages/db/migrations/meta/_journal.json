@@ -57,6 +57,34 @@
       "when": 1782036879004,
       "tag": "0007_quiet_blockbuster",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1782075331656,
+      "tag": "0008_robust_magik",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1782075420806,
+      "tag": "0009_staff_email_login_and_reset_tokens",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1782518400000,
+      "tag": "0010_remove_companions",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1782604800000,
+      "tag": "0011_role_permissions",
+      "breakpoints": true
     }
   ]
 }

@@ -80,9 +80,20 @@ export const verifyEmailOtp = (
 
 import type { CustomerProfile } from './me';
 
+export interface HandoffThankyou {
+  /** Headline string, already rendered with {{firstName}} substituted. */
+  title: string;
+  /** Body line, already rendered. */
+  body: string;
+  /** Text on the CTA button that takes the customer into the personal area. */
+  buttonText: string;
+}
+
 export interface HandoffVerifyResponse {
   ok: true;
   profile: CustomerProfile;
+  /** Editable thank-you copy from card_settings, pre-rendered server-side. */
+  thankyou: HandoffThankyou;
 }
 
 /**

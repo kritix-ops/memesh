@@ -201,6 +201,62 @@ export interface CancelCardInput {
 }
 
 /**
+ * Re-mint the `qr_token` for every existing punch card using the supplied
+ * resolver. Used when the signing secret was rotated (or the cards were
+ * minted under a different env) and the stored tokens fail HMAC verify even
+ * though the rows themselves are still valid.
+ *
+ * The re-signed payload preserves: punchCardId, customerId, serial, and the
+ * original createdTs (seconds, derived from `createdAt`). That means the
+ * card's identity is unchanged — only the signature (and the recorded keyId)
+ * are updated to match the current resolver. After this runs, every card
+ * scans cleanly under the current env.
+ *
+ * Idempotent: re-running produces the same token bytes per card because the
+ * inputs to signToken are stable. Safe to invoke twice. Does not touch
+ * usedEntries, expiresAt, isActive, or any other row state.
+ *
+ * Reports counts so the operator can sanity-check (and the route layer can
+ * write a staff_actions row with the totals).
+ */
+export const reMintAllPunchCardTokens = async (
+  db: AnyPgDatabase,
+  resolver: KeyResolver,
+): Promise<{ scanned: number; updated: number }> => {
+  const rows = await db
+    .select({
+      id: punchCards.id,
+      customerId: punchCards.customerId,
+      serialNumber: punchCards.serialNumber,
+      createdAt: punchCards.createdAt,
+      qrToken: punchCards.qrToken,
+      keyId: punchCards.keyId,
+    })
+    .from(punchCards);
+  const { keyId: signingKeyId } = resolver.resolveSigningKey();
+  let updated = 0;
+  const now = new Date();
+  for (const row of rows) {
+    const fresh = signToken(
+      {
+        punchCardId: row.id,
+        customerId: row.customerId,
+        createdTs: Math.floor(row.createdAt.getTime() / 1000),
+        serial: row.serialNumber,
+      },
+      resolver,
+    );
+    if (fresh === row.qrToken && row.keyId === signingKeyId) continue;
+    await db
+      .update(punchCards)
+      .set({ qrToken: fresh, keyId: signingKeyId, updatedAt: now })
+      .where(eq(punchCards.id, row.id));
+    updated += 1;
+  }
+  return { scanned: rows.length, updated };
+};
+
+/**
  * Detail for a single card: card row + owning customer (public fields) + the
  * full entry history with the punching staff's name joined in. Used by the
  * admin "drill into a card" view.
@@ -247,7 +303,7 @@ export const cardDetail = async (db: AnyPgDatabase, cardId: string) => {
       id: punchCardEntries.id,
       punchedAt: punchCardEntries.punchedAt,
       method: punchCardEntries.method,
-      companionCount: punchCardEntries.companionCount,
+      entriesConsumed: punchCardEntries.entriesConsumed,
       notes: punchCardEntries.notes,
       punchedBy: punchCardEntries.punchedBy,
       staffFirstName: staff.firstName,
@@ -315,7 +371,7 @@ export const scanCardLookup = async (
       id: punchCardEntries.id,
       punchedAt: punchCardEntries.punchedAt,
       method: punchCardEntries.method,
-      companionCount: punchCardEntries.companionCount,
+      entriesConsumed: punchCardEntries.entriesConsumed,
       staffFirstName: staff.firstName,
       staffLastName: staff.lastName,
       refundedAt: punchCardEntries.refundedAt,

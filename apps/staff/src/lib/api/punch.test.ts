@@ -29,18 +29,26 @@ after(() => {
   globalThis.fetch = originalFetch;
 });
 
-test('punchBySerial POSTs /punch with serial + companions + idempotency key', async () => {
+test('punchBySerial POSTs /punch with serial + entries + idempotency key', async () => {
   stubFetch({
     status: 200,
-    body: { ok: true, replay: false, remaining: 5, usedEntries: 7, totalEntries: 12 },
+    body: {
+      ok: true,
+      replay: false,
+      entriesConsumed: 2,
+      remaining: 5,
+      usedEntries: 7,
+      totalEntries: 12,
+    },
   });
   const res = await punchBySerial('M-20260617-0042', {
-    companions: 2,
+    entries: 2,
     idempotencyKey: 'idem-abc',
   });
   assert.equal(res.ok, true);
   if (res.ok) {
     assert.equal(res.data.remaining, 5);
+    assert.equal(res.data.entriesConsumed, 2);
     assert.equal(res.data.replay, false);
   }
   assert.equal(lastCall?.init.method, 'POST');
@@ -49,7 +57,7 @@ test('punchBySerial POSTs /punch with serial + companions + idempotency key', as
     lastCall?.init.body,
     JSON.stringify({
       serial: 'M-20260617-0042',
-      companions: 2,
+      entries: 2,
       idempotencyKey: 'idem-abc',
     }),
   );
@@ -77,18 +85,26 @@ test('punchBySerial returns {ok:false} with reason code on 409 exhausted', async
   }
 });
 
-test('punchByToken POSTs /punch with token + companions + idempotency key', async () => {
+test('punchByToken POSTs /punch with token + entries + idempotency key', async () => {
   stubFetch({
     status: 200,
-    body: { ok: true, replay: false, remaining: 9, usedEntries: 3, totalEntries: 12 },
+    body: {
+      ok: true,
+      replay: false,
+      entriesConsumed: 2,
+      remaining: 9,
+      usedEntries: 3,
+      totalEntries: 12,
+    },
   });
   const res = await punchByToken('signed.token.string', {
-    companions: 2,
+    entries: 2,
     idempotencyKey: 'idem-xyz',
   });
   assert.equal(res.ok, true);
   if (res.ok) {
     assert.equal(res.data.remaining, 9);
+    assert.equal(res.data.entriesConsumed, 2);
   }
   assert.equal(lastCall?.init.method, 'POST');
   assert.ok(lastCall?.url.endsWith('/punch'));
@@ -96,7 +112,7 @@ test('punchByToken POSTs /punch with token + companions + idempotency key', asyn
     lastCall?.init.body,
     JSON.stringify({
       token: 'signed.token.string',
-      companions: 2,
+      entries: 2,
       idempotencyKey: 'idem-xyz',
     }),
   );

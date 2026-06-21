@@ -11,7 +11,7 @@ export type PunchFailureReason =
   | 'expired'
   | 'exhausted'
   | 'locked_out'
-  | 'companions_out_of_range';
+  | 'entries_out_of_range';
 
 export interface PunchAudit {
   qrTokenHash?: string;
@@ -23,7 +23,9 @@ export interface PunchInput {
   punchCardId: string;
   punchedBy?: string; // staff id; null for online/system punches
   method: PunchMethod;
-  companionCount?: number; // recorded only; one punch always consumes one entry
+  /** How many entries this single scan should consume. Defaults to 1. Server
+   *  caps it at the card's remaining entries inside the locked transaction. */
+  entries?: number;
   idempotencyKey?: string; // a repeat with the same key is a no-op, not a double punch
   notes?: string;
   audit?: PunchAudit;
@@ -35,6 +37,8 @@ export type PunchResult =
       ok: true;
       replay: boolean; // true when an idempotency key matched an earlier punch
       entryId: string;
+      /** How many entries this scan actually consumed (echo of the input). */
+      entriesConsumed: number;
       usedEntries: number;
       totalEntries: number;
       remaining: number;
@@ -46,7 +50,8 @@ export type PunchResult =
       reason: PunchFailureReason;
       /** Present for `locked_out`: how many minutes until the next punch is allowed. */
       retryAfterMinutes?: number;
-      /** Present for `companions_out_of_range`: the active min/max range from settings. */
+      /** Present for `entries_out_of_range`: the range the cashier could have picked
+       *  given the card's remaining entries at scan time. */
       allowedRange?: { min: number; max: number };
     };
 
@@ -55,7 +60,7 @@ export type PunchResult =
 type AnyPgDatabase = PgDatabase<any, any, any>;
 
 // The scan_attempts.result enum is narrower than PunchFailureReason — some
-// failure modes (companions_out_of_range) don't get audited at all, and
+// failure modes (entries_out_of_range) don't get audited at all, and
 // locked_out maps to the existing 'rate_limited' enum value.
 type AuditResult =
   | 'success'
@@ -77,10 +82,13 @@ export async function punchCard(db: AnyPgDatabase, input: PunchInput): Promise<P
   const now = input.now ?? new Date();
 
   return db.transaction(async (tx) => {
-    // Settings drive companion limits, lockout window, and grace period. Read
-    // once per call (inside the tx so a concurrent settings update is consistent).
+    // Settings drive lockout window + grace period. Read once per call (inside
+    // the tx so a concurrent settings update is consistent).
     const settings = await getCardSettings(tx);
-    const requestedCompanions = Math.trunc(input.companionCount ?? settings.minCompanions);
+
+    // Default to 1 entry per scan when the cashier doesn't pick. Math.trunc()
+    // defends against fractional values arriving from a buggy client.
+    const requestedEntries = Math.trunc(input.entries ?? 1);
 
     const writeAudit = async (result: AuditResult): Promise<void> => {
       await tx.insert(scanAttempts).values({
@@ -102,28 +110,27 @@ export async function punchCard(db: AnyPgDatabase, input: PunchInput): Promise<P
       return rows[0];
     };
 
-    // Companion validation against the configured range. Fail fast — no point
-    // even reading the card if the cashier picked an out-of-range count.
+    // Cheap upfront check: entries must be a positive integer. The
+    // remaining-entries bound check needs the locked card row and runs below.
     // Not audited to scan_attempts: this is a cashier-side UX validation, not
     // a security event.
-    if (
-      !Number.isFinite(requestedCompanions) ||
-      requestedCompanions < settings.minCompanions ||
-      requestedCompanions > settings.maxCompanions
-    ) {
+    if (!Number.isFinite(requestedEntries) || requestedEntries < 1) {
       return {
         ok: false,
-        reason: 'companions_out_of_range',
-        allowedRange: { min: settings.minCompanions, max: settings.maxCompanions },
+        reason: 'entries_out_of_range',
+        allowedRange: { min: 1, max: 1 },
       };
     }
 
     // Idempotent replay: this key already punched, so do not punch again.
+    // The original `entriesConsumed` from the first call is the source of
+    // truth — the replay echoes it so the client renders the same outcome.
     if (input.idempotencyKey) {
       const priorRows = await tx
         .select({
           id: punchCardEntries.id,
           punchCardId: punchCardEntries.punchCardId,
+          entriesConsumed: punchCardEntries.entriesConsumed,
         })
         .from(punchCardEntries)
         .where(eq(punchCardEntries.idempotencyKey, input.idempotencyKey))
@@ -139,6 +146,7 @@ export async function punchCard(db: AnyPgDatabase, input: PunchInput): Promise<P
           ok: true,
           replay: true,
           entryId: prior.id,
+          entriesConsumed: prior.entriesConsumed,
           usedEntries: card.usedEntries,
           totalEntries: card.totalEntries,
           remaining: card.totalEntries - card.usedEntries,
@@ -179,6 +187,19 @@ export async function punchCard(db: AnyPgDatabase, input: PunchInput): Promise<P
       return { ok: false, reason: 'exhausted' };
     }
 
+    // Bound the requested entries by what's still on the card. This is what
+    // makes "cashier picks N at scan time" safe — two concurrent scans cannot
+    // both succeed and over-draw because the card row is locked above. Not
+    // audited: the cashier saw a bad number and we tell them what's allowed.
+    const remainingBefore = card.totalEntries - card.usedEntries;
+    if (requestedEntries > remainingBefore) {
+      return {
+        ok: false,
+        reason: 'entries_out_of_range',
+        allowedRange: { min: 1, max: remainingBefore },
+      };
+    }
+
     // Same-day lockout: if the most recent successful entry on this card is
     // within `sameDayLockoutMinutes`, refuse. Disabled (0) skips the query.
     if (settings.sameDayLockoutMinutes > 0) {
@@ -202,7 +223,7 @@ export async function punchCard(db: AnyPgDatabase, input: PunchInput): Promise<P
       }
     }
 
-    const nextUsed = card.usedEntries + 1;
+    const nextUsed = card.usedEntries + requestedEntries;
     const exhausted = nextUsed >= card.totalEntries;
 
     const insertedRows = await tx
@@ -211,7 +232,7 @@ export async function punchCard(db: AnyPgDatabase, input: PunchInput): Promise<P
         punchCardId: card.id,
         punchedBy: input.punchedBy ?? null,
         method: input.method,
-        companionCount: requestedCompanions,
+        entriesConsumed: requestedEntries,
         idempotencyKey: input.idempotencyKey ?? null,
         notes: input.notes ?? null,
         punchedAt: now,
@@ -234,6 +255,7 @@ export async function punchCard(db: AnyPgDatabase, input: PunchInput): Promise<P
       ok: true,
       replay: false,
       entryId: inserted.id,
+      entriesConsumed: requestedEntries,
       usedEntries: nextUsed,
       totalEntries: card.totalEntries,
       remaining: card.totalEntries - nextUsed,
@@ -313,7 +335,9 @@ export async function refundEntry(
     if (!card) return { ok: false, reason: 'entry_not_found' };
     if (card.cancelledAt) return { ok: false, reason: 'card_cancelled' };
 
-    const nextUsed = Math.max(0, card.usedEntries - 1);
+    // Restore exactly what this row consumed — single-entry scans give back 1,
+    // multi-entry scans give back N. Clamp at zero defensively.
+    const nextUsed = Math.max(0, card.usedEntries - entry.entriesConsumed);
     // Reactivate if exhaustion was the reason the card went inactive (no
     // cancelledAt). Refunding an already-active card just leaves it active.
     const reactivated = !card.isActive && card.cancelledAt === null;

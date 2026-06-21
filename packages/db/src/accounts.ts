@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import type { PgDatabase } from 'drizzle-orm/pg-core';
 import { type ChildRecord, customers, staff } from './schema/index';
 
@@ -55,6 +55,25 @@ export const getStaffById = async (db: AnyPgDatabase, id: string) => {
   return rows[0];
 };
 
+/**
+ * Fetch a staff row by email (case-insensitive). Includes the password hash
+ * because the only caller is the login + password-reset path (verifyStaffLogin,
+ * forgot-password) — the public view never crosses the API boundary from here.
+ *
+ * Matches the partial unique index `staff_email_lower_unique` on
+ * `lower(email) WHERE email IS NOT NULL`, so this lookup hits the index.
+ */
+export const getStaffByEmailWithSecret = async (db: AnyPgDatabase, email: string) => {
+  const normalized = email.trim().toLowerCase();
+  if (!normalized) return undefined;
+  const rows = await db
+    .select()
+    .from(staff)
+    .where(sql`lower(${staff.email}) = ${normalized}`)
+    .limit(1);
+  return rows[0];
+};
+
 export interface UpdateStaffInput {
   firstName?: string | undefined;
   lastName?: string | undefined;
@@ -83,6 +102,25 @@ export const updateStaff = async (
   if (patch.isActive !== undefined) set.isActive = patch.isActive;
 
   const rows = await db.update(staff).set(set).where(eq(staff.id, id)).returning(staffView);
+  return rows[0];
+};
+
+/**
+ * Replace a staff member's password hash. Single-purpose helper used by the
+ * password-reset flow; not exposed through the generic update primitive on
+ * purpose, so a buggy patch caller can never silently rotate a credential.
+ */
+export const setStaffPasswordHash = async (
+  db: AnyPgDatabase,
+  id: string,
+  passwordHash: string,
+  now: Date = new Date(),
+) => {
+  const rows = await db
+    .update(staff)
+    .set({ passwordHash, updatedAt: now })
+    .where(eq(staff.id, id))
+    .returning({ id: staff.id });
   return rows[0];
 };
 

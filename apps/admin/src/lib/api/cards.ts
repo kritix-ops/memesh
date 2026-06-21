@@ -118,7 +118,7 @@ export interface CardDetailEntry {
   id: string;
   punchedAt: string;
   method: string;
-  companionCount: number;
+  entriesConsumed: number;
   notes: string | null;
   punchedBy: string | null;
   staffFirstName: string | null;

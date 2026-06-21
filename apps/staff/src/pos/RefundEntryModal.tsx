@@ -60,7 +60,7 @@ const primaryBtn: CSSProperties = {
 };
 
 interface Props {
-  /** Display-only summary of the entry being refunded (date + companion count). */
+  /** Display-only summary of the entry being refunded (date + entries-consumed count). */
   entrySummary: string;
   /** When true the modal hides the admin password field — admin approves themselves. */
   selfApprove: boolean;
