@@ -3,7 +3,9 @@ export {
   requestEmailOtp,
   requestOtp,
   verifyEmailOtp,
+  verifyHandoffToken,
   verifyOtp,
+  type HandoffVerifyResponse,
   type RequestOtpResponse,
   type VerifyOtpResponse,
 } from './api/customer-auth';
