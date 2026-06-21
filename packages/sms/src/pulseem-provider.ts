@@ -39,23 +39,38 @@ const SEND_SMS_PATH = '/api/v1/SmsApi/SendSms';
 
 interface PulseemSmsBody {
   sendId: string;
-  isAsync: boolean;
   smsSendData: {
     fromNumber: string;
     toNumberList: string[];
     textList: string[];
-    referenceList?: string[];
+    /** Parallel array — Pulseem echoes each reference back in items[].reference. */
+    referenceList: string[];
   };
 }
 
-interface PulseemResponse {
-  // The exact response shape is not in the swagger; common fields seen in
-  // their responses include status / message / id / sendId. We only use these
-  // for logging — the HTTP status code is what drives success/failure.
-  status?: number | string;
+interface PulseemResponseItem {
+  toNumber?: string;
+  reference?: string;
   message?: string;
-  id?: string | number;
+}
+
+interface PulseemResponse {
+  /**
+   * Application-level status. "Success" = SMS accepted for delivery.
+   * "Error" = rejected (e.g. unauthorized fromNumber, blocked recipient).
+   * Critically, Pulseem returns HTTP 200 even when status is "Error", so
+   * the HTTP code alone is NOT a reliable success indicator.
+   */
+  status?: 'Success' | 'Error' | string;
+  /** Populated when status is "Error". Verbatim human-readable cause. */
+  error?: string | null;
+  /** Total messages accepted (1 when status is "Success" for a single send). */
+  success?: number;
+  failure?: number;
+  count?: number;
+  sessionId?: string;
   sendId?: string;
+  items?: PulseemResponseItem[];
   [key: string]: unknown;
 }
 
@@ -86,13 +101,21 @@ export class PulseemProvider implements SmsProvider {
     }
 
     const sendId = randomUUID();
+    // Body shape matches Pulseem's swagger sample exactly. Two things that
+    // tripped us up the first time:
+    //   1. `isAsync` is NOT a valid field — including it causes Pulseem's
+    //      server to return HTTP 500 with body `"Error"`. Verified by
+    //      probing their API directly 2026-06-21.
+    //   2. `referenceList` is documented but treated by their server as a
+    //      required parallel array. We use a fresh uuid so the response can
+    //      be correlated to the request via `items[].reference`.
     const body: PulseemSmsBody = {
       sendId,
-      isAsync: false,
       smsSendData: {
         fromNumber: this.fromNumber,
         toNumberList: [toNormalized],
         textList: [message.body],
+        referenceList: [randomUUID()],
       },
     };
     const masked = maskPhone(toNormalized);
@@ -127,18 +150,35 @@ export class PulseemProvider implements SmsProvider {
     }
 
     if (!response.ok) {
-      const error = parsed?.message ?? (rawText.slice(0, 200) || `http_${response.status}`);
+      const error = parsed?.error ?? (rawText.slice(0, 200) || `http_${response.status}`);
       console.warn('[sms:pulseem] failed', { to: masked, sendId, status: response.status, error });
       return { ok: false, error };
     }
 
-    const id =
-      parsed?.id !== undefined
-        ? String(parsed.id)
-        : parsed?.sendId !== undefined
-          ? String(parsed.sendId)
-          : sendId;
-    console.info('[sms:pulseem] sent', { to: masked, sendId, status: response.status, id });
+    // Pulseem returns HTTP 200 even on application-level failure (e.g.
+    // unauthorized fromNumber). Honor the body's `status` field — only
+    // "Success" actually means the SMS was queued for delivery.
+    if (parsed && parsed.status !== 'Success') {
+      const error = parsed.error ?? `pulseem_status_${parsed.status ?? 'unknown'}`;
+      console.warn('[sms:pulseem] failed (http 200, app error)', {
+        to: masked,
+        sendId,
+        status: parsed.status,
+        error,
+        success: parsed.success,
+        failure: parsed.failure,
+      });
+      return { ok: false, error };
+    }
+
+    const id = parsed?.sessionId ?? parsed?.sendId ?? sendId;
+    console.info('[sms:pulseem] sent', {
+      to: masked,
+      sendId,
+      status: response.status,
+      id,
+      itemMessage: parsed?.items?.[0]?.message,
+    });
     return { ok: true, id };
   }
 }
