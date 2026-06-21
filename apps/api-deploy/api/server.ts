@@ -4,9 +4,12 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 // build step. It contains the entire Fastify app with all workspace deps
 // inlined so the serverless runtime can execute it without trying (and
 // failing) to resolve `.ts` source files through workspace symlinks.
-// This file is the canonical API deploy for api.memesh.co.il — the twin
-// wrapper at apps/web/api/server.ts goes away once Phase 5 deletes apps/web.
-// @ts-expect-error - generated at build time
+// This file is the canonical API deploy for api.memesh.co.il. The bundle is
+// generated at build time and has no .d.ts. We use ts-ignore here instead
+// of the stricter directive because on dev machines tsc can sometimes see
+// the freshly-built bundle and would then complain about an unused
+// suppression.
+// @ts-ignore - generated at build time, no .d.ts emitted
 import { buildApp } from '../lib/api-bundle.mjs';
 
 let appPromise: Promise<FastifyInstance> | null = null;

@@ -17,6 +17,7 @@ import { cronWcReconcileRoutes } from './routes/cron-wc-reconcile.js';
 import { reportsRoutes } from './routes/reports.js';
 import { staffRoutes } from './routes/staff.js';
 import { staffPinRoutes } from './routes/staff-pin.js';
+import { wcHandoffRoutes } from './routes/wc-handoff.js';
 import { webhooksWcRoutes } from './routes/webhooks-wc.js';
 
 /** Build the Fastify app without listening, so it can be driven by tests via inject(). */
@@ -80,6 +81,7 @@ export const buildApp = async (): Promise<FastifyInstance> => {
   await fastify.register(authPlugin);
   await fastify.register(authRoutes);
   await fastify.register(customerAuthRoutes);
+  await fastify.register(wcHandoffRoutes);
   await fastify.register(meRoutes);
   await fastify.register(customersRoutes);
   await fastify.register(cardsRoutes);
