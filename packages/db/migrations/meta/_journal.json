@@ -78,13 +78,6 @@
       "when": 1782518400000,
       "tag": "0010_remove_companions",
       "breakpoints": true
-    },
-    {
-      "idx": 11,
-      "version": "7",
-      "when": 1782075848093,
-      "tag": "0011_role_permissions",
-      "breakpoints": true
     }
   ]
 }
