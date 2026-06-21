@@ -93,6 +93,16 @@ export type ProcessWcOrderWebhookResult =
 // gateways that move the status to 'completed' on return.
 const RELEVANT_TOPICS = new Set(['order.created', 'order.updated']);
 
+// Order statuses we treat as "paid and ready" for card minting.
+//   - 'completed': fulfilled (the default for virtual/downloadable products)
+//   - 'processing': payment received, awaiting fulfillment (the default for
+//     physical products and for most gateway redirects). For a punch card
+//     there's nothing to fulfill — the payment IS the fulfillment — so
+//     'processing' counts the same as 'completed' for our purposes.
+// Anything else (pending / on-hold / failed / cancelled / refunded) we
+// intentionally ignore: the card shouldn't exist until the customer paid.
+const PAID_STATUSES = new Set(['completed', 'processing']);
+
 // ---------------------------------------------------------------------------
 // Main entry point
 // ---------------------------------------------------------------------------
@@ -133,7 +143,7 @@ export const processWcOrderWebhook = async (
   }
   const order = parsed.data;
 
-  if (order.status !== 'completed') {
+  if (!PAID_STATUSES.has(order.status)) {
     return { status: 'ignored_status', orderStatus: order.status };
   }
 
