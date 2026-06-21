@@ -761,7 +761,24 @@ export function PosApp() {
         {screen === 'search' && <Search />}
         {screen === 'customer' && <Customer />}
         {screen === 'new' && <NewCustomer />}
-        {screen === 'sell' && <Sell />}
+        {screen === 'sell' && (
+          <Sell
+            sellStep={sellStep}
+            setSellStep={setSellStep}
+            pricing={pricing}
+            sellControls={sellControls}
+            receiptNumber={receiptNumber}
+            setReceiptNumber={setReceiptNumber}
+            sellSubmitting={sellSubmitting}
+            nameOnReceiptChecked={nameOnReceiptChecked}
+            setNameOnReceiptChecked={setNameOnReceiptChecked}
+            sellError={sellError}
+            onSubmit={() => void submitSell()}
+            sellResponse={sellResponse}
+            onClose={() => setScreen('home')}
+            onGoToCustomer={() => setScreen(selectedId !== null ? 'customer' : 'home')}
+          />
+        )}
         {screen === 'scan' && <Scan onClose={() => setScreen('home')} />}
       </main>
       {pinModalOpen && sessionUser && (
@@ -1407,208 +1424,6 @@ export function PosApp() {
     );
   }
 
-  function Sell() {
-    return (
-      <div>
-        <BackBar label="חזרה" onClick={() => setScreen('home')} />
-        {sellStep === 'choose' && (
-          <div style={{ ...card }}>
-            <div style={{ fontSize: 20, fontWeight: 600 }}>מכירת כרטיסייה</div>
-            <div
-              style={{
-                ...card,
-                background: '#fff8f3',
-                boxShadow: 'none',
-                border: '1px solid #ffe3d4',
-                marginTop: 16,
-              }}
-            >
-              <div style={{ fontWeight: 600, fontSize: 18 }}>כרטיסייה</div>
-              <div style={{ color: MUTED, fontSize: 14, marginTop: 4 }}>{pricing.pitchLabel}</div>
-              <div style={{ fontSize: 36, fontWeight: 600, color: ORANGE, marginTop: 12 }}>
-                ₪{pricing.priceShekels}
-              </div>
-              <div style={{ color: MUTED, fontSize: 13.5, marginTop: 4 }}>
-                ניקוב גמיש — בוחרים בקופה כמה כניסות לסמן בכל סריקה
-              </div>
-            </div>
-            <button
-              style={{ ...primaryBtn, width: '100%', marginTop: 18 }}
-              onClick={() => setSellStep('confirm')}
-            >
-              המשך לתשלום
-            </button>
-          </div>
-        )}
-        {sellStep === 'confirm' && (
-          <div style={{ ...card }}>
-            <div style={{ fontSize: 20, fontWeight: 600 }}>סכום לתשלום</div>
-            <div style={{ fontSize: 40, fontWeight: 600, color: ORANGE, margin: '8px 0 14px' }}>
-              ₪{pricing.priceShekels}
-            </div>
-            <div style={{ color: MUTED, fontSize: 14 }}>
-              החיוב מתבצע בקופה החיצונית. לאחר אישור התשלום, לחצו "אושר".
-            </div>
-
-            {sellControls.requireReceiptNumberOnPos && (
-              <div style={{ marginTop: 18 }}>
-                <label
-                  htmlFor="pos-receipt-number"
-                  style={{
-                    display: 'block',
-                    fontSize: 13.5,
-                    color: MUTED,
-                    marginBottom: 6,
-                    fontWeight: 600,
-                  }}
-                >
-                  מספר קבלה *
-                </label>
-                <input
-                  id="pos-receipt-number"
-                  value={receiptNumber}
-                  onChange={(e) => setReceiptNumber(e.target.value)}
-                  inputMode="text"
-                  autoComplete="off"
-                  placeholder="מספר הקבלה שהדפסת בקופה"
-                  disabled={sellSubmitting}
-                  style={{
-                    width: '100%',
-                    fontSize: 16,
-                    padding: '12px 14px',
-                    border: '1.5px solid #e9e0d9',
-                    borderRadius: 10,
-                    background: '#fff',
-                    outline: 'none',
-                    boxSizing: 'border-box',
-                  }}
-                />
-              </div>
-            )}
-
-            <label
-              style={{
-                display: 'flex',
-                alignItems: 'flex-start',
-                gap: 10,
-                marginTop: 14,
-                padding: '10px 12px',
-                border: '1.5px solid #e9e0d9',
-                borderRadius: 10,
-                background: '#fffaf5',
-                cursor: 'pointer',
-              }}
-            >
-              <input
-                type="checkbox"
-                checked={nameOnReceiptChecked}
-                onChange={(e) => setNameOnReceiptChecked(e.target.checked)}
-                disabled={sellSubmitting}
-                style={{ marginTop: 3 }}
-              />
-              <span style={{ fontSize: 14, color: INK, lineHeight: 1.4 }}>
-                {sellControls.nameOnReceiptLabel}
-              </span>
-            </label>
-
-            <div style={{ fontWeight: 600, margin: '18px 0 10px' }}>הלקוח שולם בקופה?</div>
-            {sellError && (
-              <div
-                role="alert"
-                style={{
-                  marginBottom: 12,
-                  padding: '10px 14px',
-                  background: '#fbecec',
-                  color: '#a23a3a',
-                  borderRadius: 10,
-                  fontSize: 14,
-                }}
-              >
-                {sellError}
-              </div>
-            )}
-            <div style={{ display: 'flex', gap: 10 }}>
-              <button
-                style={{ ...ghostBtn, flex: 1 }}
-                onClick={() => setSellStep('choose')}
-                disabled={sellSubmitting}
-              >
-                ביטול
-              </button>
-              <button
-                style={{
-                  ...primaryBtn,
-                  flex: 1,
-                  opacity: sellSubmitting || !nameOnReceiptChecked ? 0.6 : 1,
-                  cursor:
-                    sellSubmitting || !nameOnReceiptChecked ? 'not-allowed' : 'pointer',
-                }}
-                onClick={() => void submitSell()}
-                disabled={sellSubmitting || !nameOnReceiptChecked}
-              >
-                {sellSubmitting ? 'יוצר…' : 'אושר'}
-              </button>
-            </div>
-          </div>
-        )}
-        {sellStep === 'done' && sellResponse && (
-          <div style={{ ...card, textAlign: 'center' }}>
-            <div
-              style={{
-                display: 'flex',
-                justifyContent: 'center',
-                animation: 'memesh-burst 0.5s ease',
-              }}
-            >
-              <Sun size={96} />
-            </div>
-            <div style={{ fontSize: 22, fontWeight: 600, marginTop: 12 }}>הכרטיסייה נוצרה!</div>
-            <div style={{ color: MUTED, fontSize: 14, marginTop: 6 }}>
-              הכרטיסייה זמינה בכרטיס הלקוח. שליחת ה-SMS עם ה-QR תיכנס בעדכון הבא.
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'center', margin: '18px 0' }}>
-              <MemeshQr
-                value={sellResponse.card.qrToken}
-                size={200}
-                title={`קוד QR — ${sellResponse.card.serialNumber}`}
-              />
-            </div>
-            <div style={{ fontSize: 13, color: MUTED, marginBottom: 4 }}>
-              {sellResponse.card.serialNumber}
-            </div>
-            <div style={{ fontSize: 13, color: MUTED, marginBottom: 14 }}>
-              {sellResponse.card.expiresAt === null
-                ? 'ללא תפוגה'
-                : `תוקף עד ${fmtDate(yyyyMmDd(sellResponse.card.expiresAt))}`}
-            </div>
-            <div style={{ display: 'flex', gap: 10 }}>
-              <button
-                style={{ ...ghostBtn, flex: 1 }}
-                onClick={() => {
-                  if (selectedId) {
-                    setScreen('customer');
-                  } else {
-                    setScreen('home');
-                  }
-                }}
-              >
-                לכרטיס הלקוח
-              </button>
-              <button
-                style={{ ...primaryBtn, flex: 1 }}
-                onClick={() => {
-                  setScreen('home');
-                }}
-              >
-                חזרה למסך הראשי
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-    );
-  }
-
 }
 
 // ---------------------------------------------------------------------------
@@ -1948,6 +1763,231 @@ function NewCustomerExtras({
               </div>
             </span>
           </label>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Sell — three-step sell flow: choose, confirm payment + receipt + PIN nudge,
+// then done with the freshly-issued QR. All state lives on PosApp because
+// the PIN modal at PosApp's root needs to resume submitSell after the cashier
+// enters their PIN; props expose everything the screen reads or mutates.
+// ---------------------------------------------------------------------------
+
+function Sell({
+  sellStep,
+  setSellStep,
+  pricing,
+  sellControls,
+  receiptNumber,
+  setReceiptNumber,
+  sellSubmitting,
+  nameOnReceiptChecked,
+  setNameOnReceiptChecked,
+  sellError,
+  onSubmit,
+  sellResponse,
+  onClose,
+  onGoToCustomer,
+}: {
+  sellStep: SellStep;
+  setSellStep: (next: SellStep) => void;
+  pricing: CardPricing;
+  sellControls: PosSellControls;
+  receiptNumber: string;
+  setReceiptNumber: (next: string) => void;
+  sellSubmitting: boolean;
+  nameOnReceiptChecked: boolean;
+  setNameOnReceiptChecked: (next: boolean) => void;
+  sellError: string | null;
+  onSubmit: () => void;
+  sellResponse: SellCardResponse | null;
+  onClose: () => void;
+  onGoToCustomer: () => void;
+}) {
+  return (
+    <div>
+      <BackBar label="חזרה" onClick={onClose} />
+      {sellStep === 'choose' && (
+        <div style={{ ...card }}>
+          <div style={{ fontSize: 20, fontWeight: 600 }}>מכירת כרטיסייה</div>
+          <div
+            style={{
+              ...card,
+              background: '#fff8f3',
+              boxShadow: 'none',
+              border: '1px solid #ffe3d4',
+              marginTop: 16,
+            }}
+          >
+            <div style={{ fontWeight: 600, fontSize: 18 }}>כרטיסייה</div>
+            <div style={{ color: MUTED, fontSize: 14, marginTop: 4 }}>{pricing.pitchLabel}</div>
+            <div style={{ fontSize: 36, fontWeight: 600, color: ORANGE, marginTop: 12 }}>
+              ₪{pricing.priceShekels}
+            </div>
+            <div style={{ color: MUTED, fontSize: 13.5, marginTop: 4 }}>
+              ניקוב גמיש — בוחרים בקופה כמה כניסות לסמן בכל סריקה
+            </div>
+          </div>
+          <button
+            style={{ ...primaryBtn, width: '100%', marginTop: 18 }}
+            onClick={() => setSellStep('confirm')}
+          >
+            המשך לתשלום
+          </button>
+        </div>
+      )}
+      {sellStep === 'confirm' && (
+        <div style={{ ...card }}>
+          <div style={{ fontSize: 20, fontWeight: 600 }}>סכום לתשלום</div>
+          <div style={{ fontSize: 40, fontWeight: 600, color: ORANGE, margin: '8px 0 14px' }}>
+            ₪{pricing.priceShekels}
+          </div>
+          <div style={{ color: MUTED, fontSize: 14 }}>
+            החיוב מתבצע בקופה החיצונית. לאחר אישור התשלום, לחצו "אושר".
+          </div>
+
+          {sellControls.requireReceiptNumberOnPos && (
+            <div style={{ marginTop: 18 }}>
+              <label
+                htmlFor="pos-receipt-number"
+                style={{
+                  display: 'block',
+                  fontSize: 13.5,
+                  color: MUTED,
+                  marginBottom: 6,
+                  fontWeight: 600,
+                }}
+              >
+                מספר קבלה *
+              </label>
+              <input
+                id="pos-receipt-number"
+                value={receiptNumber}
+                onChange={(e) => setReceiptNumber(e.target.value)}
+                inputMode="text"
+                autoComplete="off"
+                placeholder="מספר הקבלה שהדפסת בקופה"
+                disabled={sellSubmitting}
+                style={{
+                  width: '100%',
+                  fontSize: 16,
+                  padding: '12px 14px',
+                  border: '1.5px solid #e9e0d9',
+                  borderRadius: 10,
+                  background: '#fff',
+                  outline: 'none',
+                  boxSizing: 'border-box',
+                }}
+              />
+            </div>
+          )}
+
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: 10,
+              marginTop: 14,
+              padding: '10px 12px',
+              border: '1.5px solid #e9e0d9',
+              borderRadius: 10,
+              background: '#fffaf5',
+              cursor: 'pointer',
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={nameOnReceiptChecked}
+              onChange={(e) => setNameOnReceiptChecked(e.target.checked)}
+              disabled={sellSubmitting}
+              style={{ marginTop: 3 }}
+            />
+            <span style={{ fontSize: 14, color: INK, lineHeight: 1.4 }}>
+              {sellControls.nameOnReceiptLabel}
+            </span>
+          </label>
+
+          <div style={{ fontWeight: 600, margin: '18px 0 10px' }}>הלקוח שולם בקופה?</div>
+          {sellError && (
+            <div
+              role="alert"
+              style={{
+                marginBottom: 12,
+                padding: '10px 14px',
+                background: '#fbecec',
+                color: '#a23a3a',
+                borderRadius: 10,
+                fontSize: 14,
+              }}
+            >
+              {sellError}
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button
+              style={{ ...ghostBtn, flex: 1 }}
+              onClick={() => setSellStep('choose')}
+              disabled={sellSubmitting}
+            >
+              ביטול
+            </button>
+            <button
+              style={{
+                ...primaryBtn,
+                flex: 1,
+                opacity: sellSubmitting || !nameOnReceiptChecked ? 0.6 : 1,
+                cursor:
+                  sellSubmitting || !nameOnReceiptChecked ? 'not-allowed' : 'pointer',
+              }}
+              onClick={onSubmit}
+              disabled={sellSubmitting || !nameOnReceiptChecked}
+            >
+              {sellSubmitting ? 'יוצר…' : 'אושר'}
+            </button>
+          </div>
+        </div>
+      )}
+      {sellStep === 'done' && sellResponse && (
+        <div style={{ ...card, textAlign: 'center' }}>
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'center',
+              animation: 'memesh-burst 0.5s ease',
+            }}
+          >
+            <Sun size={96} />
+          </div>
+          <div style={{ fontSize: 22, fontWeight: 600, marginTop: 12 }}>הכרטיסייה נוצרה!</div>
+          <div style={{ color: MUTED, fontSize: 14, marginTop: 6 }}>
+            הכרטיסייה זמינה בכרטיס הלקוח. שליחת ה-SMS עם ה-QR תיכנס בעדכון הבא.
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'center', margin: '18px 0' }}>
+            <MemeshQr
+              value={sellResponse.card.qrToken}
+              size={200}
+              title={`קוד QR — ${sellResponse.card.serialNumber}`}
+            />
+          </div>
+          <div style={{ fontSize: 13, color: MUTED, marginBottom: 4 }}>
+            {sellResponse.card.serialNumber}
+          </div>
+          <div style={{ fontSize: 13, color: MUTED, marginBottom: 14 }}>
+            {sellResponse.card.expiresAt === null
+              ? 'ללא תפוגה'
+              : `תוקף עד ${fmtDate(yyyyMmDd(sellResponse.card.expiresAt))}`}
+          </div>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button style={{ ...ghostBtn, flex: 1 }} onClick={onGoToCustomer}>
+              לכרטיס הלקוח
+            </button>
+            <button style={{ ...primaryBtn, flex: 1 }} onClick={onClose}>
+              חזרה למסך הראשי
+            </button>
+          </div>
         </div>
       )}
     </div>
