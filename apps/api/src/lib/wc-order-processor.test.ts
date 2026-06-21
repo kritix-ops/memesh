@@ -127,7 +127,21 @@ test('processWcOrderWebhook records a failure on a malformed payload', async () 
 // Status filter
 // ---------------------------------------------------------------------------
 
-test('processWcOrderWebhook ignores non-completed order updates', async () => {
+test('processWcOrderWebhook ignores orders that are not paid yet (pending, on-hold, etc.)', async () => {
+  const db = await freshDb();
+  const result = await processWcOrderWebhook(db, {
+    deliveryId: nextDeliveryId(),
+    topic: 'order.updated',
+    payload: wcPayload({ status: 'pending' }),
+    resolver,
+  });
+  assert.equal(result.status, 'ignored_status');
+
+  const cards = await db.select().from(punchCards);
+  assert.equal(cards.length, 0);
+});
+
+test('processWcOrderWebhook treats "processing" the same as "completed" (paid; punch cards need no fulfillment)', async () => {
   const db = await freshDb();
   const result = await processWcOrderWebhook(db, {
     deliveryId: nextDeliveryId(),
@@ -135,8 +149,23 @@ test('processWcOrderWebhook ignores non-completed order updates', async () => {
     payload: wcPayload({ status: 'processing' }),
     resolver,
   });
-  assert.equal(result.status, 'ignored_status');
+  assert.equal(result.status, 'processed');
 
+  const cards = await db.select().from(punchCards);
+  assert.equal(cards.length, 1, 'a paid order in processing creates the card');
+});
+
+test('processWcOrderWebhook ignores cancelled/refunded orders even after payment', async () => {
+  const db = await freshDb();
+  for (const status of ['cancelled', 'refunded', 'failed'] as const) {
+    const result = await processWcOrderWebhook(db, {
+      deliveryId: nextDeliveryId(),
+      topic: 'order.updated',
+      payload: wcPayload({ status }),
+      resolver,
+    });
+    assert.equal(result.status, 'ignored_status', `status ${status} must be ignored`);
+  }
   const cards = await db.select().from(punchCards);
   assert.equal(cards.length, 0);
 });
