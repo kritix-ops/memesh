@@ -121,14 +121,48 @@ export async function apiRequest<T>(
   }
 
   const url = `${BASE_URL}${path}`;
-  const response = await fetch(url, fetchInit);
+  let response: Response;
+  try {
+    response = await fetch(url, fetchInit);
+  } catch (err) {
+    // Network failure (DNS, connection refused, TLS, offline, etc.). Caller-
+    // initiated aborts re-throw so debounced callers (e.g. searchCustomers)
+    // can distinguish "I cancelled this" from "the network is down".
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      throw err;
+    }
+    console.warn('[web api] network error', { method, path, error: String(err) });
+    // Mirror the audience-based 401 routing so the session provider drops to
+    // signed-out instead of hanging on `'loading'` forever when the API is
+    // unreachable. Without this, an outage of api.memesh.co.il produces an
+    // endless spinner on every frontend's first render.
+    if (!_retried) {
+      if (init.audience === 'customer') {
+        onCustomerSessionExpired?.();
+      } else if (!SKIP_AUTO_REFRESH.has(path)) {
+        onSessionExpired?.();
+      }
+    }
+    return { ok: false, status: 0, error: 'network_error' };
+  }
 
   if (response.ok) {
     // 204 No Content (no body); cast as T and let the caller's narrow type win.
-    const data =
-      response.status === 204 ? (undefined as unknown as T) : ((await response.json()) as T);
-    console.info('[web api]', method, path, response.status);
-    return { ok: true, data };
+    if (response.status === 204) {
+      console.info('[web api]', method, path, response.status);
+      return { ok: true, data: undefined as unknown as T };
+    }
+    try {
+      const data = (await response.json()) as T;
+      console.info('[web api]', method, path, response.status);
+      return { ok: true, data };
+    } catch (err) {
+      // The server returned a 2xx with a non-JSON body — almost always the
+      // SPA's index.html bleeding through a misconfigured proxy. Treat as a
+      // transport-layer failure, not a real success.
+      console.warn('[web api] invalid response body', { method, path, error: String(err) });
+      return { ok: false, status: response.status, error: 'invalid_response' };
+    }
   }
 
   // 401 handling depends on the call's audience:
