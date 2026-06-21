@@ -1,4 +1,6 @@
 import type { CSSProperties, ReactNode } from 'react';
+import sunMark from './assets/memesh-sun.png';
+import wordmarkSrc from './assets/memesh-wordmark.png';
 import { GREEN, INK, MUTED, ORANGE } from './tokens';
 
 interface SunProps {
@@ -7,14 +9,23 @@ interface SunProps {
   spin?: boolean;
 }
 
-// The brand's primary mark: a ring (or solid center) with 8 rounded-pebble rays
-// alternating orange and green.
+// The brand's primary mark: a hollow green ring with 8 outlined peach
+// capsule rays. Rebuilt as SVG so it stays crisp at any size and can be
+// tinted/animated — visually matches the source PNG (logo/sun.png).
+//
+// - `ring=true` (default): hollow green ring center, matching the real mark.
+// - `ring=false`: solid orange disc — used in tight chrome (Logo header)
+//    where a hollow center would look weak at small sizes.
 export function Sun({ size = 46, ring = true, spin = false }: SunProps) {
   const cx = size / 2;
   const cy = size / 2;
-  const rayW = size * 0.115;
-  const rayLen = size * 0.2;
-  const orbit = size * 0.34;
+  const rayW = size * 0.14;
+  const rayLen = size * 0.245;
+  const orbit = size * 0.345;
+  const rayStroke = Math.max(1.6, size * 0.05);
+  const ringStroke = Math.max(2.4, size * 0.075);
+  const ringR = size * 0.17;
+
   const rays = Array.from({ length: 8 }, (_, i) => (
     <rect
       key={i}
@@ -23,28 +34,31 @@ export function Sun({ size = 46, ring = true, spin = false }: SunProps) {
       width={rayW}
       height={rayLen}
       rx={rayW / 2}
-      fill={i % 2 === 0 ? ORANGE : GREEN}
-      transform={`rotate(${i * 45} ${cx} ${cy})`}
-      style={spin ? { animation: `memesh-ray 1.1s ease-in-out ${i * 0.12}s infinite` } : undefined}
-    />
-  ));
-  const center = ring ? (
-    <circle
-      cx={cx}
-      cy={cy}
-      r={size * 0.15}
       fill="none"
       stroke={ORANGE}
-      strokeWidth={Math.max(2, size * 0.055)}
+      strokeWidth={rayStroke}
+      transform={`rotate(${i * 45} ${cx} ${cy})`}
+      style={
+        spin
+          ? { animation: `memesh-ray 1.1s ease-in-out ${i * 0.12}s infinite` }
+          : undefined
+      }
     />
+  ));
+
+  const center = ring ? (
+    <circle cx={cx} cy={cy} r={ringR} fill="none" stroke={GREEN} strokeWidth={ringStroke} />
   ) : (
-    <circle cx={cx} cy={cy} r={size * 0.17} fill={ORANGE} />
+    <circle cx={cx} cy={cy} r={ringR + ringStroke / 2} fill={ORANGE} />
   );
+
   return (
     <svg
       width={size}
       height={size}
       viewBox={`0 0 ${size} ${size}`}
+      role="img"
+      aria-label="ממש"
       style={spin ? { animation: 'memesh-spin 6s linear infinite' } : undefined}
     >
       {rays}
@@ -113,21 +127,43 @@ export function PunchCard({ used, total = 12, compact = false }: PunchCardProps)
           <Pebble key={i} size={pebSize} filled={i < used} />
         ))}
       </div>
-    </div>
+      </div>
   );
 }
 
-export function Logo() {
+interface LogoProps {
+  // Rendered height of the wordmark in CSS pixels. Width follows the natural
+  // aspect ratio of the source asset (≈2.85:1), so the wordmark never stretches.
+  height?: number;
+}
+
+// The full Memesh wordmark — renders the real brand asset (logo/memeshnoback.png)
+// so the typography and niqqud pebbles look exactly as the brand owner drew
+// them. We don't redraw the lettering in SVG: the source is a custom mark, not
+// a font, and substituting a Google font would degrade it.
+//
+// Width is derived from the natural 1201×421 aspect of the asset; the consumer
+// sets `height` and the wordmark scales cleanly. The default sizes the "מֶמֶש"
+// letters at ~26px tall — matching the optical weight of the previous
+// synthesized logo so existing header layouts continue to feel balanced.
+export function Logo({ height = 48 }: LogoProps) {
+  const aspect = 1201 / 421;
+  const width = Math.round(height * aspect);
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-      <Sun size={34} ring={false} />
-      <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.05 }}>
-        <span style={{ fontSize: 26, fontWeight: 600, color: ORANGE }}>ממש</span>
-        <span style={{ fontSize: 11, color: MUTED, marginTop: 2 }}>משחקיה, בית, קהילה</span>
-      </div>
-    </div>
+    <img
+      src={wordmarkSrc}
+      alt="ממש — משחקיה, בית, קהילה"
+      width={width}
+      height={height}
+      style={{ display: 'block', flexShrink: 0 }}
+    />
   );
 }
+
+// URL of the standalone sun mark PNG. Exported so apps that need it outside
+// React (e.g. for an Open Graph image or a download link) can reach it.
+export const sunMarkSrc = sunMark;
+export const wordmarkAssetSrc = wordmarkSrc;
 
 // A decorative QR placeholder derived from the serial. The production build
 // renders the real HMAC token via a QR library; this is for the mock UI only.
