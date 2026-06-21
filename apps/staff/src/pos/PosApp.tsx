@@ -1311,6 +1311,7 @@ export function PosApp() {
                 onChange={setNewFirst}
                 error={newFieldErrors.firstName}
                 autoComplete="given-name"
+                submitting={newSubmitting}
               />
               <NewCustomerField
                 label="שם משפחה"
@@ -1319,6 +1320,7 @@ export function PosApp() {
                 onChange={setNewLast}
                 error={newFieldErrors.lastName}
                 autoComplete="family-name"
+                submitting={newSubmitting}
               />
               <NewCustomerField
                 label="טלפון"
@@ -1330,6 +1332,7 @@ export function PosApp() {
                 inputMode="tel"
                 autoComplete="tel"
                 placeholder="050-000-0000"
+                submitting={newSubmitting}
               />
               <NewCustomerField
                 label="מייל"
@@ -1341,6 +1344,7 @@ export function PosApp() {
                 type="email"
                 inputMode="email"
                 autoComplete="email"
+                submitting={newSubmitting}
               />
             </div>
             {!formRules.requireEmail && (
@@ -1400,83 +1404,6 @@ export function PosApp() {
           </form>
         </div>
       </div>
-    );
-  }
-
-  function NewCustomerField({
-    label,
-    value,
-    onChange,
-    required,
-    badge,
-    error,
-    type,
-    inputMode,
-    autoComplete,
-    placeholder,
-  }: {
-    label: string;
-    value: string;
-    onChange: (next: string) => void;
-    required?: boolean | undefined;
-    badge?: string | undefined;
-    error?: string | undefined;
-    type?: 'text' | 'tel' | 'email' | undefined;
-    inputMode?: 'tel' | 'email' | 'text' | undefined;
-    autoComplete?: string | undefined;
-    placeholder?: string | undefined;
-  }) {
-    return (
-      <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        <span
-          style={{
-            fontSize: 13.5,
-            color: MUTED,
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-          }}
-        >
-          <span>
-            {label}
-            {required ? ' *' : ''}
-          </span>
-          {badge && (
-            <span
-              style={{
-                fontSize: 11,
-                fontWeight: 600,
-                color: '#a8643d',
-                background: '#fff4ee',
-                border: '1px solid #ffe3d4',
-                borderRadius: 999,
-                padding: '2px 8px',
-              }}
-            >
-              {badge}
-            </span>
-          )}
-        </span>
-        <input
-          style={{
-            ...inputStyle,
-            borderColor: error ? '#e8a4a4' : '#e9e0d9',
-          }}
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          type={type ?? 'text'}
-          {...(inputMode !== undefined && { inputMode })}
-          {...(autoComplete !== undefined && { autoComplete })}
-          {...(placeholder !== undefined && { placeholder })}
-          disabled={newSubmitting}
-          aria-invalid={Boolean(error)}
-        />
-        {error && (
-          <span style={{ fontSize: 12.5, color: '#a23a3a' }} role="alert">
-            {error}
-          </span>
-        )}
-      </label>
     );
   }
 
@@ -2216,6 +2143,91 @@ function Stat({ label, value }: { label: string; value: string }) {
       <div style={{ fontSize: 30, fontWeight: 600, color: ORANGE }}>{value}</div>
       <div style={{ fontSize: 13.5, color: MUTED, marginTop: 2 }}>{label}</div>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// NewCustomerField — labelled text input used by the New Customer form. The
+// `submitting` prop replaces a closure over the parent's newSubmitting state;
+// lifting eliminates the per-keystroke remount that wiped focus mid-typing.
+// ---------------------------------------------------------------------------
+
+function NewCustomerField({
+  label,
+  value,
+  onChange,
+  required,
+  badge,
+  error,
+  type,
+  inputMode,
+  autoComplete,
+  placeholder,
+  submitting,
+}: {
+  label: string;
+  value: string;
+  onChange: (next: string) => void;
+  required?: boolean | undefined;
+  badge?: string | undefined;
+  error?: string | undefined;
+  type?: 'text' | 'tel' | 'email' | undefined;
+  inputMode?: 'tel' | 'email' | 'text' | undefined;
+  autoComplete?: string | undefined;
+  placeholder?: string | undefined;
+  submitting: boolean;
+}) {
+  return (
+    <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <span
+        style={{
+          fontSize: 13.5,
+          color: MUTED,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+        }}
+      >
+        <span>
+          {label}
+          {required ? ' *' : ''}
+        </span>
+        {badge && (
+          <span
+            style={{
+              fontSize: 11,
+              fontWeight: 600,
+              color: '#a8643d',
+              background: '#fff4ee',
+              border: '1px solid #ffe3d4',
+              borderRadius: 999,
+              padding: '2px 8px',
+            }}
+          >
+            {badge}
+          </span>
+        )}
+      </span>
+      <input
+        style={{
+          ...inputStyle,
+          borderColor: error ? '#e8a4a4' : '#e9e0d9',
+        }}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        type={type ?? 'text'}
+        {...(inputMode !== undefined && { inputMode })}
+        {...(autoComplete !== undefined && { autoComplete })}
+        {...(placeholder !== undefined && { placeholder })}
+        disabled={submitting}
+        aria-invalid={Boolean(error)}
+      />
+      {error && (
+        <span style={{ fontSize: 12.5, color: '#a23a3a' }} role="alert">
+          {error}
+        </span>
+      )}
+    </label>
   );
 }
 
