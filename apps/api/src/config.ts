@@ -22,6 +22,13 @@ const envSchema = z.object({
   // cross-subdomain hop from frontend to api.memesh.co.il. Unset means cookies
   // stay origin-scoped (current single-origin behaviour, safe for dev).
   COOKIE_DOMAIN: z.string().optional(),
+  // Shared secret used by the WordPress checkout-handoff plugin to call the
+  // /auth/customer/wc-handoff/mint endpoint. 32+ chars. Set on both the
+  // memesh-api Vercel project (as WP_HANDOFF_SHARED_SECRET) and on the WP
+  // host environment (as MEMESH_HANDOFF_SECRET) — values must match.
+  // Unset = the mint route refuses every request with 503, so the feature
+  // stays off in dev without an explicit opt-in.
+  WP_HANDOFF_SHARED_SECRET: z.string().min(32).optional(),
   // WordPress one-way sync (optional). When unset, sync is disabled and customer
   // creation simply skips it.
   WP_BASE_URL: z.string().url().optional(),
