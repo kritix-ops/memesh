@@ -70,3 +70,31 @@ export const verifyEmailOtp = (
     body: { email, code },
     audience: 'customer',
   });
+
+// ---------------------------------------------------------------------------
+// WooCommerce checkout handoff. WordPress redirects the buyer to
+// my.memesh.co.il/checkout-complete?token=<raw> after a successful checkout;
+// the page calls this verify endpoint to exchange the token for the same
+// HttpOnly customer_token cookie the OTP flow sets, then forwards them to /.
+// ---------------------------------------------------------------------------
+
+import type { CustomerProfile } from './me';
+
+export interface HandoffVerifyResponse {
+  ok: true;
+  profile: CustomerProfile;
+}
+
+/**
+ * Exchange a single-use handoff token (minted by the WP plugin) for a
+ * customer session cookie. 401 on any failure (replay, expired, garbage,
+ * unknown) — the page falls back to OTP login in that case.
+ */
+export const verifyHandoffToken = (
+  token: string,
+): Promise<ApiResult<HandoffVerifyResponse>> =>
+  apiRequest('/auth/customer/wc-handoff/verify', {
+    method: 'POST',
+    body: { token },
+    audience: 'customer',
+  });
