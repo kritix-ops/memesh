@@ -1,70 +1,27 @@
 import type { CSSProperties, ReactNode } from 'react';
 import sunMark from './assets/memesh-sun.png';
 import wordmarkSrc from './assets/memesh-wordmark.png';
-import { GREEN, INK, MUTED, ORANGE } from './tokens';
+import { INK, MUTED, ORANGE } from './tokens';
 
 interface SunProps {
   size?: number;
-  ring?: boolean;
   spin?: boolean;
+  // Vestigial — the synthesized SVG version of Sun used to switch between a
+  // hollow green ring (default) and a solid orange disc (`ring=false`) for
+  // tight chrome on orange backgrounds. The PNG mark has the ring baked in,
+  // so the flag is silently ignored. Kept on the type only because one
+  // in-flight call site still passes it; drop once that lands.
+  ring?: boolean;
 }
 
-// The brand's primary mark: a hollow green ring with 8 outlined peach
-// capsule rays. Rebuilt as SVG so it stays crisp at any size and can be
-// tinted/animated — visually matches the source PNG (logo/sun.png).
-//
-// - `ring=true` (default): hollow green ring center, matching the real mark.
-// - `ring=false`: solid orange disc — used in tight chrome (Logo header)
-//    where a hollow center would look weak at small sizes.
-export function Sun({ size = 46, ring = true, spin = false }: SunProps) {
-  const cx = size / 2;
-  const cy = size / 2;
-  const rayW = size * 0.14;
-  const rayLen = size * 0.245;
-  const orbit = size * 0.345;
-  const rayStroke = Math.max(1.6, size * 0.05);
-  const ringStroke = Math.max(2.4, size * 0.075);
-  const ringR = size * 0.17;
-
-  const rays = Array.from({ length: 8 }, (_, i) => (
-    <rect
-      key={i}
-      x={cx - rayW / 2}
-      y={cy - orbit - rayLen}
-      width={rayW}
-      height={rayLen}
-      rx={rayW / 2}
-      fill="none"
-      stroke={ORANGE}
-      strokeWidth={rayStroke}
-      transform={`rotate(${i * 45} ${cx} ${cy})`}
-      style={
-        spin
-          ? { animation: `memesh-ray 1.1s ease-in-out ${i * 0.12}s infinite` }
-          : undefined
-      }
-    />
-  ));
-
-  const center = ring ? (
-    <circle cx={cx} cy={cy} r={ringR} fill="none" stroke={GREEN} strokeWidth={ringStroke} />
-  ) : (
-    <circle cx={cx} cy={cy} r={ringR + ringStroke / 2} fill={ORANGE} />
-  );
-
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox={`0 0 ${size} ${size}`}
-      role="img"
-      aria-label="ממש"
-      style={spin ? { animation: 'memesh-spin 6s linear infinite' } : undefined}
-    >
-      {rays}
-      {center}
-    </svg>
-  );
+// The brand's primary mark — rendered straight from the source PNG
+// (logo/sun.png) so the hand-drawn rays and ring stay pixel-faithful at
+// every size. `spin` rotates the whole mark via the `memesh-spin`
+// keyframes defined in each app's index.css; we use it for loading states.
+export function Sun({ size = 46, spin = false }: SunProps) {
+  const style: CSSProperties = { display: 'block', flexShrink: 0 };
+  if (spin) style.animation = 'memesh-spin 6s linear infinite';
+  return <img src={sunMark} alt="ממש" width={size} height={size} style={style} />;
 }
 
 interface PebbleProps {

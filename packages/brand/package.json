@@ -9,7 +9,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --test --import tsx src/MemeshQr.test.tsx"
+    "test": "node --import ./src/test-setup.mjs --import tsx --test \"src/**/*.test.tsx\""
   },
   "peerDependencies": {
     "react": "^19.0.0"
