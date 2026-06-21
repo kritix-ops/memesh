@@ -784,28 +784,6 @@ export function PosApp() {
     </>
   );
 
-  function BackBar({ label, to, onBack }: { label: string; to: Screen; onBack?: () => void }) {
-    return (
-      <button
-        onClick={() => {
-          if (onBack) onBack();
-          setScreen(to);
-        }}
-        style={{
-          border: 'none',
-          background: 'transparent',
-          color: MUTED,
-          cursor: 'pointer',
-          fontSize: 15,
-          padding: '4px 0',
-          marginBottom: 12,
-        }}
-      >
-        ← {label}
-      </button>
-    );
-  }
-
   function Home() {
     const tiles = [
       {
@@ -954,21 +932,12 @@ export function PosApp() {
     );
   }
 
-  function Stat({ label, value }: { label: string; value: string }) {
-    return (
-      <div style={{ ...card, padding: '14px 22px', minWidth: 150 }}>
-        <div style={{ fontSize: 30, fontWeight: 600, color: ORANGE }}>{value}</div>
-        <div style={{ fontSize: 13.5, color: MUTED, marginTop: 2 }}>{label}</div>
-      </div>
-    );
-  }
-
   function Search() {
     const q = query.trim();
     const showEmpty = q.length > 0 && !searchLoading && !searchError && searchResults.length === 0;
     return (
       <div>
-        <BackBar label="חזרה" to="home" />
+        <BackBar label="חזרה" onClick={() => setScreen('home')} />
         <input
           autoFocus
           value={query}
@@ -1043,7 +1012,7 @@ export function PosApp() {
     if (detailLoading) {
       return (
         <div>
-          <BackBar label="חזרה לחיפוש" to="search" />
+          <BackBar label="חזרה לחיפוש" onClick={() => setScreen('search')} />
           <div style={{ ...card, textAlign: 'center', color: MUTED }}>טוען פרטי לקוח…</div>
         </div>
       );
@@ -1051,7 +1020,7 @@ export function PosApp() {
     if (detailError || !detail) {
       return (
         <div>
-          <BackBar label="חזרה לחיפוש" to="search" />
+          <BackBar label="חזרה לחיפוש" onClick={() => setScreen('search')} />
           <div style={{ ...card, textAlign: 'center', color: '#a23a3a' }}>
             לא הצלחנו לטעון את פרטי הלקוח. חזרו לחיפוש ונסו שוב.
           </div>
@@ -1063,7 +1032,7 @@ export function PosApp() {
     const activeCard = pickActiveCard(cards);
     return (
       <div>
-        <BackBar label="חזרה לחיפוש" to="search" />
+        <BackBar label="חזרה לחיפוש" onClick={() => setScreen('search')} />
         <div style={{ ...card, display: 'flex', alignItems: 'center', gap: 14, marginBottom: 16 }}>
           <div
             style={{
@@ -1312,9 +1281,9 @@ export function PosApp() {
       <div>
         <BackBar
           label="חזרה"
-          to="home"
-          onBack={() => {
+          onClick={() => {
             resetNewCustomerForm();
+            setScreen('home');
           }}
         />
         <div style={{ ...card }}>
@@ -1726,7 +1695,7 @@ export function PosApp() {
   function Sell() {
     return (
       <div>
-        <BackBar label="חזרה" to="home" />
+        <BackBar label="חזרה" onClick={() => setScreen('home')} />
         {sellStep === 'choose' && (
           <div style={{ ...card }}>
             <div style={{ fontSize: 20, fontWeight: 600 }}>מכירת כרטיסייה</div>
@@ -2056,7 +2025,7 @@ export function PosApp() {
 
     return (
       <div>
-        <BackBar label="חזרה" to="home" />
+        <BackBar label="חזרה" onClick={() => setScreen('home')} />
         {phase === 'camera' && (
           <div style={{ ...card, textAlign: 'center' }}>
             <div
@@ -2209,6 +2178,45 @@ export function PosApp() {
       </div>
     );
   }
+}
+
+// ---------------------------------------------------------------------------
+// BackBar — top-of-screen back link. Lifted to module scope so it has a stable
+// component identity across PosApp re-renders; declaring it inside PosApp
+// caused every sibling <input> to unmount on each keystroke.
+// ---------------------------------------------------------------------------
+
+function BackBar({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        border: 'none',
+        background: 'transparent',
+        color: MUTED,
+        cursor: 'pointer',
+        fontSize: 15,
+        padding: '4px 0',
+        marginBottom: 12,
+      }}
+    >
+      ← {label}
+    </button>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Stat — small metric tile on the home screen. Pure presentational; lifted
+// alongside BackBar for the same render-stability reason.
+// ---------------------------------------------------------------------------
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ ...card, padding: '14px 22px', minWidth: 150 }}>
+      <div style={{ fontSize: 30, fontWeight: 600, color: ORANGE }}>{value}</div>
+      <div style={{ fontSize: 13.5, color: MUTED, marginTop: 2 }}>{label}</div>
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------
