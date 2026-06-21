@@ -8,6 +8,7 @@ import { migrate } from 'drizzle-orm/pglite/migrator';
 import { cancelCard, createCustomer, createPunchCard } from './cards';
 import { punchCard, refundEntry } from './punch';
 import {
+  cancellationsReport,
   cardsReport,
   customerDetail,
   customersReport,
@@ -281,4 +282,120 @@ test('revenueReport excludes cancelled cards from totals', async () => {
 
   const res = await revenueReport(db);
   assert.equal(res.totalCardsSold, 0);
+});
+
+// ---------------------------------------------------------------------------
+// cancellationsReport
+// ---------------------------------------------------------------------------
+
+test('cancellationsReport merges card cancellations and entry refunds, newest first', async () => {
+  const db = await freshDb();
+  const cust = await createCustomer(db, { firstName: 'Mer', lastName: 'Ge', phone: phone() });
+
+  // Refunded entry, 10 days ago.
+  const cardA = await createPunchCard(db, resolver, { customerId: cust.id, now: daysAgo(20) });
+  const p = await punchCard(db, { punchCardId: cardA.id, method: 'serial', now: daysAgo(15) });
+  if (!p.ok) return;
+  const adminId = crypto.randomUUID();
+  await db.execute(
+    sql`INSERT INTO staff (id, first_name, last_name, phone, role, is_active)
+        VALUES (${adminId}, 'Ad', 'Min', ${phone()}, 'admin', true)`,
+  );
+  await refundEntry(db, {
+    entryId: p.entryId,
+    refundedBy: adminId,
+    approvedBy: adminId,
+    reason: 'תשלום כפול',
+    now: daysAgo(10),
+  });
+
+  // Cancelled card, today (newest).
+  const cardB = await createPunchCard(db, resolver, { customerId: cust.id, now: daysAgo(5) });
+  await cancelCard(db, { cardId: cardB.id, staffId: adminId, reason: 'לקוח התחרט', now: NOW });
+
+  const page = await cancellationsReport(db);
+  assert.equal(page.total, 2);
+  assert.equal(page.cardCount, 1);
+  assert.equal(page.entryCount, 1);
+
+  // Newest (card cancellation today) comes first.
+  assert.equal(page.rows[0]?.kind, 'card');
+  assert.equal(page.rows[0]?.reason, 'לקוח התחרט');
+  assert.equal(page.rows[0]?.actorFirstName, 'Ad');
+
+  assert.equal(page.rows[1]?.kind, 'entry');
+  assert.equal(page.rows[1]?.reason, 'תשלום כפול');
+  assert.equal(page.rows[1]?.entriesConsumed, 1);
+  assert.equal(page.rows[1]?.method, 'serial');
+});
+
+test('cancellationsReport kind filter restricts to one source', async () => {
+  const db = await freshDb();
+  const cust = await createCustomer(db, { firstName: 'Ki', lastName: 'Nd', phone: phone() });
+  const cardA = await createPunchCard(db, resolver, { customerId: cust.id, now: NOW });
+  await cancelCard(db, { cardId: cardA.id, reason: 'בדיקת ביטול', now: NOW });
+
+  const cardB = await createPunchCard(db, resolver, { customerId: cust.id, now: NOW });
+  const p = await punchCard(db, { punchCardId: cardB.id, method: 'serial', now: NOW });
+  if (!p.ok) return;
+  const adminId = crypto.randomUUID();
+  await db.execute(
+    sql`INSERT INTO staff (id, first_name, last_name, phone, role, is_active)
+        VALUES (${adminId}, 'A', 'D', ${phone()}, 'admin', true)`,
+  );
+  await refundEntry(db, {
+    entryId: p.entryId,
+    refundedBy: adminId,
+    approvedBy: adminId,
+    reason: 'tests',
+    now: NOW,
+  });
+
+  const onlyCards = await cancellationsReport(db, { kind: 'card' });
+  assert.equal(onlyCards.total, 1);
+  assert.equal(onlyCards.rows[0]?.kind, 'card');
+
+  const onlyEntries = await cancellationsReport(db, { kind: 'entry' });
+  assert.equal(onlyEntries.total, 1);
+  assert.equal(onlyEntries.rows[0]?.kind, 'entry');
+});
+
+test('cancellationsReport date range filters by occurredAt across both sources', async () => {
+  const db = await freshDb();
+  const cust = await createCustomer(db, { firstName: 'Da', lastName: 'Te', phone: phone() });
+
+  // Old cancellation (30 days ago).
+  const oldCard = await createPunchCard(db, resolver, { customerId: cust.id, now: daysAgo(40) });
+  await cancelCard(db, { cardId: oldCard.id, reason: 'old', now: daysAgo(30) });
+
+  // Recent cancellation (3 days ago).
+  const newCard = await createPunchCard(db, resolver, { customerId: cust.id, now: daysAgo(10) });
+  await cancelCard(db, { cardId: newCard.id, reason: 'fresh', now: daysAgo(3) });
+
+  const lastWeek = await cancellationsReport(db, { from: daysAgo(7) });
+  assert.equal(lastWeek.total, 1);
+  assert.equal(lastWeek.rows[0]?.reason, 'fresh');
+});
+
+test('cancellationsReport q matches card serial and customer fields', async () => {
+  const db = await freshDb();
+  const target = await createCustomer(db, {
+    firstName: 'Yael',
+    lastName: 'Searchable',
+    phone: phone(),
+  });
+  const noise = await createCustomer(db, { firstName: 'Other', lastName: 'Person', phone: phone() });
+
+  const cardT = await createPunchCard(db, resolver, { customerId: target.id, now: NOW });
+  await cancelCard(db, { cardId: cardT.id, reason: 'בדיקת ביטול', now: NOW });
+  const cardN = await createPunchCard(db, resolver, { customerId: noise.id, now: NOW });
+  await cancelCard(db, { cardId: cardN.id, reason: 'בדיקת ביטול', now: NOW });
+
+  const byName = await cancellationsReport(db, { q: 'Searchable' });
+  assert.equal(byName.total, 1);
+  assert.equal(byName.rows[0]?.customerLastName, 'Searchable');
+
+  const bySerial = await cancellationsReport(db, { q: cardT.serialNumber });
+  assert.equal(bySerial.total, 1);
+  assert.equal(bySerial.rows[0]?.cardSerial, cardT.serialNumber);
 });

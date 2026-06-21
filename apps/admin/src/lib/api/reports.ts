@@ -163,3 +163,54 @@ export const fetchRevenueReport = (
   f: RevenueReportFilters = {},
 ): Promise<ApiResult<RevenueReportResult>> =>
   apiRequest(`/admin/reports/revenue${buildQS(f)}`);
+
+// ---------------------------------------------------------------------------
+// Cancellations report
+// ---------------------------------------------------------------------------
+
+export type CancellationKind = 'card' | 'entry';
+
+export interface CancellationsReportRow {
+  kind: CancellationKind;
+  id: string;
+  occurredAt: string;
+  reason: string | null;
+  cardId: string;
+  cardSerial: string;
+  customerId: string;
+  customerNumber: string | null;
+  customerFirstName: string | null;
+  customerLastName: string | null;
+  actorId: string | null;
+  actorFirstName: string | null;
+  actorLastName: string | null;
+  // Entry-only:
+  method: string | null;
+  entriesConsumed: number | null;
+  originalPunchedAt: string | null;
+  // Card-only:
+  source: string | null;
+  usedEntries: number | null;
+  totalEntries: number | null;
+}
+
+export interface CancellationsReportFilters {
+  from?: string;
+  to?: string;
+  kind?: CancellationKind;
+  q?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface CancellationsReportPage {
+  rows: CancellationsReportRow[];
+  total: number;
+  cardCount: number;
+  entryCount: number;
+}
+
+export const fetchCancellationsReport = (
+  f: CancellationsReportFilters = {},
+): Promise<ApiResult<CancellationsReportPage>> =>
+  apiRequest(`/admin/reports/cancellations${buildQS(f)}`);
