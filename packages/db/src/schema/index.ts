@@ -1,4 +1,5 @@
 export * from './staff';
+export * from './staff-password-resets';
 export * from './staff-pins';
 export * from './customers';
 export * from './punch-cards';

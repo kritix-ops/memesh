@@ -75,6 +75,14 @@ const envSchema = z.object({
   EMAIL_PROVIDER: z.enum(['console', 'resend']).default('console'),
   RESEND_API_KEY: z.string().optional(),
   EMAIL_FROM: z.string().optional(),
+  // Base URL of the staff login app. The /auth/forgot-password route embeds
+  // this in the reset email as `${STAFF_LOGIN_URL}/?reset_token=...`. The
+  // server NEVER trusts a client-supplied origin for the reset link — it's
+  // always built from this env to prevent open-redirect / link-spoofing.
+  // Dev default points at the staff Vite dev server; in prod set this to
+  // https://staff.memesh.co.il (or admin.memesh.co.il — both apps detect
+  // the token).
+  STAFF_LOGIN_URL: z.string().url().default('http://localhost:5173'),
 });
 
 export const env = envSchema.parse(process.env);

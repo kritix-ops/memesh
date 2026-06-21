@@ -1,7 +1,9 @@
 export {
+  staffForgotPassword,
   staffLogin,
   staffLogout,
   staffMe,
+  staffResetPassword,
   type LoginResponse,
   type MeResponse,
   type StaffRole,
@@ -11,6 +13,7 @@ export { StaffLoginForm } from './StaffLoginForm';
 export {
   StaffSessionProvider,
   useStaffSession,
+  type SignedOutView,
   type SignInResult,
   type StaffSessionState,
 } from './staff-session';

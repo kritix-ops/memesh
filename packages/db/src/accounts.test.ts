@@ -6,9 +6,11 @@ import { migrate } from 'drizzle-orm/pglite/migrator';
 import {
   createStaff,
   getCustomerById,
+  getStaffByEmailWithSecret,
   getStaffById,
   listStaff,
   setCustomerWpUserId,
+  setStaffPasswordHash,
   updateCustomerProfile,
   updateStaff,
 } from './accounts';
@@ -127,6 +129,51 @@ test('updateStaff returns undefined for an unknown id', async () => {
     firstName: 'X',
   });
   assert.equal(missing, undefined);
+});
+
+test('getStaffByEmailWithSecret matches case-insensitively and returns the password hash', async () => {
+  const db = await freshDb();
+  const created = await createStaff(db, {
+    firstName: 'Email',
+    lastName: 'User',
+    phone: phone(),
+    passwordHash: 'scrypt$32768$8$1$abc$def',
+    role: 'admin',
+    email: 'Owner@Example.COM',
+  });
+
+  const found = await getStaffByEmailWithSecret(db, 'owner@example.com');
+  assert.ok(found);
+  assert.equal(found.id, created.id);
+  assert.equal(found.passwordHash, 'scrypt$32768$8$1$abc$def');
+
+  const sameCase = await getStaffByEmailWithSecret(db, 'OWNER@EXAMPLE.COM');
+  assert.equal(sameCase?.id, created.id);
+});
+
+test('getStaffByEmailWithSecret returns undefined for unknown and empty inputs', async () => {
+  const db = await freshDb();
+  assert.equal(await getStaffByEmailWithSecret(db, 'nobody@example.com'), undefined);
+  assert.equal(await getStaffByEmailWithSecret(db, ''), undefined);
+  assert.equal(await getStaffByEmailWithSecret(db, '   '), undefined);
+});
+
+test('setStaffPasswordHash rotates only the password hash', async () => {
+  const db = await freshDb();
+  const created = await createStaff(db, {
+    firstName: 'Rotate',
+    lastName: 'Me',
+    phone: phone(),
+    passwordHash: 'scrypt$old',
+    role: 'manager',
+    email: 'rotate@example.com',
+  });
+
+  const result = await setStaffPasswordHash(db, created.id, 'scrypt$new');
+  assert.equal(result?.id, created.id);
+
+  const after = await getStaffByEmailWithSecret(db, 'rotate@example.com');
+  assert.equal(after?.passwordHash, 'scrypt$new');
 });
 
 test('updateCustomerProfile edits allowed fields and leaves phone unchanged', async () => {

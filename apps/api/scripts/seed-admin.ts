@@ -12,9 +12,15 @@ const MIN_PASSWORD_LENGTH = 12;
 export interface SeedAdminInput {
   phone: string;
   password: string;
+  /**
+   * Email is the staff login username as of 2026-06-21. Required for admin
+   * seeding so the seeded row can actually log in. Phone stays as the unique
+   * contact id, but email is what the /auth/login route looks up. Lowercased
+   * before storage to match the partial unique index on lower(email).
+   */
+  email: string;
   firstName?: string;
   lastName?: string;
-  email?: string;
   /**
    * When true and a staff row with the given phone already exists, the
    * password hash is overwritten (and the row is reactivated). Used for
@@ -43,6 +49,10 @@ export async function seedAdmin(
 ): Promise<SeedAdminResult> {
   if (input.password.length < MIN_PASSWORD_LENGTH) {
     throw new Error(`[seed admin] password must be at least ${MIN_PASSWORD_LENGTH} characters`);
+  }
+  const email = input.email.trim().toLowerCase();
+  if (!email) {
+    throw new Error('[seed admin] email is required (admin login uses email as the username)');
   }
   // Normalize the phone to canonical 05XXXXXXXX form so what we store matches
   // what the routes will look up later, regardless of whether the operator
@@ -75,7 +85,7 @@ export async function seedAdmin(
     phone,
     passwordHash,
     role: 'admin',
-    ...(input.email !== undefined && { email: input.email }),
+    email,
   });
   console.info('[seed admin] created', { id: row.id, phone: row.phone, role: row.role });
   return { kind: 'created', id: row.id, phone: row.phone };
@@ -108,8 +118,10 @@ async function runCli(): Promise<void> {
   const forceResetPassword =
     process.env.SEED_ADMIN_FORCE_RESET === '1' || process.env.SEED_ADMIN_FORCE_RESET === 'true';
 
-  if (!phone || !password) {
-    console.error('[seed admin] SEED_ADMIN_PHONE and SEED_ADMIN_PASSWORD are required');
+  if (!phone || !password || !email) {
+    console.error(
+      '[seed admin] SEED_ADMIN_PHONE, SEED_ADMIN_PASSWORD, and SEED_ADMIN_EMAIL are required',
+    );
     process.exit(1);
   }
 
@@ -128,10 +140,10 @@ async function runCli(): Promise<void> {
     const result = await seedAdmin(db, {
       phone,
       password,
+      email,
       forceResetPassword,
       ...(firstName !== undefined && { firstName }),
       ...(lastName !== undefined && { lastName }),
-      ...(email !== undefined && { email }),
     });
     console.info('[seed admin] done', result);
   } finally {
