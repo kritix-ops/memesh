@@ -50,6 +50,13 @@
       "when": 1781966580294,
       "tag": "0006_swift_mystique",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1782036879004,
+      "tag": "0007_quiet_blockbuster",
+      "breakpoints": true
     }
   ]
 }
