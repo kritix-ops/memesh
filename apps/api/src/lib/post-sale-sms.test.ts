@@ -13,8 +13,10 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { buildPostSaleSmsBody } from './post-sale-sms';
 
-const RAW_TOKEN = 'eHbCw0vSf3pq3pjN0lE7vQF1mGZqXk7d9BTNcL2y7Yc';
-const LINK = `https://my.memesh.co.il/checkout-complete?token=${RAW_TOKEN}`;
+// 16-char base64url token (12 random bytes), matching the new short-link
+// format from _plans/2026-06-22-sms-short-link.md.
+const RAW_TOKEN = 'AbCdEfGhIjKlMnOp';
+const LINK = `https://my.memesh.co.il/c/${RAW_TOKEN}`;
 
 test('buildPostSaleSmsBody: single card with expiry → POS-style body with count, date, link', () => {
   const body = buildPostSaleSmsBody({
@@ -24,7 +26,10 @@ test('buildPostSaleSmsBody: single card with expiry → POS-style body with coun
   assert.match(body, /הכרטיסייה שלך ב-Memesh נוצרה!/);
   assert.match(body, /12 כניסות/);
   assert.match(body, /תוקף עד 2026-12-31/);
-  assert.match(body, /צפייה בכרטיסייה: /);
+  // Wording aligned with the multi-card branch and Yanay's 2026-06-22 UX
+  // feedback: the CTA points at the personal area, not at the card itself.
+  assert.match(body, /לצפייה באזור האישי: /);
+  assert.equal(body.includes('צפייה בכרטיסייה:'), false, 'legacy wording must be gone');
   assert.ok(body.includes(LINK), 'SMS body must contain the full magic link');
 });
 
@@ -51,11 +56,11 @@ test('buildPostSaleSmsBody: the link is embedded verbatim — no URL encoding, n
 test('buildPostSaleSmsBody: a different totalEntries renders without leaking other state', () => {
   const body = buildPostSaleSmsBody({
     cards: [{ totalEntries: 50, expiresAt: new Date('2027-01-15T08:00:00.000Z') }],
-    link: 'https://example.test/c?t=abc',
+    link: 'https://example.test/c/abc',
   });
   assert.match(body, /50 כניסות/);
   assert.match(body, /תוקף עד 2027-01-15/);
-  assert.match(body, /https:\/\/example\.test\/c\?t=abc/);
+  assert.match(body, /https:\/\/example\.test\/c\/abc/);
 });
 
 test('buildPostSaleSmsBody: 2 cards → generic "נוצרו 2 כרטיסיות" body, NO per-card claim', () => {
@@ -94,5 +99,6 @@ test('buildPostSaleSmsBody: empty cards array falls back to a safe link-only bod
   // still gets a working magic link rather than a thrown exception.
   const body = buildPostSaleSmsBody({ cards: [], link: LINK });
   assert.match(body, /הכרטיסייה שלך ב-Memesh מוכנה!/);
+  assert.match(body, /לצפייה באזור האישי: /);
   assert.ok(body.endsWith(LINK));
 });

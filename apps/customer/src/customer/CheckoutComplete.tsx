@@ -2,10 +2,16 @@ import { Sun } from '@memesh/brand';
 import { verifyHandoffToken, type HandoffThankyou } from '@memesh/customer-auth';
 import { useEffect, useState, type CSSProperties } from 'react';
 
-// Landing page after a successful WooCommerce checkout. The WP plugin
-// redirects the buyer here with ?token=<raw>, we exchange it for a session
-// cookie, then we sit on a Hebrew thank-you card with a CTA into the personal
-// area. The customer clicks when they're ready — no auto-redirect.
+// Landing page that consumes a single-use handoff token from the URL,
+// exchanges it for a session cookie, then sits on a Hebrew thank-you card
+// with a CTA into the personal area. Two URL shapes feed this same handler:
+//   /checkout-complete?token=<token>   legacy long-URL (WP browser-redirect
+//                                       after WC checkout, in-flight SMS
+//                                       magic links from before the
+//                                       2026-06-22 short-link cutover)
+//   /c/<token>                         current SMS magic-link path. Short
+//                                       16-char token, friendlier UX —
+//                                       see _plans/2026-06-22-sms-short-link.md
 //
 // Three states:
 //   loading   - verifying the token (~300ms in the happy path)
@@ -23,17 +29,28 @@ type State =
   | { kind: 'ready'; thankyou: HandoffThankyou }
   | { kind: 'failed'; error: string };
 
+// Pull the token from either URL shape. Both forms feed the same verify
+// endpoint; the difference is purely cosmetic / SMS-length.
+const SHORT_LINK_PATH = /^\/c\/([A-Za-z0-9_-]+)\/?$/;
+const readToken = (): string | null => {
+  const params = new URLSearchParams(window.location.search);
+  const fromQuery = params.get('token');
+  if (fromQuery) return fromQuery;
+  const match = window.location.pathname.match(SHORT_LINK_PATH);
+  return match ? match[1]! : null;
+};
+
 export function CheckoutComplete() {
   const [state, setState] = useState<State>({ kind: 'loading' });
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const params = new URLSearchParams(window.location.search);
-      const token = params.get('token');
+      const token = readToken();
       // Always strip the token from the URL once we've read it — single-use
-      // tokens have no business sitting in browser history.
-      if (token) window.history.replaceState({}, '', '/checkout-complete');
+      // tokens have no business sitting in browser history. Land on `/` so
+      // the user's back-button doesn't return them to a now-consumed URL.
+      if (token) window.history.replaceState({}, '', '/');
 
       if (!token) {
         if (!cancelled) setState({ kind: 'failed', error: 'no_token' });

@@ -106,14 +106,22 @@ test('fireWcPostPurchaseSms: golden path → mints a wc_checkout token and sends
   assert.equal(consoleSms.sent.length, sentBefore + 1, 'one new SMS sent');
   const sms = consoleSms.sent.at(-1)!;
   assert.equal(sms.to, '0541112222');
+  // Short-link URL shape from _plans/2026-06-22-sms-short-link.md:
+  //   ${CUSTOMER_BASE_URL}/c/<16-char base64url token>
   assert.match(
     sms.body,
-    new RegExp(`${env.CUSTOMER_BASE_URL.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/checkout-complete\\?token=`),
-    'SMS body must contain the magic link built from env.CUSTOMER_BASE_URL',
+    new RegExp(`${env.CUSTOMER_BASE_URL.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/c/[A-Za-z0-9_-]{16}\\b`),
+    'SMS body must contain the short magic link built from env.CUSTOMER_BASE_URL',
+  );
+  assert.equal(
+    sms.body.includes('/checkout-complete?token='),
+    false,
+    'legacy long-URL shape must be gone from new SMS sends',
   );
   // Single-card body uses the per-card teaser (count + expiry line).
   assert.match(sms.body, /הכרטיסייה שלך ב-Memesh נוצרה!/);
   assert.match(sms.body, /12 כניסות/);
+  assert.match(sms.body, /לצפייה באזור האישי: /);
 });
 
 test('fireWcPostPurchaseSms: smsOnPurchase=false → no token minted, no SMS sent', async () => {

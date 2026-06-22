@@ -102,9 +102,12 @@ export async function fireWcPostPurchaseSms(
       '[wc post-sale] minted handoff token',
     );
 
+    // Short-link path — see _plans/2026-06-22-sms-short-link.md. The
+    // 16-char token + /c/ path roughly halves the URL length, which Yanay
+    // flagged as visually noisy in the first SMS he received on 2026-06-22.
     // Link is https in production because config.ts refuses to boot when
     // CUSTOMER_BASE_URL is http:// or localhost in NODE_ENV=production.
-    const link = `${env.CUSTOMER_BASE_URL}/checkout-complete?token=${minted.raw}`;
+    const link = `${env.CUSTOMER_BASE_URL}/c/${minted.raw}`;
     const body = buildPostSaleSmsBody({ cards: input.cards, link });
 
     const res = await smsProvider.send({ to: input.customerPhone, body });

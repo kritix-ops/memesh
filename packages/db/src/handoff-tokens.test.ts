@@ -37,8 +37,12 @@ async function seedCustomer(db: TestDb): Promise<string> {
 
 test('generateRawHandoffToken returns a base64url string and matching sha256 hash', () => {
   const { raw, hash } = generateRawHandoffToken();
-  // 32 bytes -> base64url with no padding is 43 chars.
-  assert.equal(raw.length, 43);
+  // 12 bytes -> base64url with no padding is 16 chars. The shorter token
+  // is what lets the SMS magic link fit inside a single Hebrew-unicode
+  // segment. See _plans/2026-06-22-sms-short-link.md for the security
+  // analysis (96 bits is well above the threshold for single-use 24h
+  // tokens against a rate-limited verify endpoint).
+  assert.equal(raw.length, 16);
   assert.match(raw, /^[A-Za-z0-9_-]+$/);
   assert.equal(hash.length, 64);
   assert.match(hash, /^[0-9a-f]+$/);
@@ -67,7 +71,7 @@ test('mintHandoffToken stores a row and returns the raw token for the caller', a
     now: T0,
   });
   assert.equal(typeof minted.raw, 'string');
-  assert.equal(minted.raw.length, 43);
+  assert.equal(minted.raw.length, 16);
   assert.equal(minted.expiresAt.getTime(), T0.getTime() + 5 * 60 * 1000);
 });
 

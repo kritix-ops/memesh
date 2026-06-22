@@ -16,13 +16,19 @@ const DEFAULT_TTL_MS = 5 * 60 * 1000; // 5 minutes
 export type HandoffTokenSource = 'wc_checkout' | 'pos_sell';
 
 /**
- * Generate a fresh handoff token. 32 random bytes rendered as base64url
- * (43 chars, URL-safe, no padding). Returns BOTH the raw token (handed to
+ * Generate a fresh handoff token. 12 random bytes rendered as base64url
+ * (16 chars, URL-safe, no padding). Returns BOTH the raw token (handed to
  * the caller to put in the redirect URL) and its hash (stored in the DB).
  * The raw token must never be persisted.
+ *
+ * 96 bits of entropy is well above NIST SP 800-63B's 64-bit threshold for
+ * single-use tokens, and the verify endpoint is rate-limited (10/min) on
+ * top of the 24h TTL. We picked 96 instead of 128 to land an SMS URL that
+ * fits comfortably in one Hebrew-unicode SMS segment without sacrificing
+ * threat-model headroom. See _plans/2026-06-22-sms-short-link.md.
  */
 export const generateRawHandoffToken = (): { raw: string; hash: string } => {
-  const raw = randomBytes(32).toString('base64url');
+  const raw = randomBytes(12).toString('base64url');
   const hash = createHash('sha256').update(raw).digest('hex');
   return { raw, hash };
 };

@@ -17,8 +17,9 @@ export interface PostSaleSmsCard {
 
 /**
  * Build the post-sale SMS body. The `link` argument is expected to be
- * `${CUSTOMER_BASE_URL}/checkout-complete?token=<raw>` — built by the caller
- * so this function does not need access to env.
+ * `${CUSTOMER_BASE_URL}/c/<raw>` — built by the caller so this function
+ * does not need access to env. See _plans/2026-06-22-sms-short-link.md
+ * for the URL shape rationale.
  *
  * Body shape branches on card count:
  *   - 1 card: includes the per-card teaser (entry count + expiry) so the
@@ -38,14 +39,14 @@ export const buildPostSaleSmsBody = (opts: {
     // webhook path bails out before reaching here when no cards were
     // minted). If it ever happens, fall back to a safe link-only body
     // rather than throwing — the customer still gets a working magic link.
-    return `הכרטיסייה שלך ב-Memesh מוכנה! צפייה באזור האישי: ${opts.link}`;
+    return `הכרטיסייה שלך ב-Memesh מוכנה! לצפייה באזור האישי: ${opts.link}`;
   }
   if (opts.cards.length === 1) {
     const c = opts.cards[0]!;
     const expiryClause = c.expiresAt
       ? `, תוקף עד ${c.expiresAt.toISOString().slice(0, 10)}`
       : ' (ללא תפוגה)';
-    return `הכרטיסייה שלך ב-Memesh נוצרה! ${c.totalEntries} כניסות${expiryClause}. צפייה בכרטיסייה: ${opts.link}`;
+    return `הכרטיסייה שלך ב-Memesh נוצרה! ${c.totalEntries} כניסות${expiryClause}. לצפייה באזור האישי: ${opts.link}`;
   }
   return `נוצרו ${opts.cards.length} כרטיסיות חדשות ב-Memesh! לצפייה באזור האישי: ${opts.link}`;
 };

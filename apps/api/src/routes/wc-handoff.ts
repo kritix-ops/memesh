@@ -60,7 +60,11 @@ const mintSchema = z.object({
 });
 
 const verifySchema = z.object({
-  token: z.string().min(20).max(100),
+  // Min 12 covers the new 16-char short tokens (12-byte base64url) AND the
+  // legacy 43-char ones (32-byte base64url) still in flight during the
+  // 24h tail after the 2026-06-22 short-link cutover. Max 100 stays as a
+  // defense-in-depth cap against pathological inputs.
+  token: z.string().min(12).max(100),
 });
 
 const constantTimeStringEqual = (a: string, b: string): boolean => {

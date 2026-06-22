@@ -233,7 +233,10 @@ export const cardsRoutes: FastifyPluginAsync = async (fastify) => {
           },
           '[cards post-sale] minted handoff token',
         );
-        const link = `${env.CUSTOMER_BASE_URL}/checkout-complete?token=${minted.raw}`;
+        // Short-link path — see _plans/2026-06-22-sms-short-link.md.
+        // The 16-char token + /c/ path keeps the SMS body inside a single
+        // Hebrew-unicode segment instead of bleeding into a second.
+        const link = `${env.CUSTOMER_BASE_URL}/c/${minted.raw}`;
         const body = buildPostSaleSmsBody({
           cards: [{ totalEntries: card.totalEntries, expiresAt: card.expiresAt }],
           link,
