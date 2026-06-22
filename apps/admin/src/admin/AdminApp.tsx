@@ -2057,8 +2057,13 @@ function CustomerDetailModal({
 }
 
 function humanizeCustomerDeleteError(code: string): string {
+  if (code === 'has_active_cards')
+    return 'לא ניתן למחוק — ללקוח יש כרטיסיות פעילות. בטלו את כל הכרטיסיות הפעילות לפני המחיקה.';
+  // 'has_dependents' is the legacy error code from before the
+  // cancellation-gated cascade (2026-06-22). Kept here so a stale frontend
+  // bundle still shows a sensible message during the deploy window.
   if (code === 'has_dependents')
-    return 'לא ניתן למחוק — ללקוח יש כרטיסיות בהיסטוריה. בטלו את כל הכרטיסיות לפני המחיקה.';
+    return 'לא ניתן למחוק — ללקוח יש כרטיסיות פעילות. בטלו את כל הכרטיסיות הפעילות לפני המחיקה.';
   if (code === 'not_found') return 'הלקוח לא נמצא. רעננו את הדף.';
   if (code === 'forbidden') return 'רק מנהל או אדמין יכולים למחוק לקוח.';
   return 'תקלה זמנית. נסו שוב בעוד רגע.';
@@ -2089,9 +2094,19 @@ function DeleteCustomerModal({
   };
 
   return (
+    // Backdrop click closes the confirmation (matches the parent
+    // CustomerDetailModal pattern). stopPropagation on the inner panel is
+    // critical: without it, clicks on the red מחק button bubble up to the
+    // parent CustomerDetailModal's `onClick={onClose}` backdrop handler and
+    // unmount everything BEFORE the async deleteCustomerById() can finish,
+    // so the user sees "modal disappeared, nothing happened" — the bug
+    // Yanay reported on 2026-06-22 as "מחק לא מגיב ולא מוחק".
     <div
       role="dialog"
       aria-modal="true"
+      onClick={() => {
+        if (!submitting) onClose();
+      }}
       style={{
         position: 'fixed',
         inset: 0,
@@ -2103,6 +2118,7 @@ function DeleteCustomerModal({
       }}
     >
       <div
+        onClick={(e) => e.stopPropagation()}
         style={{
           background: '#fff',
           borderRadius: 16,

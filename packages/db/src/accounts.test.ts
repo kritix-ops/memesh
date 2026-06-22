@@ -5,6 +5,7 @@ import { drizzle } from 'drizzle-orm/pglite';
 import { migrate } from 'drizzle-orm/pglite/migrator';
 import {
   createStaff,
+  deleteCustomer,
   getCustomerById,
   getStaffByEmailWithSecret,
   getStaffById,
@@ -14,7 +15,17 @@ import {
   updateCustomerProfile,
   updateStaff,
 } from './accounts';
-import { createCustomer } from './cards';
+import { cancelCard, createCustomer, createPunchCard } from './cards';
+import { punchCardEntries, punchCards } from './schema/index';
+import { eq } from 'drizzle-orm';
+import type { KeyResolver } from '@memesh/qr-engine';
+
+// Test signing key. Just enough surface for createPunchCard to mint a token.
+const TEST_SECRET = 'test-secret-that-is-at-least-32-characters';
+const resolver: KeyResolver = {
+  resolveSigningKey: () => ({ keyId: 'test-key', secret: TEST_SECRET }),
+  resolveVerifyKey: (keyId) => (keyId === 'test-key' ? TEST_SECRET : undefined),
+};
 
 async function freshDb() {
   const client = new PGlite();
@@ -220,4 +231,147 @@ test('getCustomerById returns the customer or undefined', async () => {
   assert.equal(found.id, customer.id);
   const missing = await getCustomerById(db, '00000000-0000-0000-0000-000000000000');
   assert.equal(missing, undefined);
+});
+
+// ---------------------------------------------------------------------------
+// deleteCustomer — cancellation-gated cascade
+//
+// Yanay bug report 2026-06-22: cancelling a customer's card and then trying
+// to delete the customer would fail with `has_dependents` because the raw
+// DELETE was blocked by the punch_cards FK regardless of cancellation
+// state. After the fix, cancelled cards no longer block — only ACTIVE
+// (cancelledAt IS NULL) cards do.
+// ---------------------------------------------------------------------------
+
+test('deleteCustomer: customer with no cards → ok, customer row gone', async () => {
+  const db = await freshDb();
+  const customer = await createCustomer(db, {
+    firstName: 'Avi',
+    lastName: 'Cohen',
+    phone: phone(),
+  });
+  const res = await deleteCustomer(db, customer.id);
+  assert.equal(res.ok, true);
+  if (res.ok) assert.equal(res.id, customer.id);
+  assert.equal(await getCustomerById(db, customer.id), undefined);
+});
+
+test('deleteCustomer: unknown id → not_found', async () => {
+  const db = await freshDb();
+  const res = await deleteCustomer(db, '00000000-0000-0000-0000-000000000000');
+  assert.equal(res.ok, false);
+  if (!res.ok) assert.equal(res.reason, 'not_found');
+});
+
+test('deleteCustomer: one ACTIVE card → has_active_cards (count=1), customer preserved', async () => {
+  const db = await freshDb();
+  const customer = await createCustomer(db, {
+    firstName: 'Noa',
+    lastName: 'Levi',
+    phone: phone(),
+  });
+  await createPunchCard(db, resolver, { customerId: customer.id });
+
+  const res = await deleteCustomer(db, customer.id);
+  assert.equal(res.ok, false);
+  if (!res.ok) {
+    assert.equal(res.reason, 'has_active_cards');
+    if (res.reason === 'has_active_cards') {
+      assert.equal(res.activeCount, 1);
+    }
+  }
+  // Customer + card both still there — the block is a soft check, no writes.
+  assert.ok(await getCustomerById(db, customer.id));
+  const cards = await db.select().from(punchCards).where(eq(punchCards.customerId, customer.id));
+  assert.equal(cards.length, 1);
+});
+
+test('deleteCustomer: ALL cards cancelled → ok, customer + cards cascade-deleted', async () => {
+  // The bug Yanay reported: this case used to throw an FK violation. After
+  // the fix it succeeds and the cards are gone too.
+  const db = await freshDb();
+  const customer = await createCustomer(db, {
+    firstName: 'Yoav',
+    lastName: 'Mizrachi',
+    phone: phone(),
+  });
+  const card = await createPunchCard(db, resolver, { customerId: customer.id });
+  const cancelRes = await cancelCard(db, {
+    cardId: card.id,
+    reason: 'test cancellation for delete flow',
+  });
+  assert.equal(cancelRes.ok, true);
+
+  const res = await deleteCustomer(db, customer.id);
+  assert.equal(res.ok, true);
+
+  assert.equal(await getCustomerById(db, customer.id), undefined);
+  const cards = await db.select().from(punchCards).where(eq(punchCards.customerId, customer.id));
+  assert.equal(cards.length, 0, 'cancelled card must be cascade-deleted with the customer');
+});
+
+test('deleteCustomer: cancelled card with entries → entries also wiped (FK respected)', async () => {
+  // The cascade chain is entries → cards → customer. Without wiping entries
+  // first the FK on punch_card_entries.punch_card_id would block the card
+  // delete, which would in turn block the customer delete.
+  const db = await freshDb();
+  const customer = await createCustomer(db, {
+    firstName: 'Maya',
+    lastName: 'Adar',
+    phone: phone(),
+  });
+  const card = await createPunchCard(db, resolver, { customerId: customer.id });
+
+  // Insert a punch entry directly. We don't need the full punchCard()
+  // domain logic here — the cascade behavior is independent of how the
+  // entry got there.
+  await db.insert(punchCardEntries).values({
+    punchCardId: card.id,
+    method: 'manual',
+    entriesConsumed: 1,
+  });
+
+  await cancelCard(db, {
+    cardId: card.id,
+    reason: 'cancel after a punch was recorded',
+  });
+
+  const res = await deleteCustomer(db, customer.id);
+  assert.equal(res.ok, true);
+
+  // All three rows gone in one transaction.
+  assert.equal(await getCustomerById(db, customer.id), undefined);
+  const cards = await db.select().from(punchCards).where(eq(punchCards.customerId, customer.id));
+  assert.equal(cards.length, 0);
+  const entries = await db
+    .select()
+    .from(punchCardEntries)
+    .where(eq(punchCardEntries.punchCardId, card.id));
+  assert.equal(entries.length, 0);
+});
+
+test('deleteCustomer: mix of active + cancelled cards → block, count only the active', async () => {
+  const db = await freshDb();
+  const customer = await createCustomer(db, {
+    firstName: 'Tal',
+    lastName: 'Bar',
+    phone: phone(),
+  });
+  const cancelled = await createPunchCard(db, resolver, { customerId: customer.id });
+  await cancelCard(db, { cardId: cancelled.id, reason: 'cancel one card only' });
+  // Second card stays active.
+  await createPunchCard(db, resolver, { customerId: customer.id });
+
+  const res = await deleteCustomer(db, customer.id);
+  assert.equal(res.ok, false);
+  if (!res.ok && res.reason === 'has_active_cards') {
+    assert.equal(res.activeCount, 1, 'only the non-cancelled card is counted');
+  } else {
+    assert.fail(`expected has_active_cards, got ${JSON.stringify(res)}`);
+  }
+
+  // Defensive: the cancelled card was NOT deleted by the failed attempt.
+  // (The block must be a no-op write-wise.)
+  const cards = await db.select().from(punchCards).where(eq(punchCards.customerId, customer.id));
+  assert.equal(cards.length, 2);
 });

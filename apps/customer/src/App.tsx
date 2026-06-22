@@ -9,18 +9,30 @@ import { CustomerApp } from './customer/CustomerApp';
 // own login UI (OTP) and its own sign-out button, so the shell only
 // provides the brand chrome and the RTL container.
 //
-// One dedicated route exists in addition to the default landing: the
-// WooCommerce post-checkout handoff at /checkout-complete. That page
-// exchanges the URL token for a session cookie and forwards the buyer
-// to the regular customer area. Anything else lands on CustomerApp.
+// Two paths share the CheckoutComplete handler — both exchange a URL token
+// for a session cookie and forward the buyer to the regular customer area:
+//   /checkout-complete?token=<token>   legacy long-URL (WP browser-redirect
+//                                       after WC checkout + in-flight SMS
+//                                       links from before the 2026-06-22
+//                                       short-link cutover)
+//   /c/<token>                         current SMS magic-link path (the
+//                                       short 16-char token form)
+// Anything else lands on CustomerApp.
 
 // The WordPress marketing/shop site. Both the logo (left-of-RTL = visual
 // right) and the explicit "shop" button on the other end of the header
 // route here, so the customer area never feels like a one-way street.
 const MAIN_SITE_URL = 'https://memesh.co.il';
 
-const isCheckoutComplete = (): boolean =>
-  typeof window !== 'undefined' && window.location.pathname === '/checkout-complete';
+// base64url alphabet for the short-link path. Anchored end-to-end so a
+// stray dot or fragment (`/c/abc.png`) doesn't accidentally match.
+const SHORT_LINK_PATH = /^\/c\/[A-Za-z0-9_-]+\/?$/;
+
+const isCheckoutComplete = (): boolean => {
+  if (typeof window === 'undefined') return false;
+  const p = window.location.pathname;
+  return p === '/checkout-complete' || SHORT_LINK_PATH.test(p);
+};
 
 export function App() {
   return (

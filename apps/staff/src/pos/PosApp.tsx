@@ -757,7 +757,17 @@ export function PosApp() {
   return (
     <>
       <main style={{ maxWidth: 920, margin: '0 auto', padding: '24px 20px 64px' }}>
-        {screen === 'home' && <Home />}
+        {screen === 'home' && (
+          <Home
+            firstName={sessionUser?.firstName}
+            requireSellerPin={sellControls.requireSellerPin}
+            onGoSearch={() => setScreen('search')}
+            onGoNew={() => setScreen('new')}
+            onGoScan={() => setScreen('scan')}
+            onSwitchCashier={switchCashier}
+            onOpenSelfPinModal={() => setSelfPinModalOpen(true)}
+          />
+        )}
         {screen === 'search' && (
           <Search
             query={query}
@@ -769,7 +779,33 @@ export function PosApp() {
             onClose={() => setScreen('home')}
           />
         )}
-        {screen === 'customer' && <Customer />}
+        {screen === 'customer' && (
+          <Customer
+            detailLoading={detailLoading}
+            detail={detail}
+            detailError={detailError}
+            punchStatus={punchStatus}
+            askPunch={askPunch}
+            punching={punching}
+            refundEntryId={refundEntryId}
+            refundSubmitting={refundSubmitting}
+            refundError={refundError}
+            isAdmin={sessionUser?.role === 'admin'}
+            onBackToSearch={() => setScreen('search')}
+            onPunch={openPunch}
+            onConfirmPunch={confirmPunch}
+            onClosePunchModal={() => setAskPunch(false)}
+            onSellNew={sellNewForSelectedCustomer}
+            onOpenRefund={(entryId) => {
+              setRefundError(null);
+              setRefundEntryId(entryId);
+            }}
+            onCloseRefundModal={closeRefundModal}
+            onSubmitRefund={(cardId, entryId, reason, adminPassword) =>
+              void submitRefund(cardId, entryId, reason, adminPassword)
+            }
+          />
+        )}
         {screen === 'new' && (
           <NewCustomer
             newFirst={newFirst}
@@ -840,422 +876,6 @@ export function PosApp() {
     </>
   );
 
-  function Home() {
-    const tiles = [
-      {
-        label: 'חיפוש לקוח',
-        sub: 'לפי שם, טלפון או מספר',
-        bg: 'linear-gradient(160deg,#fff,#fff8f3)',
-        border: '#ffe3d4',
-        tint: '#fff4ee',
-        onClick: () => setScreen('search'),
-      },
-      {
-        label: 'לקוח חדש',
-        sub: 'רישום ומכירת כרטיסייה',
-        bg: 'linear-gradient(160deg,#fff,#f8fbef)',
-        border: '#e7eed6',
-        tint: '#f3f7e8',
-        onClick: () => setScreen('new'),
-      },
-      {
-        label: 'סריקת QR',
-        sub: 'ניקוב כניסה מהיר',
-        bg: ORANGE,
-        border: ORANGE,
-        tint: 'rgba(255,255,255,0.28)',
-        onClick: () => setScreen('scan'),
-      },
-    ];
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'flex-start',
-            justifyContent: 'space-between',
-            gap: 12,
-            flexWrap: 'wrap',
-          }}
-        >
-          <div>
-            <div style={{ fontSize: 24, fontWeight: 600 }}>
-              {greetingFor(new Date())}
-              {sessionUser ? `, ${sessionUser.firstName}` : ''}
-            </div>
-            <div style={{ color: MUTED, marginTop: 4 }}>{hebrewDate(new Date())}</div>
-          </div>
-          {sellControls.requireSellerPin && (
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              <button
-                type="button"
-                onClick={switchCashier}
-                title="מחק את הקוד שנזכר בדפדפן כדי שהקופאי הבא יזין את שלו"
-                style={{
-                  border: '1.5px solid #e9e0d9',
-                  background: '#fff',
-                  color: MUTED,
-                  borderRadius: 10,
-                  padding: '8px 14px',
-                  fontWeight: 600,
-                  fontSize: 13,
-                  cursor: 'pointer',
-                }}
-              >
-                החלף קופאי
-              </button>
-              <button
-                type="button"
-                onClick={() => setSelfPinModalOpen(true)}
-                style={{
-                  border: '1.5px solid #e9e0d9',
-                  background: '#fff',
-                  color: MUTED,
-                  borderRadius: 10,
-                  padding: '8px 14px',
-                  fontWeight: 600,
-                  fontSize: 13,
-                  cursor: 'pointer',
-                }}
-              >
-                ניהול הקוד שלי
-              </button>
-            </div>
-          )}
-        </div>
-        <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
-          <Stat label="כניסות היום" value="0" />
-          <Stat label="כרטיסיות שנמכרו היום" value="0" />
-        </div>
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))',
-            gap: 16,
-          }}
-        >
-          {tiles.map((t) => {
-            const onOrange = t.label === 'סריקת QR';
-            return (
-              <button
-                key={t.label}
-                onClick={t.onClick}
-                style={{
-                  cursor: 'pointer',
-                  textAlign: 'right',
-                  border: `1px solid ${t.border}`,
-                  background: t.bg,
-                  borderRadius: 18,
-                  boxShadow: SHADOW,
-                  padding: '28px 24px',
-                  minHeight: 180,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  justifyContent: 'space-between',
-                  color: onOrange ? '#fff' : INK,
-                }}
-              >
-                <div
-                  style={{
-                    width: 56,
-                    height: 56,
-                    borderRadius: 16,
-                    background: t.tint,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                  }}
-                >
-                  <Sun size={34} ring={!onOrange} />
-                </div>
-                <div>
-                  <div style={{ fontSize: 22, fontWeight: 600 }}>{t.label}</div>
-                  <div
-                    style={{
-                      fontSize: 14,
-                      marginTop: 4,
-                      color: onOrange ? 'rgba(255,255,255,0.9)' : MUTED,
-                    }}
-                  >
-                    {t.sub}
-                  </div>
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-    );
-  }
-
-
-  function Customer() {
-    if (detailLoading) {
-      return (
-        <div>
-          <BackBar label="חזרה לחיפוש" onClick={() => setScreen('search')} />
-          <div style={{ ...card, textAlign: 'center', color: MUTED }}>טוען פרטי לקוח…</div>
-        </div>
-      );
-    }
-    if (detailError || !detail) {
-      return (
-        <div>
-          <BackBar label="חזרה לחיפוש" onClick={() => setScreen('search')} />
-          <div style={{ ...card, textAlign: 'center', color: '#a23a3a' }}>
-            לא הצלחנו לטעון את פרטי הלקוח. חזרו לחיפוש ונסו שוב.
-          </div>
-        </div>
-      );
-    }
-    const { customer: cust, cards, entries } = detail;
-    const a = realAvatar(cust.id);
-    const activeCard = pickActiveCard(cards);
-    return (
-      <div>
-        <BackBar label="חזרה לחיפוש" onClick={() => setScreen('search')} />
-        <div style={{ ...card, display: 'flex', alignItems: 'center', gap: 14, marginBottom: 16 }}>
-          <div
-            style={{
-              width: 52,
-              height: 52,
-              borderRadius: 14,
-              background: a.bg,
-              color: a.color,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontWeight: 600,
-              fontSize: 18,
-            }}
-          >
-            {realInitials(cust)}
-          </div>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 20, fontWeight: 600 }}>{realFullName(cust)}</div>
-            <div style={{ fontSize: 14, color: MUTED }}>
-              {cust.phone} · {cust.customerNumber}
-            </div>
-          </div>
-        </div>
-
-        {activeCard ? (
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit,minmax(260px,1fr))',
-              gap: 16,
-            }}
-          >
-            <div
-              style={{
-                ...card,
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                gap: 14,
-              }}
-            >
-              <PunchCard used={activeCard.usedEntries} total={activeCard.totalEntries} />
-              <button
-                onClick={openPunch}
-                disabled={!activeCard.isActive || activeCard.usedEntries >= activeCard.totalEntries}
-                style={{
-                  ...primaryBtn,
-                  width: '100%',
-                  opacity:
-                    !activeCard.isActive || activeCard.usedEntries >= activeCard.totalEntries
-                      ? 0.5
-                      : 1,
-                  cursor:
-                    !activeCard.isActive || activeCard.usedEntries >= activeCard.totalEntries
-                      ? 'not-allowed'
-                      : 'pointer',
-                }}
-              >
-                ניקוב כניסה
-              </button>
-              {punchStatus?.kind === 'success' && (
-                <div
-                  role="status"
-                  style={{ fontSize: 13, color: '#6f8f37', fontWeight: 600, textAlign: 'center' }}
-                >
-                  ✓ נוצב · נותרו {punchStatus.remaining}
-                </div>
-              )}
-              {punchStatus?.kind === 'error' && (
-                <div role="alert" style={{ fontSize: 13, color: '#a23a3a', textAlign: 'center' }}>
-                  {punchStatus.message}
-                </div>
-              )}
-            </div>
-            <div
-              style={{
-                ...card,
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                gap: 10,
-              }}
-            >
-              <MemeshQr
-                value={activeCard.qrToken}
-                size={200}
-                title={`קוד QR — ${activeCard.serialNumber}`}
-              />
-              <div style={{ fontSize: 13, color: MUTED }}>{activeCard.serialNumber}</div>
-              <div style={{ fontSize: 13, color: MUTED }}>
-                {activeCard.expiresAt === null
-                  ? 'ללא תפוגה'
-                  : `תוקף עד ${fmtDate(yyyyMmDd(activeCard.expiresAt))}`}
-              </div>
-            </div>
-          </div>
-        ) : (
-          <div
-            style={{
-              ...card,
-              textAlign: 'center',
-              color: MUTED,
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 14,
-              alignItems: 'center',
-            }}
-          >
-            <div>ללקוח אין כרטיסייה פעילה.</div>
-            <button
-              style={{ ...primaryBtn, padding: '12px 24px' }}
-              onClick={sellNewForSelectedCustomer}
-            >
-              מכירת כרטיסייה חדשה
-            </button>
-          </div>
-        )}
-
-        <div style={{ ...card, marginTop: 16 }}>
-          <div style={{ fontWeight: 600, marginBottom: 10 }}>היסטוריית כניסות</div>
-          {entries.length === 0 && (
-            <div style={{ color: MUTED, fontSize: 14 }}>אין כניסות עדיין.</div>
-          )}
-          {entries.map((h, i) => {
-            const refunded = h.refundedAt !== null;
-            return (
-              <div
-                key={h.id}
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  gap: 10,
-                  padding: '8px 0',
-                  borderTop: i ? '1px solid #f3efea' : 'none',
-                  fontSize: 14,
-                  opacity: refunded ? 0.55 : 1,
-                }}
-              >
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div
-                    style={{
-                      textDecoration: refunded ? 'line-through' : 'none',
-                    }}
-                  >
-                    {fmtDate(yyyyMmDd(h.punchedAt))} · {hhMm(h.punchedAt)}
-                    <span style={{ color: MUTED, marginInlineStart: 8 }}>
-                      · {entriesLabel(h.entriesConsumed)}
-                    </span>
-                  </div>
-                  {refunded && (
-                    <div style={{ fontSize: 12.5, color: '#a23a3a', marginTop: 2 }}>
-                      הוחזר{h.refundReason ? ` · ${h.refundReason}` : ''}
-                    </div>
-                  )}
-                </div>
-                {!refunded && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setRefundError(null);
-                      setRefundEntryId(h.id);
-                    }}
-                    style={{
-                      border: '1.5px solid #e9e0d9',
-                      background: '#fff',
-                      color: MUTED,
-                      borderRadius: 8,
-                      padding: '5px 10px',
-                      fontWeight: 600,
-                      fontSize: 12.5,
-                      cursor: 'pointer',
-                      flexShrink: 0,
-                    }}
-                  >
-                    החזר
-                  </button>
-                )}
-              </div>
-            );
-          })}
-        </div>
-
-        <div style={{ ...card, marginTop: 16 }}>
-          <div style={{ fontWeight: 600, marginBottom: 8 }}>ילדים</div>
-          {cust.children.length === 0 ? (
-            <div style={{ fontSize: 14, color: MUTED }}>לא נרשמו ילדים.</div>
-          ) : (
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              {cust.children.map((k) => (
-                <span
-                  key={k.name}
-                  style={{
-                    background: '#f3f7e8',
-                    color: '#6f8f37',
-                    borderRadius: 10,
-                    padding: '6px 12px',
-                    fontSize: 13.5,
-                  }}
-                >
-                  {k.name}
-                </span>
-              ))}
-            </div>
-          )}
-          <div style={{ fontWeight: 600, margin: '14px 0 6px' }}>הערת צוות פנימית</div>
-          <div style={{ fontSize: 14, color: MUTED }}>{cust.internalNotes || 'אין הערות.'}</div>
-        </div>
-
-        {askPunch && activeCard && (
-          <PunchConfirmModal
-            onClose={() => setAskPunch(false)}
-            onConfirm={confirmPunch}
-            submitting={punching}
-            maxEntries={Math.max(1, activeCard.totalEntries - activeCard.usedEntries)}
-          />
-        )}
-
-        {refundEntryId &&
-          (() => {
-            const target = entries.find((e) => e.id === refundEntryId);
-            if (!target) return null;
-            const summary = `${fmtDate(yyyyMmDd(target.punchedAt))} · ${hhMm(target.punchedAt)} · ${entriesLabel(
-              target.entriesConsumed,
-            )}`;
-            return (
-              <RefundEntryModal
-                entrySummary={summary}
-                selfApprove={sessionUser?.role === 'admin'}
-                submitting={refundSubmitting}
-                error={refundError}
-                onClose={closeRefundModal}
-                onConfirm={(reason, password) =>
-                  void submitRefund(target.punchCardId, target.id, reason, password)
-                }
-              />
-            );
-          })()}
-      </div>
-    );
-  }
 
 }
 
@@ -1294,6 +914,176 @@ function Stat({ label, value }: { label: string; value: string }) {
     <div style={{ ...card, padding: '14px 22px', minWidth: 150 }}>
       <div style={{ fontSize: 30, fontWeight: 600, color: ORANGE }}>{value}</div>
       <div style={{ fontSize: 13.5, color: MUTED, marginTop: 2 }}>{label}</div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Home — POS landing screen: greeting, two daily stats, three primary tiles
+// (search / new customer / scan), and the cashier PIN management strip.
+// Pure presentation; everything else is driven by parent props.
+// ---------------------------------------------------------------------------
+
+function Home({
+  firstName,
+  requireSellerPin,
+  onGoSearch,
+  onGoNew,
+  onGoScan,
+  onSwitchCashier,
+  onOpenSelfPinModal,
+}: {
+  firstName: string | undefined;
+  requireSellerPin: boolean;
+  onGoSearch: () => void;
+  onGoNew: () => void;
+  onGoScan: () => void;
+  onSwitchCashier: () => void;
+  onOpenSelfPinModal: () => void;
+}) {
+  const tiles = [
+    {
+      label: 'חיפוש לקוח',
+      sub: 'לפי שם, טלפון או מספר',
+      bg: 'linear-gradient(160deg,#fff,#fff8f3)',
+      border: '#ffe3d4',
+      tint: '#fff4ee',
+      onClick: onGoSearch,
+    },
+    {
+      label: 'לקוח חדש',
+      sub: 'רישום ומכירת כרטיסייה',
+      bg: 'linear-gradient(160deg,#fff,#f8fbef)',
+      border: '#e7eed6',
+      tint: '#f3f7e8',
+      onClick: onGoNew,
+    },
+    {
+      label: 'סריקת QR',
+      sub: 'ניקוב כניסה מהיר',
+      bg: ORANGE,
+      border: ORANGE,
+      tint: 'rgba(255,255,255,0.28)',
+      onClick: onGoScan,
+    },
+  ];
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'flex-start',
+          justifyContent: 'space-between',
+          gap: 12,
+          flexWrap: 'wrap',
+        }}
+      >
+        <div>
+          <div style={{ fontSize: 24, fontWeight: 600 }}>
+            {greetingFor(new Date())}
+            {firstName ? `, ${firstName}` : ''}
+          </div>
+          <div style={{ color: MUTED, marginTop: 4 }}>{hebrewDate(new Date())}</div>
+        </div>
+        {requireSellerPin && (
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              onClick={onSwitchCashier}
+              title="מחק את הקוד שנזכר בדפדפן כדי שהקופאי הבא יזין את שלו"
+              style={{
+                border: '1.5px solid #e9e0d9',
+                background: '#fff',
+                color: MUTED,
+                borderRadius: 10,
+                padding: '8px 14px',
+                fontWeight: 600,
+                fontSize: 13,
+                cursor: 'pointer',
+              }}
+            >
+              החלף קופאי
+            </button>
+            <button
+              type="button"
+              onClick={onOpenSelfPinModal}
+              style={{
+                border: '1.5px solid #e9e0d9',
+                background: '#fff',
+                color: MUTED,
+                borderRadius: 10,
+                padding: '8px 14px',
+                fontWeight: 600,
+                fontSize: 13,
+                cursor: 'pointer',
+              }}
+            >
+              ניהול הקוד שלי
+            </button>
+          </div>
+        )}
+      </div>
+      <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
+        <Stat label="כניסות היום" value="0" />
+        <Stat label="כרטיסיות שנמכרו היום" value="0" />
+      </div>
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))',
+          gap: 16,
+        }}
+      >
+        {tiles.map((t) => {
+          const onOrange = t.label === 'סריקת QR';
+          return (
+            <button
+              key={t.label}
+              onClick={t.onClick}
+              style={{
+                cursor: 'pointer',
+                textAlign: 'right',
+                border: `1px solid ${t.border}`,
+                background: t.bg,
+                borderRadius: 18,
+                boxShadow: SHADOW,
+                padding: '28px 24px',
+                minHeight: 180,
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'space-between',
+                color: onOrange ? '#fff' : INK,
+              }}
+            >
+              <div
+                style={{
+                  width: 56,
+                  height: 56,
+                  borderRadius: 16,
+                  background: t.tint,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <Sun size={34} />
+              </div>
+              <div>
+                <div style={{ fontSize: 22, fontWeight: 600 }}>{t.label}</div>
+                <div
+                  style={{
+                    fontSize: 14,
+                    marginTop: 4,
+                    color: onOrange ? 'rgba(255,255,255,0.9)' : MUTED,
+                  }}
+                >
+                  {t.sub}
+                </div>
+              </div>
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -1598,6 +1388,321 @@ function NewCustomerExtras({
           </label>
         </div>
       )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Customer — detail view: header, active card + QR, entries history, kids
+// section, refund modal, punch modal. The punch and refund flows live on
+// PosApp (idempotency keys, status timers) so callbacks travel as props.
+// ---------------------------------------------------------------------------
+
+type CustomerPunchStatus =
+  | { kind: 'success'; remaining: number }
+  | { kind: 'error'; message: string };
+
+function Customer({
+  detailLoading,
+  detail,
+  detailError,
+  punchStatus,
+  askPunch,
+  punching,
+  refundEntryId,
+  refundSubmitting,
+  refundError,
+  isAdmin,
+  onBackToSearch,
+  onPunch,
+  onConfirmPunch,
+  onClosePunchModal,
+  onSellNew,
+  onOpenRefund,
+  onCloseRefundModal,
+  onSubmitRefund,
+}: {
+  detailLoading: boolean;
+  detail: CustomerDetailResponse | null;
+  detailError: string | null;
+  punchStatus: CustomerPunchStatus | null;
+  askPunch: boolean;
+  punching: boolean;
+  refundEntryId: string | null;
+  refundSubmitting: boolean;
+  refundError: string | null;
+  isAdmin: boolean;
+  onBackToSearch: () => void;
+  onPunch: () => void;
+  onConfirmPunch: (entries: number) => void;
+  onClosePunchModal: () => void;
+  onSellNew: () => void;
+  onOpenRefund: (entryId: string) => void;
+  onCloseRefundModal: () => void;
+  onSubmitRefund: (
+    cardId: string,
+    entryId: string,
+    reason: string,
+    adminPassword: string | undefined,
+  ) => void;
+}) {
+  if (detailLoading) {
+    return (
+      <div>
+        <BackBar label="חזרה לחיפוש" onClick={onBackToSearch} />
+        <div style={{ ...card, textAlign: 'center', color: MUTED }}>טוען פרטי לקוח…</div>
+      </div>
+    );
+  }
+  if (detailError || !detail) {
+    return (
+      <div>
+        <BackBar label="חזרה לחיפוש" onClick={onBackToSearch} />
+        <div style={{ ...card, textAlign: 'center', color: '#a23a3a' }}>
+          לא הצלחנו לטעון את פרטי הלקוח. חזרו לחיפוש ונסו שוב.
+        </div>
+      </div>
+    );
+  }
+  const { customer: cust, cards, entries } = detail;
+  const a = realAvatar(cust.id);
+  const activeCard = pickActiveCard(cards);
+  return (
+    <div>
+      <BackBar label="חזרה לחיפוש" onClick={onBackToSearch} />
+      <div style={{ ...card, display: 'flex', alignItems: 'center', gap: 14, marginBottom: 16 }}>
+        <div
+          style={{
+            width: 52,
+            height: 52,
+            borderRadius: 14,
+            background: a.bg,
+            color: a.color,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontWeight: 600,
+            fontSize: 18,
+          }}
+        >
+          {realInitials(cust)}
+        </div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 20, fontWeight: 600 }}>{realFullName(cust)}</div>
+          <div style={{ fontSize: 14, color: MUTED }}>
+            {cust.phone} · {cust.customerNumber}
+          </div>
+        </div>
+      </div>
+
+      {activeCard ? (
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit,minmax(260px,1fr))',
+            gap: 16,
+          }}
+        >
+          <div
+            style={{
+              ...card,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              gap: 14,
+            }}
+          >
+            <PunchCard used={activeCard.usedEntries} total={activeCard.totalEntries} />
+            <button
+              onClick={onPunch}
+              disabled={!activeCard.isActive || activeCard.usedEntries >= activeCard.totalEntries}
+              style={{
+                ...primaryBtn,
+                width: '100%',
+                opacity:
+                  !activeCard.isActive || activeCard.usedEntries >= activeCard.totalEntries
+                    ? 0.5
+                    : 1,
+                cursor:
+                  !activeCard.isActive || activeCard.usedEntries >= activeCard.totalEntries
+                    ? 'not-allowed'
+                    : 'pointer',
+              }}
+            >
+              ניקוב כניסה
+            </button>
+            {punchStatus?.kind === 'success' && (
+              <div
+                role="status"
+                style={{ fontSize: 13, color: '#6f8f37', fontWeight: 600, textAlign: 'center' }}
+              >
+                ✓ נוצב · נותרו {punchStatus.remaining}
+              </div>
+            )}
+            {punchStatus?.kind === 'error' && (
+              <div role="alert" style={{ fontSize: 13, color: '#a23a3a', textAlign: 'center' }}>
+                {punchStatus.message}
+              </div>
+            )}
+          </div>
+          <div
+            style={{
+              ...card,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              gap: 10,
+            }}
+          >
+            <MemeshQr
+              value={activeCard.qrToken}
+              size={200}
+              title={`קוד QR — ${activeCard.serialNumber}`}
+            />
+            <div style={{ fontSize: 13, color: MUTED }}>{activeCard.serialNumber}</div>
+            <div style={{ fontSize: 13, color: MUTED }}>
+              {activeCard.expiresAt === null
+                ? 'ללא תפוגה'
+                : `תוקף עד ${fmtDate(yyyyMmDd(activeCard.expiresAt))}`}
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div
+          style={{
+            ...card,
+            textAlign: 'center',
+            color: MUTED,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 14,
+            alignItems: 'center',
+          }}
+        >
+          <div>ללקוח אין כרטיסייה פעילה.</div>
+          <button style={{ ...primaryBtn, padding: '12px 24px' }} onClick={onSellNew}>
+            מכירת כרטיסייה חדשה
+          </button>
+        </div>
+      )}
+
+      <div style={{ ...card, marginTop: 16 }}>
+        <div style={{ fontWeight: 600, marginBottom: 10 }}>היסטוריית כניסות</div>
+        {entries.length === 0 && (
+          <div style={{ color: MUTED, fontSize: 14 }}>אין כניסות עדיין.</div>
+        )}
+        {entries.map((h, i) => {
+          const refunded = h.refundedAt !== null;
+          return (
+            <div
+              key={h.id}
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                gap: 10,
+                padding: '8px 0',
+                borderTop: i ? '1px solid #f3efea' : 'none',
+                fontSize: 14,
+                opacity: refunded ? 0.55 : 1,
+              }}
+            >
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div
+                  style={{
+                    textDecoration: refunded ? 'line-through' : 'none',
+                  }}
+                >
+                  {fmtDate(yyyyMmDd(h.punchedAt))} · {hhMm(h.punchedAt)}
+                  <span style={{ color: MUTED, marginInlineStart: 8 }}>
+                    · {entriesLabel(h.entriesConsumed)}
+                  </span>
+                </div>
+                {refunded && (
+                  <div style={{ fontSize: 12.5, color: '#a23a3a', marginTop: 2 }}>
+                    הוחזר{h.refundReason ? ` · ${h.refundReason}` : ''}
+                  </div>
+                )}
+              </div>
+              {!refunded && (
+                <button
+                  type="button"
+                  onClick={() => onOpenRefund(h.id)}
+                  style={{
+                    border: '1.5px solid #e9e0d9',
+                    background: '#fff',
+                    color: MUTED,
+                    borderRadius: 8,
+                    padding: '5px 10px',
+                    fontWeight: 600,
+                    fontSize: 12.5,
+                    cursor: 'pointer',
+                    flexShrink: 0,
+                  }}
+                >
+                  החזר
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      <div style={{ ...card, marginTop: 16 }}>
+        <div style={{ fontWeight: 600, marginBottom: 8 }}>ילדים</div>
+        {cust.children.length === 0 ? (
+          <div style={{ fontSize: 14, color: MUTED }}>לא נרשמו ילדים.</div>
+        ) : (
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {cust.children.map((k) => (
+              <span
+                key={k.name}
+                style={{
+                  background: '#f3f7e8',
+                  color: '#6f8f37',
+                  borderRadius: 10,
+                  padding: '6px 12px',
+                  fontSize: 13.5,
+                }}
+              >
+                {k.name}
+              </span>
+            ))}
+          </div>
+        )}
+        <div style={{ fontWeight: 600, margin: '14px 0 6px' }}>הערת צוות פנימית</div>
+        <div style={{ fontSize: 14, color: MUTED }}>{cust.internalNotes || 'אין הערות.'}</div>
+      </div>
+
+      {askPunch && activeCard && (
+        <PunchConfirmModal
+          onClose={onClosePunchModal}
+          onConfirm={onConfirmPunch}
+          submitting={punching}
+          maxEntries={Math.max(1, activeCard.totalEntries - activeCard.usedEntries)}
+        />
+      )}
+
+      {refundEntryId &&
+        (() => {
+          const target = entries.find((e) => e.id === refundEntryId);
+          if (!target) return null;
+          const summary = `${fmtDate(yyyyMmDd(target.punchedAt))} · ${hhMm(target.punchedAt)} · ${entriesLabel(
+            target.entriesConsumed,
+          )}`;
+          return (
+            <RefundEntryModal
+              entrySummary={summary}
+              selfApprove={isAdmin}
+              submitting={refundSubmitting}
+              error={refundError}
+              onClose={onCloseRefundModal}
+              onConfirm={(reason, password) =>
+                onSubmitRefund(target.punchCardId, target.id, reason, password)
+              }
+            />
+          );
+        })()}
     </div>
   );
 }
@@ -2084,7 +2189,7 @@ function Sell({
           </div>
           <div style={{ fontSize: 22, fontWeight: 600, marginTop: 12 }}>הכרטיסייה נוצרה!</div>
           <div style={{ color: MUTED, fontSize: 14, marginTop: 6 }}>
-            הכרטיסייה זמינה בכרטיס הלקוח. שליחת ה-SMS עם ה-QR תיכנס בעדכון הבא.
+            הכרטיסייה זמינה בכרטיס הלקוח. נשלח ללקוח/ה SMS עם קישור אישי לצפייה בכרטיסייה.
           </div>
           <div style={{ display: 'flex', justifyContent: 'center', margin: '18px 0' }}>
             <MemeshQr

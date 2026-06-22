@@ -6,6 +6,7 @@ import {
   processWcOrderWebhook,
   type ProcessWcOrderWebhookResult,
 } from '../lib/wc-order-processor.js';
+import { fireWcPostPurchaseSms } from '../lib/wc-post-purchase-sms.js';
 import { envKeyResolver } from '../qr.js';
 
 // WC ships the webhook over `application/json`. We need byte-exact access to
@@ -121,6 +122,22 @@ export const webhooksWcRoutes: FastifyPluginAsync = async (fastify) => {
           },
           '[webhook wc] done',
         );
+        // Fire-and-log the post-purchase SMS magic link only when THIS
+        // delivery actually created cards. A duplicate webhook (different
+        // delivery id, same order, cards already minted by reconciliation
+        // or the inline /wc-handoff/mint path) returns 'processed' with
+        // cardsCreated: [] — we deliberately skip SMS there so the customer
+        // gets exactly one SMS per real purchase. See
+        // _plans/2026-06-22-wc-post-purchase-sms.md.
+        if (result.cardsCreated.length > 0) {
+          void fireWcPostPurchaseSms(db, {
+            customerId: result.customerId,
+            customerPhone: result.customerPhone,
+            orderId: result.orderId,
+            cards: result.cardsSummary,
+            log,
+          });
+        }
         return reply.send({
           ok: true,
           orderId: result.orderId,
