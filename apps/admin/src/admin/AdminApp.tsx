@@ -2089,9 +2089,19 @@ function DeleteCustomerModal({
   };
 
   return (
+    // Backdrop click closes the confirmation (matches the parent
+    // CustomerDetailModal pattern). stopPropagation on the inner panel is
+    // critical: without it, clicks on the red מחק button bubble up to the
+    // parent CustomerDetailModal's `onClick={onClose}` backdrop handler and
+    // unmount everything BEFORE the async deleteCustomerById() can finish,
+    // so the user sees "modal disappeared, nothing happened" — the bug
+    // Yanay reported on 2026-06-22 as "מחק לא מגיב ולא מוחק".
     <div
       role="dialog"
       aria-modal="true"
+      onClick={() => {
+        if (!submitting) onClose();
+      }}
       style={{
         position: 'fixed',
         inset: 0,
@@ -2103,6 +2113,7 @@ function DeleteCustomerModal({
       }}
     >
       <div
+        onClick={(e) => e.stopPropagation()}
         style={{
           background: '#fff',
           borderRadius: 16,
