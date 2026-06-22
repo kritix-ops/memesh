@@ -20,7 +20,7 @@ import { z } from 'zod';
 import { env } from '../config.js';
 import { requireRoleHook } from '../lib/auth-guards.js';
 import { envKeyResolver } from '../qr.js';
-import { buildPosSellSmsBody } from '../lib/post-sale-sms.js';
+import { buildPostSaleSmsBody } from '../lib/post-sale-sms.js';
 import { smsProvider } from '../lib/sms.js';
 import { verifyStaffPin } from '../lib/staff-pin-repo.js';
 
@@ -192,8 +192,16 @@ export const cardsRoutes: FastifyPluginAsync = async (fastify) => {
     //   - `smsOnPurchase` — operator master switch for "send any post-sale
     //     SMS at all" (cost control, dev envs, brand preference).
     //
+    // The cashier-facing success screen needs to reflect the smsOnPurchase
+    // kill-switch honestly — when the switch is off, promising an SMS that
+    // never gets sent is exactly the kind of trust hole the rule-16 audit is
+    // meant to close. We snapshot the flag at the moment of sale (the value
+    // the inner block will re-read could change between, but the response is
+    // what the cashier sees).
+    //
     // See _plans/2026-06-22-pos-sell-sms-magic-link.md for the design and
     // the decision record that flipped this from marketing to transactional.
+    const smsWillSend = settings.smsOnPurchase;
     void (async () => {
       try {
         const customer = await getCustomerById(db, parsed.data.customerId);
@@ -226,9 +234,8 @@ export const cardsRoutes: FastifyPluginAsync = async (fastify) => {
           '[cards post-sale] minted handoff token',
         );
         const link = `${env.CUSTOMER_BASE_URL}/checkout-complete?token=${minted.raw}`;
-        const body = buildPosSellSmsBody({
-          totalEntries: card.totalEntries,
-          expiresAt: card.expiresAt,
+        const body = buildPostSaleSmsBody({
+          cards: [{ totalEntries: card.totalEntries, expiresAt: card.expiresAt }],
           link,
         });
         const res = await smsProvider.send({ to: customer.phone, body });
@@ -248,7 +255,7 @@ export const cardsRoutes: FastifyPluginAsync = async (fastify) => {
       }
     })();
 
-    return reply.code(201).send({ card });
+    return reply.code(201).send({ card, smsWillSend });
   });
 
   // List cards joined with customer info, filtered by status. Read-only admin

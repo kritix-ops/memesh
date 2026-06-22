@@ -84,8 +84,17 @@ export type ProcessWcOrderWebhookResult =
       status: 'processed';
       orderId: string;
       customerId: string;
+      // Canonical 05XXXXXXXX form (post-normalization). The webhook route uses
+      // it to address the post-purchase SMS without re-querying the customer.
+      customerPhone: string;
       customerCreated: boolean;
       cardsCreated: string[];
+      // Per-card teaser data for the post-purchase SMS body. Same length and
+      // order as `cardsCreated` — i-th entry describes the card whose serial
+      // is at `cardsCreated[i]`. Empty when reconciliation got here first
+      // and no new cards were created in THIS delivery (the webhook route
+      // uses this to suppress duplicate SMS sends).
+      cardsSummary: Array<{ totalEntries: number; expiresAt: Date | null }>;
     };
 
 // Topics we react to. `order.created` covers gateways that mint orders
@@ -244,6 +253,7 @@ export const processWcOrderWebhook = async (
     let remaining = Math.max(0, totalNeeded - existingCount);
 
     const serials: string[] = [];
+    const cardsSummary: Array<{ totalEntries: number; expiresAt: Date | null }> = [];
     outer: for (const m of matched) {
       for (let i = 0; i < m.quantity; i += 1) {
         if (remaining <= 0) break outer;
@@ -256,6 +266,10 @@ export const processWcOrderWebhook = async (
           ...(input.now && { now: input.now }),
         });
         serials.push(card.serialNumber);
+        cardsSummary.push({
+          totalEntries: card.totalEntries,
+          expiresAt: card.expiresAt,
+        });
         remaining -= 1;
       }
     }
@@ -264,8 +278,10 @@ export const processWcOrderWebhook = async (
       status: 'processed',
       orderId: orderIdStr,
       customerId: customer.id,
+      customerPhone: customer.phone,
       customerCreated: created,
       cardsCreated: serials,
+      cardsSummary,
     };
   });
 };

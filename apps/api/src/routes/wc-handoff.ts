@@ -16,6 +16,7 @@ import { customerAuthConfig } from '../auth.js';
 import { env } from '../config.js';
 import { cookieScope } from '../lib/cookie-scope.js';
 import { processWcOrderWebhook } from '../lib/wc-order-processor.js';
+import { fireWcPostPurchaseSms } from '../lib/wc-post-purchase-sms.js';
 import { envKeyResolver } from '../qr.js';
 
 // WooCommerce checkout → my.memesh.co.il auto-login handoff.
@@ -129,6 +130,21 @@ export const wcHandoffRoutes: FastifyPluginAsync = async (fastify) => {
           { orderId: parsed.data.orderId, ...processorDiag },
           '[wc handoff inline-processor]',
         );
+        // Fire post-purchase SMS when THIS inline call actually created
+        // cards. The mint endpoint is the common case where cards are
+        // created first (WP thank-you page hook runs before the async
+        // webhook arrives), so SMS firing here is the typical path. The
+        // webhook arriving later returns processed with cardsCreated: []
+        // and naturally skips. See _plans/2026-06-22-wc-post-purchase-sms.md.
+        if (result.status === 'processed' && result.cardsCreated.length > 0) {
+          void fireWcPostPurchaseSms(db, {
+            customerId: result.customerId,
+            customerPhone: result.customerPhone,
+            orderId: result.orderId,
+            cards: result.cardsSummary,
+            log: request.log,
+          });
+        }
       }
 
       // Find the customer. Prefer normalized phone match (this is also the
