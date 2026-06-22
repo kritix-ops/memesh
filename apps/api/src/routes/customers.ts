@@ -113,10 +113,15 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
   );
 
   // Hard-delete a customer (admin/manager only). Cashiers cannot delete
-  // — they can only register new customers and punch cards. If the customer
-  // has cards (active, expired, or cancelled), Postgres throws an FK
-  // violation; we surface that as 409 so the operator knows to cancel/clean
-  // up cards first.
+  // — they can only register new customers and punch cards.
+  //
+  // Cancellation-gated cascade (Yanay bug report 2026-06-22): the repository
+  // function only blocks when at least one card is still ACTIVE (cancelled_at
+  // IS NULL). Cancelled cards no longer block — they get hard-deleted along
+  // with their punch entries inside the same transaction so the user's
+  // mental model ("I cancelled all my cards, now I can delete the customer")
+  // matches reality. Active cards still return 409 with `has_active_cards`
+  // so the operator gets a precise "cancel them first" message.
   fastify.delete(
     '/customers/:id',
     { preHandler: requireRoleHook('admin', 'manager') },
@@ -126,20 +131,26 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(400).send({ error: 'invalid_id' });
       }
       try {
-        const deleted = await deleteCustomer(db, id);
-        if (!deleted) return reply.code(404).send({ error: 'not_found' });
+        const result = await deleteCustomer(db, id);
+        if (!result.ok) {
+          if (result.reason === 'not_found') {
+            return reply.code(404).send({ error: 'not_found' });
+          }
+          if (result.reason === 'has_active_cards') {
+            request.log.info(
+              { id, activeCount: result.activeCount },
+              '[customers] delete blocked: active cards',
+            );
+            return reply.code(409).send({
+              error: 'has_active_cards',
+              activeCount: result.activeCount,
+            });
+          }
+        }
         request.log.info({ id }, '[customers] deleted');
         return { ok: true };
       } catch (err) {
-        const code =
-          err && typeof err === 'object' && 'code' in err
-            ? String((err as { code?: unknown }).code)
-            : '';
-        if (code === '23503') {
-          request.log.info({ id }, '[customers] delete blocked by FK (has cards)');
-          return reply.code(409).send({ error: 'has_dependents' });
-        }
-        request.log.warn({ err }, '[customers] delete failed');
+        request.log.warn({ err, id }, '[customers] delete failed');
         return reply.code(500).send({ error: 'delete_failed' });
       }
     },

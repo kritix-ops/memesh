@@ -1,6 +1,12 @@
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { PgDatabase } from 'drizzle-orm/pg-core';
-import { type ChildRecord, customers, staff } from './schema/index';
+import {
+  type ChildRecord,
+  customers,
+  punchCardEntries,
+  punchCards,
+  staff,
+} from './schema/index';
 
 type AnyPgDatabase = PgDatabase<any, any, any>;
 type StaffRole = 'admin' | 'manager' | 'cashier';
@@ -181,16 +187,66 @@ export const countActiveAdmins = async (db: AnyPgDatabase): Promise<number> => {
 };
 
 /**
- * Hard-delete a customer row. Returns the deleted row's id (or undefined if
- * no row matched). Will throw on FK violations from punch_cards.customerId —
- * the route layer surfaces that as a 409.
+ * Hard-delete a customer, cascading through their cancelled punch cards.
+ *
+ * Discriminated result:
+ *   - { ok: false, reason: 'not_found' } — no customer with that id.
+ *   - { ok: false, reason: 'has_active_cards', activeCount } — at least one
+ *     card with `cancelled_at IS NULL`. The customer is preserved; the
+ *     operator must cancel those cards first (matches the UI error message
+ *     "בטלו את כל הכרטיסיות לפני המחיקה").
+ *   - { ok: true, id } — customer deleted along with all their cancelled
+ *     cards and the entries on those cards.
+ *
+ * The cancelled-cards-cascade is what Yanay's bug report on 2026-06-22
+ * surfaced: cancelling a card makes the customer expect to be able to
+ * delete the customer immediately, but `punch_cards.customer_id` is a
+ * NO ACTION FK so the raw DELETE was blocked. We now cascade the cleanup
+ * inside a single transaction so partial failure can't leave dangling
+ * cards. `customer_login_tokens` is already ON DELETE CASCADE; staff_actions
+ * doesn't reference customers/cards, so the audit log survives intact.
  */
-export const deleteCustomer = async (db: AnyPgDatabase, id: string) => {
-  const rows = await db
-    .delete(customers)
-    .where(eq(customers.id, id))
-    .returning({ id: customers.id });
-  return rows[0];
+export type DeleteCustomerResult =
+  | { ok: true; id: string }
+  | { ok: false; reason: 'not_found' }
+  | { ok: false; reason: 'has_active_cards'; activeCount: number };
+
+export const deleteCustomer = async (
+  db: AnyPgDatabase,
+  id: string,
+): Promise<DeleteCustomerResult> => {
+  return db.transaction(async (tx) => {
+    // Load every card belonging to this customer in one round-trip. The set
+    // is bounded (a customer has at most a handful of cards in their life),
+    // so fetching all of them is cheaper than a separate COUNT(*) followed
+    // by a SELECT for the cascade.
+    const cards = await tx
+      .select({ id: punchCards.id, cancelledAt: punchCards.cancelledAt })
+      .from(punchCards)
+      .where(eq(punchCards.customerId, id));
+
+    const activeCount = cards.filter((c) => c.cancelledAt === null).length;
+    if (activeCount > 0) {
+      // Don't touch the customer; surface the count so the UI can show a
+      // precise "you still have N active cards" message later if we want.
+      return { ok: false, reason: 'has_active_cards', activeCount };
+    }
+
+    // All cards (if any) are cancelled. Wipe entries → cards → customer.
+    if (cards.length > 0) {
+      const cardIds = cards.map((c) => c.id);
+      await tx.delete(punchCardEntries).where(inArray(punchCardEntries.punchCardId, cardIds));
+      await tx.delete(punchCards).where(inArray(punchCards.id, cardIds));
+    }
+
+    const deleted = await tx
+      .delete(customers)
+      .where(eq(customers.id, id))
+      .returning({ id: customers.id });
+    const row = deleted[0];
+    if (!row) return { ok: false, reason: 'not_found' };
+    return { ok: true, id: row.id };
+  });
 };
 
 /** Link a customer to their WordPress user id (set once by the WP sync job). */

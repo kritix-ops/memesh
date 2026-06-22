@@ -2057,8 +2057,13 @@ function CustomerDetailModal({
 }
 
 function humanizeCustomerDeleteError(code: string): string {
+  if (code === 'has_active_cards')
+    return 'לא ניתן למחוק — ללקוח יש כרטיסיות פעילות. בטלו את כל הכרטיסיות הפעילות לפני המחיקה.';
+  // 'has_dependents' is the legacy error code from before the
+  // cancellation-gated cascade (2026-06-22). Kept here so a stale frontend
+  // bundle still shows a sensible message during the deploy window.
   if (code === 'has_dependents')
-    return 'לא ניתן למחוק — ללקוח יש כרטיסיות בהיסטוריה. בטלו את כל הכרטיסיות לפני המחיקה.';
+    return 'לא ניתן למחוק — ללקוח יש כרטיסיות פעילות. בטלו את כל הכרטיסיות הפעילות לפני המחיקה.';
   if (code === 'not_found') return 'הלקוח לא נמצא. רעננו את הדף.';
   if (code === 'forbidden') return 'רק מנהל או אדמין יכולים למחוק לקוח.';
   return 'תקלה זמנית. נסו שוב בעוד רגע.';
