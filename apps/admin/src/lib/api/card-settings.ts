@@ -48,6 +48,13 @@ export interface CardSettings {
   checkoutThankyouTitle: string;
   checkoutThankyouBody: string;
   checkoutThankyouButtonText: string;
+  // Editable post-purchase email copy (admin Settings → "תוכן אימייל").
+  // Subject + headline + intro support {{firstName}}.
+  emailOnPurchaseSubject: string;
+  emailOnPurchaseHeadline: string;
+  emailOnPurchaseIntro: string;
+  emailOnPurchaseCtaText: string;
+  emailOnPurchaseFooterNote: string;
 
   updatedBy: string | null;
   updatedAt: string;
@@ -111,6 +118,11 @@ export interface CardSettingsPatch {
   checkoutThankyouTitle?: string;
   checkoutThankyouBody?: string;
   checkoutThankyouButtonText?: string;
+  emailOnPurchaseSubject?: string;
+  emailOnPurchaseHeadline?: string;
+  emailOnPurchaseIntro?: string;
+  emailOnPurchaseCtaText?: string;
+  emailOnPurchaseFooterNote?: string;
 }
 
 export const getCardSettings = (): Promise<ApiResult<CardSettingsResponse>> =>

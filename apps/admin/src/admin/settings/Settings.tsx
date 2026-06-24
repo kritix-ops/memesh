@@ -30,7 +30,8 @@ type SectionKey =
   | 'sms'
   | 'operations'
   | 'pos-controls'
-  | 'thankyou';
+  | 'thankyou'
+  | 'email-content';
 
 const SECTIONS: { key: SectionKey; label: string }[] = [
   { key: 'pricing', label: 'כרטיסייה' },
@@ -40,6 +41,7 @@ const SECTIONS: { key: SectionKey; label: string }[] = [
   { key: 'operations', label: 'חוויית קופה ולקוחות' },
   { key: 'pos-controls', label: 'קופה ובקרה' },
   { key: 'thankyou', label: 'דף תודה' },
+  { key: 'email-content', label: 'תוכן אימייל' },
 ];
 
 const subNavStyle = (active: boolean): CSSProperties => ({
@@ -165,6 +167,9 @@ export function Settings() {
         )}
         {active === 'thankyou' && (
           <ThankyouSection loaded={loaded} onSaved={onSaved} reload={reload} />
+        )}
+        {active === 'email-content' && (
+          <EmailContentSection loaded={loaded} onSaved={onSaved} reload={reload} />
         )}
       </div>
     </div>
@@ -910,6 +915,105 @@ function ThankyouSection({
           disabled={submitting}
           hint='הטקסט על הכפתור הראשי שמוביל לאזור האישי. למשל: "לאזור האישי שלי".'
           maxLength={60}
+        />
+      </div>
+      <SaveBar dirty={dirty} submitting={submitting} error={error} flash={flash} onSubmit={submit} />
+    </SectionShell>
+  );
+}
+
+function EmailContentSection({
+  loaded,
+  onSaved,
+  reload,
+}: {
+  loaded: CardSettings;
+  onSaved: (next: CardSettings) => void;
+  reload: () => Promise<void>;
+}) {
+  const [subject, setSubject] = useState(loaded.emailOnPurchaseSubject);
+  const [headline, setHeadline] = useState(loaded.emailOnPurchaseHeadline);
+  const [intro, setIntro] = useState(loaded.emailOnPurchaseIntro);
+  const [ctaText, setCtaText] = useState(loaded.emailOnPurchaseCtaText);
+  const [footerNote, setFooterNote] = useState(loaded.emailOnPurchaseFooterNote);
+  const { submitting, error, flash, save } = useSectionSave(onSaved, reload);
+
+  useEffect(() => {
+    setSubject(loaded.emailOnPurchaseSubject);
+    setHeadline(loaded.emailOnPurchaseHeadline);
+    setIntro(loaded.emailOnPurchaseIntro);
+    setCtaText(loaded.emailOnPurchaseCtaText);
+    setFooterNote(loaded.emailOnPurchaseFooterNote);
+  }, [loaded]);
+
+  const dirty =
+    subject !== loaded.emailOnPurchaseSubject ||
+    headline !== loaded.emailOnPurchaseHeadline ||
+    intro !== loaded.emailOnPurchaseIntro ||
+    ctaText !== loaded.emailOnPurchaseCtaText ||
+    footerNote !== loaded.emailOnPurchaseFooterNote;
+
+  const submit = async () => {
+    const patch: CardSettingsPatch = {};
+    if (subject.trim() !== loaded.emailOnPurchaseSubject)
+      patch.emailOnPurchaseSubject = subject.trim();
+    if (headline.trim() !== loaded.emailOnPurchaseHeadline)
+      patch.emailOnPurchaseHeadline = headline.trim();
+    if (intro !== loaded.emailOnPurchaseIntro) patch.emailOnPurchaseIntro = intro;
+    if (ctaText.trim() !== loaded.emailOnPurchaseCtaText)
+      patch.emailOnPurchaseCtaText = ctaText.trim();
+    if (footerNote !== loaded.emailOnPurchaseFooterNote)
+      patch.emailOnPurchaseFooterNote = footerNote;
+    await save(patch, 'email-content');
+  };
+
+  return (
+    <SectionShell
+      title="תוכן אימייל לאחר רכישה"
+      description='הטקסטים שמופיעים באימייל שנשלח ללקוח מיד אחרי שנוצרה לו כרטיסייה חדשה (בקופה או באתר). העיצוב (לוגו, צבעים, מבנה) קבוע ולא נערך מכאן. ניתן להשתמש בתו המיקום {{firstName}} בנושא/בכותרת/בגוף — הוא יוחלף בשם הפרטי של הלקוח (במידה שאין שם — יוחלף ל"לקוח/ה").'
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <TextField
+          label="נושא האימייל"
+          value={subject}
+          onChange={setSubject}
+          disabled={submitting}
+          hint='שורת הנושא שמופיעה בתיבת הדואר הנכנס. דוגמה: "הכרטיסייה שלך ב-Memesh מוכנה".'
+          maxLength={200}
+        />
+        <TextField
+          label="כותרת ראשית"
+          value={headline}
+          onChange={setHeadline}
+          disabled={submitting}
+          hint='הכותרת הגדולה בראש האימייל. דוגמה: "שלום {{firstName}}, הכרטיסייה שלך מוכנה!".'
+          maxLength={200}
+        />
+        <TextAreaField
+          label="טקסט גוף"
+          value={intro}
+          onChange={setIntro}
+          disabled={submitting}
+          hint="המשפט שמופיע מתחת לפרטי הכרטיסייה. הזמן את הלקוח לבוא. שורה אחת או שתיים."
+          maxLength={500}
+          rows={3}
+        />
+        <TextField
+          label="טקסט הכפתור"
+          value={ctaText}
+          onChange={setCtaText}
+          disabled={submitting}
+          hint='הטקסט על הכפתור הראשי. למשל: "לצפייה באזור האישי".'
+          maxLength={60}
+        />
+        <TextAreaField
+          label="הערת רגל"
+          value={footerNote}
+          onChange={setFooterNote}
+          disabled={submitting}
+          hint="טקסט קטן בתחתית האימייל. בדרך כלל הסבר שלא צריך להשיב על ההודעה."
+          maxLength={500}
+          rows={2}
         />
       </div>
       <SaveBar dirty={dirty} submitting={submitting} error={error} flash={flash} onSubmit={submit} />

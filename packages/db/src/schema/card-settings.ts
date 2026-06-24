@@ -111,6 +111,28 @@ export const cardSettings = pgTable('card_settings', {
     .notNull()
     .default('לאזור האישי שלי'),
 
+  // --- Post-purchase email copy (added 2026-06-24) ---
+  // Editable strings that Yanai can tweak from admin Settings without an
+  // engineering deploy. Visual structure (logo, colors, layout) stays in
+  // code — these five fields are just the words. Subject + headline + intro
+  // accept {{firstName}} (falls back to "לקוח/ה" when blank). CTA + footer
+  // are plain text. See _plans/2026-06-24-email-copy-editable-settings.md.
+  emailOnPurchaseSubject: text('email_on_purchase_subject')
+    .notNull()
+    .default('הכרטיסייה שלך ב-Memesh מוכנה'),
+  emailOnPurchaseHeadline: text('email_on_purchase_headline')
+    .notNull()
+    .default('שלום {{firstName}}, הכרטיסייה שלך מוכנה!'),
+  emailOnPurchaseIntro: text('email_on_purchase_intro')
+    .notNull()
+    .default('תודה שרכשת אצלנו — אנחנו מחכים לראותך.'),
+  emailOnPurchaseCtaText: text('email_on_purchase_cta_text')
+    .notNull()
+    .default('לצפייה באזור האישי'),
+  emailOnPurchaseFooterNote: text('email_on_purchase_footer_note')
+    .notNull()
+    .default('הודעה זו נשלחה לאחר רכישה ב-Memesh. אין צורך להשיב אליה.'),
+
   updatedBy: uuid('updated_by').references(() => staff.id),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });

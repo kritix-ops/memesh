@@ -227,7 +227,10 @@ test('firePostPurchaseEmail: multi-card → generic body, no per-card claim, cou
 
   assert.equal(consoleEmail.sent.length, sentBefore + 1);
   const m = consoleEmail.sent.at(-1)!;
-  assert.match(m.subject, /2 כרטיסיות חדשות ב-Memesh/);
+  // Subject is admin-editable from 2026-06-24; the default doesn't branch
+  // on card count anymore (one editable subject covers both cases). The
+  // card-count detail still surfaces inside the HTML body — see below.
+  assert.match(m.subject, /הכרטיסייה שלך ב-Memesh מוכנה/);
   const html = m.html ?? '';
   assert.match(html, /נוצרו עבורך/);
   assert.match(html, /2 כרטיסיות חדשות/);
@@ -262,15 +265,32 @@ test('firePostPurchaseEmail: never throws on a transient provider failure (FK vi
 // ---------------------------------------------------------------------------
 
 const LINK = 'https://my.memesh.co.il/c/AbCdEfGhIjKlMnOp';
+const LOGO_URL = 'https://my.memesh.co.il/og-image.png';
+
+/**
+ * Default copy matches the migration 0013 defaults — the production
+ * defaults a fresh card_settings row gets. Tests that want to verify
+ * default rendering use this; tests that want to verify operator-overridden
+ * copy provide their own subset.
+ */
+const DEFAULT_COPY = {
+  subject: 'הכרטיסייה שלך ב-Memesh מוכנה',
+  headline: 'שלום {{firstName}}, הכרטיסייה שלך מוכנה!',
+  intro: 'תודה שרכשת אצלנו — אנחנו מחכים לראותך.',
+  ctaText: 'לצפייה באזור האישי',
+  footerNote: 'הודעה זו נשלחה לאחר רכישה ב-Memesh. אין צורך להשיב אליה.',
+};
 
 test('buildPostPurchaseEmailBody: single card with expiry — subject + count + expiry + link', () => {
   const { subject, html, text } = buildPostPurchaseEmailBody({
     firstName: 'Yoav',
     cards: [{ totalEntries: 12, expiresAt: new Date('2026-12-31T22:00:00.000Z') }],
     link: LINK,
+    logoUrl: LOGO_URL,
+    copy: DEFAULT_COPY,
   });
   assert.equal(subject, 'הכרטיסייה שלך ב-Memesh מוכנה');
-  assert.match(html, /שלום Yoav/);
+  assert.match(html, /שלום Yoav, הכרטיסייה שלך מוכנה!/);
   assert.match(html, /12 כניסות/);
   assert.match(html, /תוקף עד 2026-12-31/);
   assert.ok(html.includes(LINK));
@@ -282,30 +302,35 @@ test('buildPostPurchaseEmailBody: single card without expiry renders "(ללא ת
     firstName: 'Yoav',
     cards: [{ totalEntries: 6, expiresAt: null }],
     link: LINK,
+    logoUrl: LOGO_URL,
+    copy: DEFAULT_COPY,
   });
   assert.match(html, /6 כניסות \(ללא תפוגה\)/);
   assert.match(text, /6 כניסות \(ללא תפוגה\)/);
   assert.equal(html.includes('תוקף עד'), false);
 });
 
-test('buildPostPurchaseEmailBody: empty firstName falls back to לקוח/ה', () => {
+test('buildPostPurchaseEmailBody: empty firstName falls back to לקוח/ה via the placeholder renderer', () => {
   const { html, text } = buildPostPurchaseEmailBody({
     firstName: '   ',
     cards: [{ totalEntries: 12, expiresAt: null }],
     link: LINK,
+    logoUrl: LOGO_URL,
+    copy: DEFAULT_COPY,
   });
   assert.match(html, /שלום לקוח\/ה/);
   assert.match(text, /שלום לקוח\/ה/);
 });
 
-test('buildPostPurchaseEmailBody: HTML-special characters in the name are escaped', () => {
-  // Defensive: a malicious-looking name shouldn't break out of the HTML
-  // structure. Names come from customer DB rows, which are written from
-  // staff input — but escaping at the boundary is rule 13 hygiene.
+test('buildPostPurchaseEmailBody: HTML-special characters in the name are escaped after placeholder substitution', () => {
+  // The substituted name is HTML-escaped before embedding so a hostile
+  // customer first name can't inject markup into the rendered email.
   const { html } = buildPostPurchaseEmailBody({
     firstName: `<script>alert('x')</script>`,
     cards: [{ totalEntries: 1, expiresAt: null }],
     link: LINK,
+    logoUrl: LOGO_URL,
+    copy: DEFAULT_COPY,
   });
   assert.equal(html.includes('<script>'), false);
   assert.match(html, /&lt;script&gt;/);
@@ -318,6 +343,8 @@ test('buildPostPurchaseEmailBody: zero-card defensive branch still produces a us
     firstName: 'Yoav',
     cards: [],
     link: LINK,
+    logoUrl: LOGO_URL,
+    copy: DEFAULT_COPY,
   });
   assert.equal(subject, 'הכרטיסייה שלך ב-Memesh מוכנה');
   assert.match(html, /הכרטיסייה שלך מוכנה לשימוש/);
@@ -332,8 +359,122 @@ test('buildPostPurchaseEmailBody: link is referenced in both the button href and
     firstName: 'Yoav',
     cards: [{ totalEntries: 12, expiresAt: null }],
     link: LINK,
+    logoUrl: LOGO_URL,
+    copy: DEFAULT_COPY,
   });
   const linkOccurrences = (html.match(new RegExp(LINK.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) ?? []).length;
   assert.ok(linkOccurrences >= 2, `link should appear at least twice in HTML, got ${linkOccurrences}`);
   assert.ok(text.includes(LINK));
+});
+
+test('buildPostPurchaseEmailBody: Memesh logo image is embedded at width=200 with proper email-safe attributes', () => {
+  // The logo is required for branding (rule 5 + rule 16: avoid AI-template
+  // look). Email-safe attributes: explicit width=, display:block, border:0,
+  // alt="Memesh" so image-blocking clients still see brand text.
+  const { html } = buildPostPurchaseEmailBody({
+    firstName: 'Yoav',
+    cards: [{ totalEntries: 12, expiresAt: null }],
+    link: LINK,
+    logoUrl: LOGO_URL,
+    copy: DEFAULT_COPY,
+  });
+  assert.ok(html.includes(`src="${LOGO_URL}"`), 'logo URL must be rendered as the img src');
+  assert.match(html, /alt="Memesh"/);
+  assert.match(html, /width="200"/);
+  assert.match(html, /display:block/);
+  // Logo is wrapped in a link to the main marketing site.
+  assert.match(html, /href="https:\/\/memesh\.co\.il"/);
+});
+
+test('buildPostPurchaseEmailBody: operator-overridden copy renders verbatim with placeholder substitution', () => {
+  // The whole point of admin-editable copy: Yanai changes the headline in
+  // admin Settings, the next email reflects it. Placeholder still works.
+  const { subject, html, text } = buildPostPurchaseEmailBody({
+    firstName: 'Tamar',
+    cards: [{ totalEntries: 12, expiresAt: null }],
+    link: LINK,
+    logoUrl: LOGO_URL,
+    copy: {
+      subject: 'הזמנה התקבלה — {{firstName}}',
+      headline: 'תודה {{firstName}}!',
+      intro: 'התשלום עבר בהצלחה.',
+      ctaText: 'לכרטיסייה שלי',
+      footerNote: 'לעזרה: support@memesh.co.il',
+    },
+  });
+  assert.equal(subject, 'הזמנה התקבלה — Tamar');
+  assert.match(html, /תודה Tamar!/);
+  assert.match(html, /התשלום עבר בהצלחה/);
+  assert.match(html, />לכרטיסייה שלי</);
+  assert.match(html, /לעזרה: support@memesh\.co\.il/);
+  assert.match(text, /תודה Tamar!/);
+  assert.match(text, /לכרטיסייה שלי:/);
+});
+
+test('buildPostPurchaseEmailBody: RTL — every text-bearing element has dir="rtl" AND inline text-align:right (Gmail strips top-level <html dir>)', () => {
+  // Yanay 2026-06-24 report: the first live emails arrived but rendered
+  // left-aligned because Gmail strips the outer <html dir="rtl"> when it
+  // sandboxes the message body. Defensive fix: dir="rtl" + inline
+  // text-align:right on every container that holds Hebrew text. This
+  // regression test pins each element so a future cleanup pass can't
+  // silently break alignment.
+  const { html } = buildPostPurchaseEmailBody({
+    firstName: 'יואב',
+    cards: [{ totalEntries: 12, expiresAt: null }],
+    link: LINK,
+    logoUrl: LOGO_URL,
+    copy: DEFAULT_COPY,
+  });
+
+  // The body element itself is RTL — most clients keep <body> even if
+  // they strip <html>.
+  assert.match(html, /<body dir="rtl"[^>]*direction:rtl[^>]*>/);
+
+  // Every <table> carries dir="rtl" (outer wrapper + inner card).
+  const tableMatches = html.match(/<table[^>]*>/g) ?? [];
+  assert.ok(tableMatches.length >= 2, 'expected outer + inner table');
+  for (const tag of tableMatches) {
+    assert.match(tag, /dir="rtl"/, `table without dir=rtl: ${tag}`);
+  }
+
+  // Every text-bearing <td> (everything except the centered logo/CTA
+  // wrappers) carries dir="rtl" AND text-align:right inline.
+  // Counted via regex: at least 4 such cells (headline, body, fallback
+  // link explanation row, footer).
+  const rtlTdCount = (html.match(/<td dir="rtl"[^>]*text-align:right/g) ?? []).length;
+  assert.ok(rtlTdCount >= 3, `expected ≥3 RTL+right-aligned <td>s, got ${rtlTdCount}`);
+
+  // The headline itself opts into text-align:center but still keeps
+  // dir="rtl" so RTL line-wrapping works correctly.
+  assert.match(html, /<h1 dir="rtl"[^>]*direction:rtl[^>]*>/);
+
+  // The copy-paste-link block stays explicitly LTR — URLs read
+  // left-to-right even inside an RTL email.
+  assert.match(html, /direction:ltr;text-align:left/);
+});
+
+test('buildPostPurchaseEmailBody: HTML-special characters in operator copy are escaped (defense in depth)', () => {
+  // Validation at admin-save time should reject placeholder typos, but
+  // raw HTML metacharacters slip through (operator might paste an
+  // ampersand-in-name from a customer name field, etc.). Renderer
+  // escapes at output to be safe.
+  const { html } = buildPostPurchaseEmailBody({
+    firstName: 'Tamar',
+    cards: [{ totalEntries: 1, expiresAt: null }],
+    link: LINK,
+    logoUrl: LOGO_URL,
+    copy: {
+      ...DEFAULT_COPY,
+      headline: '<b>Bold</b> & dangerous <script>alert(1)</script>',
+      ctaText: 'Click & go',
+      footerNote: 'Q&A',
+    },
+  });
+  assert.equal(html.includes('<script>'), false);
+  assert.equal(html.includes('<b>Bold</b>'), false);
+  assert.match(html, /&lt;b&gt;Bold&lt;\/b&gt;/);
+  assert.match(html, /&lt;script&gt;/);
+  // CTA + footer also escape `&` → `&amp;`.
+  assert.match(html, /Click &amp; go/);
+  assert.match(html, /Q&amp;A/);
 });
