@@ -2,6 +2,7 @@ import { eq } from 'drizzle-orm';
 import type { PgDatabase } from 'drizzle-orm/pg-core';
 import { logStaffAction } from './actions';
 import { validateEmailOtpTemplate } from './email-otp';
+import { validateGiftTemplate } from './gift-template';
 import { validateHandoffThankyouTemplate } from './handoff-thankyou';
 import { cardSettings, type CardSettingsRow } from './schema/index';
 
@@ -42,6 +43,24 @@ export const CARD_SETTINGS_LIMITS = {
   emailOnPurchaseIntro: { minLength: 1, maxLength: 500 },
   emailOnPurchaseCtaText: { minLength: 1, maxLength: 60 },
   emailOnPurchaseFooterNote: { minLength: 1, maxLength: 500 },
+  // Gift card flow (2026-06-24). TTL upper bound is 5 years — long enough
+  // for the most generous gifting policy without inviting clutter on the
+  // pending-claim table.
+  giftClaimTtlDays: { min: 1, max: 1825 },
+  giftRecipientEmailSubject: { minLength: 1, maxLength: 200 },
+  giftRecipientEmailHeadline: { minLength: 1, maxLength: 200 },
+  giftRecipientEmailIntro: { minLength: 1, maxLength: 500 },
+  giftRecipientEmailMagicCtaText: { minLength: 1, maxLength: 60 },
+  giftRecipientEmailClaimCtaText: { minLength: 1, maxLength: 60 },
+  giftRecipientEmailFooterNote: { minLength: 1, maxLength: 500 },
+  giftBuyerEmailSubject: { minLength: 1, maxLength: 200 },
+  giftBuyerEmailHeadline: { minLength: 1, maxLength: 200 },
+  giftBuyerEmailIntro: { minLength: 1, maxLength: 500 },
+  giftBuyerEmailFooterNote: { minLength: 1, maxLength: 500 },
+  giftBuyerClaimEmailSubject: { minLength: 1, maxLength: 200 },
+  giftBuyerClaimEmailHeadline: { minLength: 1, maxLength: 200 },
+  giftBuyerClaimEmailIntro: { minLength: 1, maxLength: 500 },
+  giftBuyerClaimEmailFooterNote: { minLength: 1, maxLength: 500 },
 } as const;
 
 export type CardSettingsValidationError =
@@ -79,6 +98,28 @@ export type CardSettingsValidationError =
   | 'email_on_purchase_intro_unknown_placeholder'
   | 'email_on_purchase_cta_text_length'
   | 'email_on_purchase_footer_note_length'
+  | 'gift_claim_ttl_out_of_range'
+  | 'gift_recipient_email_subject_length'
+  | 'gift_recipient_email_subject_unknown_placeholder'
+  | 'gift_recipient_email_headline_length'
+  | 'gift_recipient_email_headline_unknown_placeholder'
+  | 'gift_recipient_email_intro_length'
+  | 'gift_recipient_email_intro_unknown_placeholder'
+  | 'gift_recipient_email_magic_cta_text_length'
+  | 'gift_recipient_email_claim_cta_text_length'
+  | 'gift_recipient_email_footer_note_length'
+  | 'gift_buyer_email_subject_length'
+  | 'gift_buyer_email_subject_unknown_placeholder'
+  | 'gift_buyer_email_headline_length'
+  | 'gift_buyer_email_intro_length'
+  | 'gift_buyer_email_intro_unknown_placeholder'
+  | 'gift_buyer_email_footer_note_length'
+  | 'gift_buyer_claim_email_subject_length'
+  | 'gift_buyer_claim_email_subject_unknown_placeholder'
+  | 'gift_buyer_claim_email_headline_length'
+  | 'gift_buyer_claim_email_intro_length'
+  | 'gift_buyer_claim_email_intro_unknown_placeholder'
+  | 'gift_buyer_claim_email_footer_note_length'
   | 'no_changes';
 
 /**
@@ -145,6 +186,25 @@ export interface UpdateCardSettingsInput {
   emailOnPurchaseIntro?: string | undefined;
   emailOnPurchaseCtaText?: string | undefined;
   emailOnPurchaseFooterNote?: string | undefined;
+  // Gift card flow (2026-06-24). Three toggles + editable copy across three
+  // email variants — see _plans/2026-06-24-gift-card-checkout.md.
+  giftCardsEnabled?: boolean | undefined;
+  giftClaimTtlDays?: number | undefined;
+  giftBuyerNotifyOnClaim?: boolean | undefined;
+  giftRecipientEmailSubject?: string | undefined;
+  giftRecipientEmailHeadline?: string | undefined;
+  giftRecipientEmailIntro?: string | undefined;
+  giftRecipientEmailMagicCtaText?: string | undefined;
+  giftRecipientEmailClaimCtaText?: string | undefined;
+  giftRecipientEmailFooterNote?: string | undefined;
+  giftBuyerEmailSubject?: string | undefined;
+  giftBuyerEmailHeadline?: string | undefined;
+  giftBuyerEmailIntro?: string | undefined;
+  giftBuyerEmailFooterNote?: string | undefined;
+  giftBuyerClaimEmailSubject?: string | undefined;
+  giftBuyerClaimEmailHeadline?: string | undefined;
+  giftBuyerClaimEmailIntro?: string | undefined;
+  giftBuyerClaimEmailFooterNote?: string | undefined;
 
   /** Staff member making the change; recorded on the row and in the action log. */
   staffId?: string | undefined;
@@ -322,6 +382,117 @@ export const updateCardSettings = async (
     }
   }
 
+  // --- Gift card settings (2026-06-24) ---
+  if (input.giftClaimTtlDays !== undefined && !within(input.giftClaimTtlDays, L.giftClaimTtlDays.min, L.giftClaimTtlDays.max)) {
+    return { ok: false, error: 'gift_claim_ttl_out_of_range' };
+  }
+  if (input.giftRecipientEmailSubject !== undefined) {
+    const trimmed = input.giftRecipientEmailSubject.trim();
+    if (trimmed.length < L.giftRecipientEmailSubject.minLength || trimmed.length > L.giftRecipientEmailSubject.maxLength) {
+      return { ok: false, error: 'gift_recipient_email_subject_length' };
+    }
+    const placeholderCheck = validateGiftTemplate(trimmed);
+    if (!placeholderCheck.ok) {
+      return { ok: false, error: 'gift_recipient_email_subject_unknown_placeholder' };
+    }
+  }
+  if (input.giftRecipientEmailHeadline !== undefined) {
+    const trimmed = input.giftRecipientEmailHeadline.trim();
+    if (trimmed.length < L.giftRecipientEmailHeadline.minLength || trimmed.length > L.giftRecipientEmailHeadline.maxLength) {
+      return { ok: false, error: 'gift_recipient_email_headline_length' };
+    }
+    const placeholderCheck = validateGiftTemplate(trimmed);
+    if (!placeholderCheck.ok) {
+      return { ok: false, error: 'gift_recipient_email_headline_unknown_placeholder' };
+    }
+  }
+  if (input.giftRecipientEmailIntro !== undefined) {
+    if (input.giftRecipientEmailIntro.length < L.giftRecipientEmailIntro.minLength || input.giftRecipientEmailIntro.length > L.giftRecipientEmailIntro.maxLength) {
+      return { ok: false, error: 'gift_recipient_email_intro_length' };
+    }
+    const placeholderCheck = validateGiftTemplate(input.giftRecipientEmailIntro);
+    if (!placeholderCheck.ok) {
+      return { ok: false, error: 'gift_recipient_email_intro_unknown_placeholder' };
+    }
+  }
+  if (input.giftRecipientEmailMagicCtaText !== undefined) {
+    const trimmed = input.giftRecipientEmailMagicCtaText.trim();
+    if (trimmed.length < L.giftRecipientEmailMagicCtaText.minLength || trimmed.length > L.giftRecipientEmailMagicCtaText.maxLength) {
+      return { ok: false, error: 'gift_recipient_email_magic_cta_text_length' };
+    }
+  }
+  if (input.giftRecipientEmailClaimCtaText !== undefined) {
+    const trimmed = input.giftRecipientEmailClaimCtaText.trim();
+    if (trimmed.length < L.giftRecipientEmailClaimCtaText.minLength || trimmed.length > L.giftRecipientEmailClaimCtaText.maxLength) {
+      return { ok: false, error: 'gift_recipient_email_claim_cta_text_length' };
+    }
+  }
+  if (input.giftRecipientEmailFooterNote !== undefined) {
+    if (input.giftRecipientEmailFooterNote.length < L.giftRecipientEmailFooterNote.minLength || input.giftRecipientEmailFooterNote.length > L.giftRecipientEmailFooterNote.maxLength) {
+      return { ok: false, error: 'gift_recipient_email_footer_note_length' };
+    }
+  }
+  if (input.giftBuyerEmailSubject !== undefined) {
+    const trimmed = input.giftBuyerEmailSubject.trim();
+    if (trimmed.length < L.giftBuyerEmailSubject.minLength || trimmed.length > L.giftBuyerEmailSubject.maxLength) {
+      return { ok: false, error: 'gift_buyer_email_subject_length' };
+    }
+    const placeholderCheck = validateGiftTemplate(trimmed);
+    if (!placeholderCheck.ok) {
+      return { ok: false, error: 'gift_buyer_email_subject_unknown_placeholder' };
+    }
+  }
+  if (input.giftBuyerEmailHeadline !== undefined) {
+    const trimmed = input.giftBuyerEmailHeadline.trim();
+    if (trimmed.length < L.giftBuyerEmailHeadline.minLength || trimmed.length > L.giftBuyerEmailHeadline.maxLength) {
+      return { ok: false, error: 'gift_buyer_email_headline_length' };
+    }
+  }
+  if (input.giftBuyerEmailIntro !== undefined) {
+    if (input.giftBuyerEmailIntro.length < L.giftBuyerEmailIntro.minLength || input.giftBuyerEmailIntro.length > L.giftBuyerEmailIntro.maxLength) {
+      return { ok: false, error: 'gift_buyer_email_intro_length' };
+    }
+    const placeholderCheck = validateGiftTemplate(input.giftBuyerEmailIntro);
+    if (!placeholderCheck.ok) {
+      return { ok: false, error: 'gift_buyer_email_intro_unknown_placeholder' };
+    }
+  }
+  if (input.giftBuyerEmailFooterNote !== undefined) {
+    if (input.giftBuyerEmailFooterNote.length < L.giftBuyerEmailFooterNote.minLength || input.giftBuyerEmailFooterNote.length > L.giftBuyerEmailFooterNote.maxLength) {
+      return { ok: false, error: 'gift_buyer_email_footer_note_length' };
+    }
+  }
+  if (input.giftBuyerClaimEmailSubject !== undefined) {
+    const trimmed = input.giftBuyerClaimEmailSubject.trim();
+    if (trimmed.length < L.giftBuyerClaimEmailSubject.minLength || trimmed.length > L.giftBuyerClaimEmailSubject.maxLength) {
+      return { ok: false, error: 'gift_buyer_claim_email_subject_length' };
+    }
+    const placeholderCheck = validateGiftTemplate(trimmed);
+    if (!placeholderCheck.ok) {
+      return { ok: false, error: 'gift_buyer_claim_email_subject_unknown_placeholder' };
+    }
+  }
+  if (input.giftBuyerClaimEmailHeadline !== undefined) {
+    const trimmed = input.giftBuyerClaimEmailHeadline.trim();
+    if (trimmed.length < L.giftBuyerClaimEmailHeadline.minLength || trimmed.length > L.giftBuyerClaimEmailHeadline.maxLength) {
+      return { ok: false, error: 'gift_buyer_claim_email_headline_length' };
+    }
+  }
+  if (input.giftBuyerClaimEmailIntro !== undefined) {
+    if (input.giftBuyerClaimEmailIntro.length < L.giftBuyerClaimEmailIntro.minLength || input.giftBuyerClaimEmailIntro.length > L.giftBuyerClaimEmailIntro.maxLength) {
+      return { ok: false, error: 'gift_buyer_claim_email_intro_length' };
+    }
+    const placeholderCheck = validateGiftTemplate(input.giftBuyerClaimEmailIntro);
+    if (!placeholderCheck.ok) {
+      return { ok: false, error: 'gift_buyer_claim_email_intro_unknown_placeholder' };
+    }
+  }
+  if (input.giftBuyerClaimEmailFooterNote !== undefined) {
+    if (input.giftBuyerClaimEmailFooterNote.length < L.giftBuyerClaimEmailFooterNote.minLength || input.giftBuyerClaimEmailFooterNote.length > L.giftBuyerClaimEmailFooterNote.maxLength) {
+      return { ok: false, error: 'gift_buyer_claim_email_footer_note_length' };
+    }
+  }
+
   const now = input.now ?? new Date();
   const current = await getCardSettings(db);
 
@@ -401,6 +572,26 @@ export const updateCardSettings = async (
   assignStringRaw('emailOnPurchaseIntro', input.emailOnPurchaseIntro);
   assignString('emailOnPurchaseCtaText', input.emailOnPurchaseCtaText);
   assignStringRaw('emailOnPurchaseFooterNote', input.emailOnPurchaseFooterNote);
+  // Gift card settings (2026-06-24). Subjects/headlines/CTAs are trimmed;
+  // intros + footer notes preserve operator-entered newlines so multi-line
+  // copy renders as expected.
+  assignBool('giftCardsEnabled', input.giftCardsEnabled);
+  assignNumber('giftClaimTtlDays', input.giftClaimTtlDays);
+  assignBool('giftBuyerNotifyOnClaim', input.giftBuyerNotifyOnClaim);
+  assignString('giftRecipientEmailSubject', input.giftRecipientEmailSubject);
+  assignString('giftRecipientEmailHeadline', input.giftRecipientEmailHeadline);
+  assignStringRaw('giftRecipientEmailIntro', input.giftRecipientEmailIntro);
+  assignString('giftRecipientEmailMagicCtaText', input.giftRecipientEmailMagicCtaText);
+  assignString('giftRecipientEmailClaimCtaText', input.giftRecipientEmailClaimCtaText);
+  assignStringRaw('giftRecipientEmailFooterNote', input.giftRecipientEmailFooterNote);
+  assignString('giftBuyerEmailSubject', input.giftBuyerEmailSubject);
+  assignString('giftBuyerEmailHeadline', input.giftBuyerEmailHeadline);
+  assignStringRaw('giftBuyerEmailIntro', input.giftBuyerEmailIntro);
+  assignStringRaw('giftBuyerEmailFooterNote', input.giftBuyerEmailFooterNote);
+  assignString('giftBuyerClaimEmailSubject', input.giftBuyerClaimEmailSubject);
+  assignString('giftBuyerClaimEmailHeadline', input.giftBuyerClaimEmailHeadline);
+  assignStringRaw('giftBuyerClaimEmailIntro', input.giftBuyerClaimEmailIntro);
+  assignStringRaw('giftBuyerClaimEmailFooterNote', input.giftBuyerClaimEmailFooterNote);
 
   if (Object.keys(diff).length === 0) return { ok: false, error: 'no_changes' };
 
@@ -465,6 +656,23 @@ const FIELD_LABELS: Record<string, string> = {
   emailOnPurchaseIntro: 'גוף אימייל',
   emailOnPurchaseCtaText: 'טקסט כפתור באימייל',
   emailOnPurchaseFooterNote: 'הערת רגל באימייל',
+  giftCardsEnabled: 'כרטיסיות מתנה',
+  giftClaimTtlDays: 'תוקף קישור מתנה (ימים)',
+  giftBuyerNotifyOnClaim: 'הודעה למזמין על פתיחת מתנה',
+  giftRecipientEmailSubject: 'נושא מייל מתנה לנמען',
+  giftRecipientEmailHeadline: 'כותרת מייל מתנה לנמען',
+  giftRecipientEmailIntro: 'גוף מייל מתנה לנמען',
+  giftRecipientEmailMagicCtaText: 'כפתור פתיחת כרטיסייה',
+  giftRecipientEmailClaimCtaText: 'כפתור קבלת מתנה',
+  giftRecipientEmailFooterNote: 'הערת רגל מייל לנמען',
+  giftBuyerEmailSubject: 'נושא מייל מתנה למזמין',
+  giftBuyerEmailHeadline: 'כותרת מייל מתנה למזמין',
+  giftBuyerEmailIntro: 'גוף מייל מתנה למזמין',
+  giftBuyerEmailFooterNote: 'הערת רגל מייל למזמין',
+  giftBuyerClaimEmailSubject: 'נושא מייל פתיחת מתנה',
+  giftBuyerClaimEmailHeadline: 'כותרת מייל פתיחת מתנה',
+  giftBuyerClaimEmailIntro: 'גוף מייל פתיחת מתנה',
+  giftBuyerClaimEmailFooterNote: 'הערת רגל מייל פתיחה',
 };
 
 const summarizeDiff = (diff: Record<string, [unknown, unknown]>): string => {

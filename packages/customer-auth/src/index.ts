@@ -26,3 +26,13 @@ export {
   type RequestOtpResult,
   type SignInResult,
 } from './customer-session';
+export {
+  claimGift,
+  getGiftPreview,
+  requestGiftClaimOtp,
+  type GiftClaimResponse,
+  type GiftPreview,
+  type GiftPreviewCard,
+  type GiftPreviewResponse,
+  type GiftRequestOtpResponse,
+} from './api/gift-claim';

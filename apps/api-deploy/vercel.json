@@ -10,5 +10,8 @@
       "headers": [{ "key": "X-Robots-Tag", "value": "noindex, nofollow" }]
     }
   ],
-  "crons": [{ "path": "/cron/wc-reconcile", "schedule": "0 * * * *" }]
+  "crons": [
+    { "path": "/cron/wc-reconcile", "schedule": "0 * * * *" },
+    { "path": "/cron/gift-claims-expire", "schedule": "0 3 * * *" }
+  ]
 }

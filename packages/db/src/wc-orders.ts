@@ -252,3 +252,97 @@ export const resolveOrCreateCustomerFromWc = async (
   }
   return { customer: created, created: true };
 };
+
+// ---------------------------------------------------------------------------
+// Gift-card recipient lookup (added 2026-06-24)
+// ---------------------------------------------------------------------------
+
+export type RecipientLookupResult =
+  | { found: false }
+  | {
+      found: true;
+      customer: Customer;
+      /** Which signal matched first; phone wins on conflict. */
+      matchedBy: 'phone' | 'email';
+      /**
+       * Populated only when phone AND email each match — but to DIFFERENT
+       * customers. Phone wins, but the email-matched customer id is surfaced
+       * so the webhook handler can log the conflict for admin review.
+       */
+      conflictWithEmailMatchCustomerId?: string;
+    };
+
+/**
+ * Recipient match for the gift-card flow. Two-stage lookup:
+ *   1. exact phone match → return that customer (phone is the canonical
+ *      identity in Memesh, unique-constrained on the table)
+ *   2. else exact email match → return that customer
+ *   3. else not found → caller takes the pending-claim branch
+ *
+ * Conflict case (phone matches A, email matches B) is reported via
+ * `conflictWithEmailMatchCustomerId` so the caller can record the deviation
+ * for an admin to investigate later. Phone-wins is the deterministic rule
+ * and is applied unconditionally.
+ *
+ * Email comparison is case-insensitive — emails are case-insensitive at the
+ * mailbox level and storing them with mixed case is common in WC.
+ */
+export const findCustomerByPhoneOrEmail = async (
+  db: AnyPgDatabase,
+  input: { phone: string; email: string },
+): Promise<RecipientLookupResult> => {
+  const phoneMatch = await db
+    .select()
+    .from(customers)
+    .where(eq(customers.phone, input.phone))
+    .limit(1);
+  const phoneCustomer = phoneMatch[0];
+
+  // Always check email too — needed to detect the conflict case even when
+  // phone already matched. Skip when input.email is empty (defensive — gift
+  // form should never pass an empty email, but treat missing as "no match").
+  const trimmedEmail = input.email.trim();
+  if (trimmedEmail.length === 0) {
+    if (phoneCustomer) {
+      return { found: true, customer: phoneCustomer, matchedBy: 'phone' };
+    }
+    return { found: false };
+  }
+
+  // Case-insensitive email match. Drizzle's `lower()` on both sides would be
+  // ideal; for portability across PGlite/Postgres we lowercase the input and
+  // do an `ilike` (which uses lowercased comparison under the hood).
+  const emailMatches = await db
+    .select()
+    .from(customers)
+    .where(eq(customers.email, trimmedEmail))
+    .limit(1);
+  let emailCustomer = emailMatches[0];
+  // Fall back to a case-insensitive lookup when the exact-case query missed.
+  // Two queries instead of one ilike to keep the fast path index-friendly.
+  if (!emailCustomer && trimmedEmail !== trimmedEmail.toLowerCase()) {
+    const ciMatch = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.email, trimmedEmail.toLowerCase()))
+      .limit(1);
+    emailCustomer = ciMatch[0];
+  }
+
+  if (phoneCustomer) {
+    // Phone wins. Surface the conflict id when the emails point elsewhere.
+    if (emailCustomer && emailCustomer.id !== phoneCustomer.id) {
+      return {
+        found: true,
+        customer: phoneCustomer,
+        matchedBy: 'phone',
+        conflictWithEmailMatchCustomerId: emailCustomer.id,
+      };
+    }
+    return { found: true, customer: phoneCustomer, matchedBy: 'phone' };
+  }
+  if (emailCustomer) {
+    return { found: true, customer: emailCustomer, matchedBy: 'email' };
+  }
+  return { found: false };
+};

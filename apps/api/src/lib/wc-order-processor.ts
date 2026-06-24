@@ -1,6 +1,10 @@
 import {
   countCardsForWcOrder,
+  createGiftPendingClaim,
   createPunchCard,
+  findCustomerByPhoneOrEmail,
+  findPendingClaimByOrderId,
+  getCardSettings,
   getWcProductCardConfig,
   markWcWebhookProcessed,
   recordWcWebhookFailure,
@@ -40,15 +44,91 @@ const wcBillingSchema = z
   })
   .optional();
 
+// WC's meta_data is a flat array of {id,key,value} triples. The gift-card
+// flow looks for five specific keys (underscore-prefixed per WC convention).
+// Values are strings in practice; we tolerate other JSON-y shapes by ignoring
+// non-string values rather than failing the whole payload.
+const wcMetaItemSchema = z.object({
+  key: z.string(),
+  value: z.unknown(),
+});
+
 const wcOrderPayloadSchema = z.object({
   id: z.number(),
   status: z.string(),
   customer_id: z.number().nullable().optional(),
   billing: wcBillingSchema,
   line_items: z.array(wcLineItemSchema),
+  meta_data: z.array(wcMetaItemSchema).optional(),
 });
 
 export type WcOrderPayload = z.infer<typeof wcOrderPayloadSchema>;
+
+// ---------------------------------------------------------------------------
+// Gift-card meta extraction
+// ---------------------------------------------------------------------------
+
+/**
+ * Parsed gift-card meta from a WC order. `null` when the order isn't a gift
+ * (no `_memesh_gift` flag, or the flag is anything other than "yes"/"true").
+ */
+export interface GiftMeta {
+  recipientFirstName: string;
+  recipientLastName: string;
+  recipientPhone: string;
+  recipientEmail: string;
+}
+
+const GIFT_FLAG_KEYS = new Set(['_memesh_gift']);
+const GIFT_FLAG_TRUE = new Set(['yes', 'true', '1', 'on']);
+
+const META_KEYS = {
+  recipientFirstName: '_memesh_gift_recipient_first_name',
+  recipientLastName: '_memesh_gift_recipient_last_name',
+  recipientPhone: '_memesh_gift_recipient_phone',
+  recipientEmail: '_memesh_gift_recipient_email',
+} as const;
+
+const readMetaString = (
+  metaData: WcOrderPayload['meta_data'],
+  key: string,
+): string => {
+  if (!metaData) return '';
+  for (const item of metaData) {
+    if (item.key !== key) continue;
+    if (typeof item.value === 'string') return item.value;
+    if (typeof item.value === 'number') return String(item.value);
+    return '';
+  }
+  return '';
+};
+
+/**
+ * Inspect the order's `meta_data` for the gift-card markers. Returns the
+ * recipient details when the `_memesh_gift` flag is set, `null` otherwise.
+ * Validation of recipient phone/email shape is done at the processor layer,
+ * not here, so the failure-row path can record a precise reason.
+ */
+export const extractGiftMeta = (payload: WcOrderPayload): GiftMeta | null => {
+  if (!payload.meta_data) return null;
+  // Find the flag; tolerate either uppercase Yes / TRUE / etc.
+  let flagged = false;
+  for (const item of payload.meta_data) {
+    if (!GIFT_FLAG_KEYS.has(item.key)) continue;
+    const v = typeof item.value === 'string' ? item.value.trim().toLowerCase() : '';
+    if (GIFT_FLAG_TRUE.has(v)) {
+      flagged = true;
+      break;
+    }
+  }
+  if (!flagged) return null;
+  return {
+    recipientFirstName: readMetaString(payload.meta_data, META_KEYS.recipientFirstName).trim(),
+    recipientLastName: readMetaString(payload.meta_data, META_KEYS.recipientLastName).trim(),
+    recipientPhone: readMetaString(payload.meta_data, META_KEYS.recipientPhone).trim(),
+    recipientEmail: readMetaString(payload.meta_data, META_KEYS.recipientEmail).trim(),
+  };
+};
 
 // ---------------------------------------------------------------------------
 // Input + result types
@@ -99,6 +179,50 @@ export type ProcessWcOrderWebhookResult =
       // and no new cards were created in THIS delivery (the webhook route
       // uses this to suppress duplicate SMS sends).
       cardsSummary: Array<{ totalEntries: number; expiresAt: Date | null }>;
+    }
+  | {
+      // Gift order whose recipient was already a Memesh customer (matched by
+      // phone or email). Cards minted directly to the recipient with
+      // is_gift=true and the buyer's identity denormalized onto each row.
+      status: 'processed_gift_direct';
+      orderId: string;
+      recipientCustomerId: string;
+      recipientCustomerEmail: string | null;
+      recipientFirstName: string;
+      buyerEmail: string;
+      buyerFirstName: string;
+      /** Empty on a re-delivery (cards already minted). */
+      cardsCreated: string[];
+      cardsSummary: Array<{ totalEntries: number; expiresAt: Date | null }>;
+      /** 'phone' or 'email' — which signal matched the existing customer. */
+      matchedBy: 'phone' | 'email';
+      /**
+       * When phone matched customer A and email matched a different customer
+       * B, this is B's id (phone wins by rule; surfaced so admin can review).
+       */
+      recipientMatchConflictCustomerId?: string;
+    }
+  | {
+      // Gift order whose recipient is NOT yet a Memesh customer. A
+      // gift_pending_claims row holds the gift until the recipient verifies
+      // their phone via the claim flow. No customer or card is created on
+      // this path.
+      status: 'processed_gift_pending';
+      orderId: string;
+      pendingClaimId: string;
+      /**
+       * Raw claim token to embed in the recipient's email URL. Undefined on a
+       * re-delivery — the route layer must not send a second claim email.
+       */
+      rawClaimToken?: string;
+      /** True if a pending claim already existed (webhook re-delivery). */
+      alreadyExisted: boolean;
+      recipientFirstName: string;
+      recipientEmail: string;
+      buyerEmail: string;
+      buyerFirstName: string;
+      /** Teaser of what the recipient will receive on claim — for the email body. */
+      cardSummary: { totalEntries: number; validityDays: number | null };
     };
 
 // Topics we react to. `order.created` covers gateways that mint orders
@@ -232,6 +356,190 @@ export const processWcOrderWebhook = async (
         payload: input.payload,
       });
       return { status: 'failure', reason: 'email_required', orderId: orderIdStr };
+    }
+
+    // ----- Gift branch (added 2026-06-24) -----
+    // We read settings once per webhook delivery. When `giftCardsEnabled` is
+    // off, gift meta is ignored entirely and the order flows through the
+    // normal buyer-attribution path below. This is the ops kill-switch.
+    const settings = await getCardSettings(tx);
+    const giftMeta = settings.giftCardsEnabled ? extractGiftMeta(order) : null;
+    if (giftMeta) {
+      // Buyer first/last for denormalizing onto the gift_pending_claims row
+      // and gift_buyer_* columns on the punch card. Same fallback semantics
+      // the non-gift path uses below.
+      const buyerFirstName = order.billing?.first_name?.trim() || 'WooCommerce';
+      const buyerLastName = order.billing?.last_name?.trim() || 'Customer';
+      const buyerPhone = phoneParsed.data;
+      const buyerEmail = rawEmail;
+
+      // Recipient phone must normalize to a canonical Israeli mobile — same
+      // validator the buyer phone went through above. Without this we cannot
+      // do the recipient lookup nor verify the recipient via OTP at claim.
+      const recipientPhoneParsed = phoneSchema.safeParse(giftMeta.recipientPhone);
+      if (!recipientPhoneParsed.success) {
+        await recordWcWebhookFailure(tx, {
+          deliveryId: input.deliveryId,
+          wcOrderId: orderIdStr,
+          reason: 'gift_recipient_phone_invalid',
+          payload: input.payload,
+        });
+        return {
+          status: 'failure',
+          reason: 'gift_recipient_phone_invalid',
+          orderId: orderIdStr,
+        };
+      }
+      if (giftMeta.recipientEmail.length === 0) {
+        await recordWcWebhookFailure(tx, {
+          deliveryId: input.deliveryId,
+          wcOrderId: orderIdStr,
+          reason: 'gift_recipient_email_missing',
+          payload: input.payload,
+        });
+        return {
+          status: 'failure',
+          reason: 'gift_recipient_email_missing',
+          orderId: orderIdStr,
+        };
+      }
+      if (giftMeta.recipientFirstName.length === 0) {
+        await recordWcWebhookFailure(tx, {
+          deliveryId: input.deliveryId,
+          wcOrderId: orderIdStr,
+          reason: 'gift_recipient_first_name_missing',
+          payload: input.payload,
+        });
+        return {
+          status: 'failure',
+          reason: 'gift_recipient_first_name_missing',
+          orderId: orderIdStr,
+        };
+      }
+
+      const recipientPhone = recipientPhoneParsed.data;
+      const recipientEmail = giftMeta.recipientEmail;
+      // Last name is allowed to be empty — Hebrew first-names alone are
+      // common in personal gifting. Store as empty string if absent so the
+      // not-null column constraint is satisfied.
+      const recipientLastName = giftMeta.recipientLastName;
+
+      // Card spec for the recipient email + pending-claim row. Gift orders
+      // are restricted to "one gift per order" by the WC plugin, so we take
+      // the first matched line item's config.
+      const firstMatched = matched[0]!;
+      const cardSummaryTeaser = {
+        totalEntries: firstMatched.totalEntries,
+        validityDays: firstMatched.validityDays,
+      };
+
+      // Does the recipient already exist as a Memesh customer?
+      const lookup = await findCustomerByPhoneOrEmail(tx, {
+        phone: recipientPhone,
+        email: recipientEmail,
+      });
+
+      if (lookup.found) {
+        // ----- Direct-mint branch -----
+        // Same reconciliation-safe pattern the non-gift path uses; cards
+        // already on this WC order (from a prior delivery or the cron)
+        // short-circuit the loop.
+        const totalNeeded = matched.reduce((sum, m) => sum + m.quantity, 0);
+        const existingCount = await countCardsForWcOrder(tx, orderIdStr);
+        let remaining = Math.max(0, totalNeeded - existingCount);
+        const giftClaimedAt = input.now ?? new Date();
+
+        const serials: string[] = [];
+        const cardsSummary: Array<{ totalEntries: number; expiresAt: Date | null }> = [];
+        outer: for (const m of matched) {
+          for (let i = 0; i < m.quantity; i += 1) {
+            if (remaining <= 0) break outer;
+            const card = await createPunchCard(tx, input.resolver, {
+              customerId: lookup.customer.id,
+              totalEntries: m.totalEntries,
+              validityDays: m.validityDays,
+              source: 'online',
+              wcOrderId: orderIdStr,
+              gift: {
+                buyerFirstName,
+                buyerLastName,
+                buyerPhone,
+                claimedAt: giftClaimedAt,
+              },
+              ...(input.now && { now: input.now }),
+            });
+            serials.push(card.serialNumber);
+            cardsSummary.push({
+              totalEntries: card.totalEntries,
+              expiresAt: card.expiresAt,
+            });
+            remaining -= 1;
+          }
+        }
+
+        return {
+          status: 'processed_gift_direct',
+          orderId: orderIdStr,
+          recipientCustomerId: lookup.customer.id,
+          recipientCustomerEmail: lookup.customer.email ?? null,
+          recipientFirstName: lookup.customer.firstName || giftMeta.recipientFirstName,
+          buyerEmail,
+          buyerFirstName,
+          cardsCreated: serials,
+          cardsSummary,
+          matchedBy: lookup.matchedBy,
+          ...(lookup.conflictWithEmailMatchCustomerId !== undefined && {
+            recipientMatchConflictCustomerId: lookup.conflictWithEmailMatchCustomerId,
+          }),
+        };
+      }
+
+      // ----- Pending-claim branch -----
+      // Reconciliation idempotency: re-delivery of the same gift order must
+      // not create a second pending row. The advisory lock above serializes
+      // concurrent webhook + cron paths so this check is race-safe.
+      const existingPending = await findPendingClaimByOrderId(tx, orderIdStr);
+      if (existingPending) {
+        return {
+          status: 'processed_gift_pending',
+          orderId: orderIdStr,
+          pendingClaimId: existingPending.id,
+          alreadyExisted: true,
+          recipientFirstName: existingPending.recipientFirstName,
+          recipientEmail: existingPending.recipientEmail,
+          buyerEmail: existingPending.buyerEmail,
+          buyerFirstName: existingPending.buyerFirstName,
+          cardSummary: cardSummaryTeaser,
+        };
+      }
+
+      const created = await createGiftPendingClaim(tx, {
+        wcOrderId: orderIdStr,
+        wcSku: firstMatched.sku,
+        buyerFirstName,
+        buyerLastName,
+        buyerEmail,
+        buyerPhone,
+        recipientFirstName: giftMeta.recipientFirstName,
+        recipientLastName,
+        recipientEmail,
+        recipientPhone,
+        ttlDays: settings.giftClaimTtlDays,
+        ...(input.now && { now: input.now }),
+      });
+
+      return {
+        status: 'processed_gift_pending',
+        orderId: orderIdStr,
+        pendingClaimId: created.row.id,
+        rawClaimToken: created.rawClaimToken,
+        alreadyExisted: false,
+        recipientFirstName: giftMeta.recipientFirstName,
+        recipientEmail,
+        buyerEmail,
+        buyerFirstName,
+        cardSummary: cardSummaryTeaser,
+      };
     }
 
     const wpUserId =

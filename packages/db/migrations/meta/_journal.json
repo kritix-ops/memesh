@@ -99,6 +99,13 @@
       "when": 1782864000000,
       "tag": "0013_email_on_purchase_copy",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1782950400000,
+      "tag": "0014_gift_cards",
+      "breakpoints": true
     }
   ]
 }

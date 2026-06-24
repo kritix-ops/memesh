@@ -133,6 +133,77 @@ export const cardSettings = pgTable('card_settings', {
     .notNull()
     .default('הודעה זו נשלחה לאחר רכישה ב-Memesh. אין צורך להשיב אליה.'),
 
+  // --- Gift card flow (added 2026-06-24) ---
+  // Master kill-switch for the entire gift-card feature. When false, the WC
+  // processor ignores `_memesh_gift` meta and treats the order as a normal
+  // purchase (card lands on the buyer's account). Lets ops disable the
+  // feature in an incident without redeploying.
+  giftCardsEnabled: boolean('gift_cards_enabled').notNull().default(true),
+  // How long an unclaimed gift_pending_claims row stays valid. Default a
+  // year — gifts are emotional items, recipients can lose the email and
+  // come back months later.
+  giftClaimTtlDays: integer('gift_claim_ttl_days').notNull().default(365),
+  // When true, the buyer gets a second confirmation email the moment the
+  // recipient claims the gift. Separate from the initial buyer-confirmation
+  // email that goes out at order time.
+  giftBuyerNotifyOnClaim: boolean('gift_buyer_notify_on_claim').notNull().default(true),
+
+  // Recipient-facing email copy. Two variants:
+  //   - "magic"  = recipient is already a Memesh customer; email lands them
+  //                directly in their personal area, card already attached.
+  //   - "claim"  = recipient is brand new; email links to the claim flow
+  //                where they verify phone and the card is minted on success.
+  // Both reuse the same subject/headline/intro/footer copy + a CTA label
+  // pair (one per variant) so the differentiator is the button text only.
+  giftRecipientEmailSubject: text('gift_recipient_email_subject')
+    .notNull()
+    .default('{{buyerFirstName}} שלח/ה לך כרטיסיית מתנה!'),
+  giftRecipientEmailHeadline: text('gift_recipient_email_headline')
+    .notNull()
+    .default('קיבלת מתנה!'),
+  giftRecipientEmailIntro: text('gift_recipient_email_intro')
+    .notNull()
+    .default('{{buyerFirstName}} בחר/ה להעניק לך כרטיסיית מתנה ב-Memesh.'),
+  giftRecipientEmailMagicCtaText: text('gift_recipient_email_magic_cta_text')
+    .notNull()
+    .default('פתחו את הכרטיסייה'),
+  giftRecipientEmailClaimCtaText: text('gift_recipient_email_claim_cta_text')
+    .notNull()
+    .default('קבלו את המתנה'),
+  giftRecipientEmailFooterNote: text('gift_recipient_email_footer_note')
+    .notNull()
+    .default('יש לכם שאלות? נשמח לעזור — פנו אלינו בכל עת.'),
+
+  // Buyer-facing confirmation email — sent at order time in both direct-mint
+  // and pending-claim branches. Plain receipt, no magic link.
+  giftBuyerEmailSubject: text('gift_buyer_email_subject')
+    .notNull()
+    .default('הזמנת כרטיסיית מתנה ל-{{recipientFirstName}}'),
+  giftBuyerEmailHeadline: text('gift_buyer_email_headline')
+    .notNull()
+    .default('תודה על המתנה!'),
+  giftBuyerEmailIntro: text('gift_buyer_email_intro')
+    .notNull()
+    .default('שלחנו ל-{{recipientFirstName}} מייל עם הכרטיסייה.'),
+  giftBuyerEmailFooterNote: text('gift_buyer_email_footer_note')
+    .notNull()
+    .default('נעדכן אותך כשהמתנה תיפתח על ידי הנמען/ת.'),
+
+  // Buyer-facing claim notification — sent when the recipient finally
+  // claims (pending-claim branch only). Controlled by giftBuyerNotifyOnClaim.
+  giftBuyerClaimEmailSubject: text('gift_buyer_claim_email_subject')
+    .notNull()
+    .default('{{recipientFirstName}} פתח/ה את המתנה שלך!'),
+  giftBuyerClaimEmailHeadline: text('gift_buyer_claim_email_headline')
+    .notNull()
+    .default('המתנה נפתחה'),
+  giftBuyerClaimEmailIntro: text('gift_buyer_claim_email_intro')
+    .notNull()
+    .default('{{recipientFirstName}} פתח/ה את הכרטיסייה שהענקת. תודה שבחרת ב-Memesh.'),
+  giftBuyerClaimEmailFooterNote: text('gift_buyer_claim_email_footer_note')
+    .notNull()
+    .default('הודעה זו נשלחה לאחר רכישה ב-Memesh. אין צורך להשיב אליה.'),
+
   updatedBy: uuid('updated_by').references(() => staff.id),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });

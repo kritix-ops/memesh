@@ -55,6 +55,28 @@ export interface CardSettings {
   emailOnPurchaseIntro: string;
   emailOnPurchaseCtaText: string;
   emailOnPurchaseFooterNote: string;
+  // Gift card flow (admin Settings → "כרטיסיות מתנה"). Toggles + editable
+  // Hebrew copy for the three gift email variants. Subjects, headlines, and
+  // intros use {{buyerFirstName}} (recipient-facing) or
+  // {{recipientFirstName}} (buyer-facing) — server validates placeholders
+  // on save so a typo fails fast.
+  giftCardsEnabled: boolean;
+  giftClaimTtlDays: number;
+  giftBuyerNotifyOnClaim: boolean;
+  giftRecipientEmailSubject: string;
+  giftRecipientEmailHeadline: string;
+  giftRecipientEmailIntro: string;
+  giftRecipientEmailMagicCtaText: string;
+  giftRecipientEmailClaimCtaText: string;
+  giftRecipientEmailFooterNote: string;
+  giftBuyerEmailSubject: string;
+  giftBuyerEmailHeadline: string;
+  giftBuyerEmailIntro: string;
+  giftBuyerEmailFooterNote: string;
+  giftBuyerClaimEmailSubject: string;
+  giftBuyerClaimEmailHeadline: string;
+  giftBuyerClaimEmailIntro: string;
+  giftBuyerClaimEmailFooterNote: string;
 
   updatedBy: string | null;
   updatedAt: string;
@@ -123,6 +145,24 @@ export interface CardSettingsPatch {
   emailOnPurchaseIntro?: string;
   emailOnPurchaseCtaText?: string;
   emailOnPurchaseFooterNote?: string;
+  // Gift card flow (2026-06-24).
+  giftCardsEnabled?: boolean;
+  giftClaimTtlDays?: number;
+  giftBuyerNotifyOnClaim?: boolean;
+  giftRecipientEmailSubject?: string;
+  giftRecipientEmailHeadline?: string;
+  giftRecipientEmailIntro?: string;
+  giftRecipientEmailMagicCtaText?: string;
+  giftRecipientEmailClaimCtaText?: string;
+  giftRecipientEmailFooterNote?: string;
+  giftBuyerEmailSubject?: string;
+  giftBuyerEmailHeadline?: string;
+  giftBuyerEmailIntro?: string;
+  giftBuyerEmailFooterNote?: string;
+  giftBuyerClaimEmailSubject?: string;
+  giftBuyerClaimEmailHeadline?: string;
+  giftBuyerClaimEmailIntro?: string;
+  giftBuyerClaimEmailFooterNote?: string;
 }
 
 export const getCardSettings = (): Promise<ApiResult<CardSettingsResponse>> =>
