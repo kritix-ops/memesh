@@ -6,6 +6,7 @@ import {
   processWcOrderWebhook,
   type ProcessWcOrderWebhookResult,
 } from '../lib/wc-order-processor.js';
+import { firePostPurchaseEmail } from '../lib/post-purchase-email.js';
 import { fireWcPostPurchaseSms } from '../lib/wc-post-purchase-sms.js';
 import { envKeyResolver } from '../qr.js';
 
@@ -130,10 +131,23 @@ export const webhooksWcRoutes: FastifyPluginAsync = async (fastify) => {
         // gets exactly one SMS per real purchase. See
         // _plans/2026-06-22-wc-post-purchase-sms.md.
         if (result.cardsCreated.length > 0) {
+          // Two channels fire in parallel; each mints its OWN handoff
+          // token so the customer can tap either link without seeing an
+          // "already used" error on the second tap. See the channel +
+          // token decisions in _plans/2026-06-23-post-purchase-email.md.
           void fireWcPostPurchaseSms(db, {
             customerId: result.customerId,
             customerPhone: result.customerPhone,
             orderId: result.orderId,
+            cards: result.cardsSummary,
+            log,
+          });
+          void firePostPurchaseEmail(db, {
+            customerId: result.customerId,
+            customerEmail: result.customerEmail,
+            customerFirstName: result.customerFirstName,
+            source: 'wc_checkout',
+            orderRef: result.orderId,
             cards: result.cardsSummary,
             log,
           });

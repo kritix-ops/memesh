@@ -21,6 +21,7 @@ import { env } from '../config.js';
 import { requireRoleHook } from '../lib/auth-guards.js';
 import { envKeyResolver } from '../qr.js';
 import { buildPostSaleSmsBody } from '../lib/post-sale-sms.js';
+import { firePostPurchaseEmail } from '../lib/post-purchase-email.js';
 import { smsProvider } from '../lib/sms.js';
 import { verifyStaffPin } from '../lib/staff-pin-repo.js';
 
@@ -255,6 +256,30 @@ export const cardsRoutes: FastifyPluginAsync = async (fastify) => {
         }
       } catch (err) {
         request.log.warn({ err }, '[cards] post-sale SMS failed silently');
+      }
+    })();
+
+    // Post-sale email — runs in parallel to the SMS block above. Each
+    // channel has its OWN try/catch + its OWN handoff token (per the
+    // 2026-06-23 dual-channel decision) so an SMS provider hiccup never
+    // suppresses the email and vice-versa. firePostPurchaseEmail self-
+    // skips when the customer has no email on file (POS-registered
+    // customers may not have one) or when emailOnPurchase is disabled.
+    void (async () => {
+      try {
+        const customer = await getCustomerById(db, parsed.data.customerId);
+        if (!customer) return;
+        await firePostPurchaseEmail(db, {
+          customerId: customer.id,
+          customerEmail: customer.email,
+          customerFirstName: customer.firstName,
+          source: 'pos_sell',
+          orderRef: card.id,
+          cards: [{ totalEntries: card.totalEntries, expiresAt: card.expiresAt }],
+          log: request.log,
+        });
+      } catch (err) {
+        request.log.warn({ err }, '[cards] post-sale email failed silently');
       }
     })();
 

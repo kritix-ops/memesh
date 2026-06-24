@@ -20,8 +20,9 @@ export interface CardSettings {
   minCancelReasonLength: number;
   refundPolicyText: string;
   cancelRole: CancelRole;
-  // SMS
+  // SMS + email
   smsOnPurchase: boolean;
+  emailOnPurchase: boolean;
   smsLowEntriesThreshold: number;
   smsQuietStartMinutes: number;
   smsQuietEndMinutes: number;
@@ -90,6 +91,7 @@ export interface CardSettingsPatch {
   refundPolicyText?: string;
   cancelRole?: CancelRole;
   smsOnPurchase?: boolean;
+  emailOnPurchase?: boolean;
   smsLowEntriesThreshold?: number;
   smsQuietStartMinutes?: number;
   smsQuietEndMinutes?: number;

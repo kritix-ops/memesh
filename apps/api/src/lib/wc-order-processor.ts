@@ -87,6 +87,10 @@ export type ProcessWcOrderWebhookResult =
       // Canonical 05XXXXXXXX form (post-normalization). The webhook route uses
       // it to address the post-purchase SMS without re-querying the customer.
       customerPhone: string;
+      /** May be null when the customer was created without an email (POS path). */
+      customerEmail: string | null;
+      /** First name for the email greeting; falls back to "לקוח/ה" downstream when blank. */
+      customerFirstName: string;
       customerCreated: boolean;
       cardsCreated: string[];
       // Per-card teaser data for the post-purchase SMS body. Same length and
@@ -279,6 +283,8 @@ export const processWcOrderWebhook = async (
       orderId: orderIdStr,
       customerId: customer.id,
       customerPhone: customer.phone,
+      customerEmail: customer.email ?? null,
+      customerFirstName: customer.firstName,
       customerCreated: created,
       cardsCreated: serials,
       cardsSummary,
