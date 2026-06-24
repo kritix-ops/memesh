@@ -72,9 +72,18 @@ const envSchema = z.object({
   // is the live provider; requires RESEND_API_KEY + EMAIL_FROM (a verified
   // sender on the Memesh domain). See _plans/2026-06-20-seller-attribution-
   // and-email-fallback.md for the integration plan.
-  EMAIL_PROVIDER: z.enum(['console', 'resend']).default('console'),
+  // Email provider selection.
+  //   - 'console' (default) — stdout, no real delivery
+  //   - 'resend' — historical first wiring; covers the email-OTP fallback
+  //   - 'pulseem' — post-2026-06-23 cutover for transactional sends so
+  //     SMS + email both flow through the same Pulseem account. Reuses
+  //     PULSEEM_API_KEY (same account) plus PULSEEM_EMAIL_FROM_EMAIL +
+  //     PULSEEM_EMAIL_FROM_NAME for the sender identity.
+  EMAIL_PROVIDER: z.enum(['console', 'resend', 'pulseem']).default('console'),
   RESEND_API_KEY: z.string().optional(),
   EMAIL_FROM: z.string().optional(),
+  PULSEEM_EMAIL_FROM_EMAIL: z.string().email().optional(),
+  PULSEEM_EMAIL_FROM_NAME: z.string().optional(),
   // Base URL of the staff login app. The /auth/forgot-password route embeds
   // this in the reset email as `${STAFF_LOGIN_URL}/?reset_token=...`. The
   // server NEVER trusts a client-supplied origin for the reset link — it's

@@ -97,8 +97,9 @@ export interface UpdateCardSettingsInput {
   minCancelReasonLength?: number | undefined;
   refundPolicyText?: string | undefined;
   cancelRole?: CancelRole | undefined;
-  // SMS
+  // SMS + email
   smsOnPurchase?: boolean | undefined;
+  emailOnPurchase?: boolean | undefined;
   smsLowEntriesThreshold?: number | undefined;
   smsQuietStartMinutes?: number | undefined;
   smsQuietEndMinutes?: number | undefined;
@@ -307,6 +308,7 @@ export const updateCardSettings = async (
     diff.cancelRole = [current.cancelRole, input.cancelRole];
   }
   assignBool('smsOnPurchase', input.smsOnPurchase);
+  assignBool('emailOnPurchase', input.emailOnPurchase);
   assignNumber('smsLowEntriesThreshold', input.smsLowEntriesThreshold);
   assignNumber('smsQuietStartMinutes', input.smsQuietStartMinutes);
   assignNumber('smsQuietEndMinutes', input.smsQuietEndMinutes);
@@ -369,6 +371,7 @@ const FIELD_LABELS: Record<string, string> = {
   refundPolicyText: 'מדיניות החזרים',
   cancelRole: 'הרשאת ביטול',
   smsOnPurchase: 'SMS במכירה',
+  emailOnPurchase: 'מייל במכירה',
   smsLowEntriesThreshold: 'SMS כניסות נמוכות',
   smsQuietStartMinutes: 'התחלת שעות שקט',
   smsQuietEndMinutes: 'סוף שעות שקט',

@@ -26,8 +26,17 @@ export const cardSettings = pgTable('card_settings', {
   /** Who can cancel. 'admin' = admin only. 'manager' = admin + manager (current default). */
   cancelRole: varchar('cancel_role', { length: 16 }).notNull().default('manager'),
 
-  // --- SMS communication ---
+  // --- SMS + email communication ---
   smsOnPurchase: boolean('sms_on_purchase').notNull().default(true),
+  /**
+   * Master switch for the post-purchase email (added 2026-06-23). Mirrors
+   * the smsOnPurchase shape: operator can disable to suppress sends without
+   * touching the per-customer marketingConsentAt gate. The send is
+   * transactional (Israeli Comm. Act amend. 40 carve-out) so it bypasses
+   * the marketing-consent legal gate, BUT this flag still hard-stops
+   * delivery for cost or brand-preference reasons.
+   */
+  emailOnPurchase: boolean('email_on_purchase').notNull().default(true),
   /** Send a marketing SMS after a punch when remaining ≤ threshold. 0 disables. */
   smsLowEntriesThreshold: integer('sms_low_entries_threshold').notNull().default(0),
   /** Quiet hours expressed as minutes since midnight (Asia/Jerusalem). 21:00 default. */

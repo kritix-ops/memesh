@@ -16,6 +16,7 @@ import { customerAuthConfig } from '../auth.js';
 import { env } from '../config.js';
 import { cookieScope } from '../lib/cookie-scope.js';
 import { processWcOrderWebhook } from '../lib/wc-order-processor.js';
+import { firePostPurchaseEmail } from '../lib/post-purchase-email.js';
 import { fireWcPostPurchaseSms } from '../lib/wc-post-purchase-sms.js';
 import { envKeyResolver } from '../qr.js';
 
@@ -141,10 +142,24 @@ export const wcHandoffRoutes: FastifyPluginAsync = async (fastify) => {
         // webhook arriving later returns processed with cardsCreated: []
         // and naturally skips. See _plans/2026-06-22-wc-post-purchase-sms.md.
         if (result.status === 'processed' && result.cardsCreated.length > 0) {
+          // Mint endpoint is the common case (WP thank-you page runs
+          // before the async webhook arrives), so this is where SMS +
+          // email typically fire for WC orders. Two channels in parallel,
+          // each with their own handoff token. See
+          // _plans/2026-06-23-post-purchase-email.md.
           void fireWcPostPurchaseSms(db, {
             customerId: result.customerId,
             customerPhone: result.customerPhone,
             orderId: result.orderId,
+            cards: result.cardsSummary,
+            log: request.log,
+          });
+          void firePostPurchaseEmail(db, {
+            customerId: result.customerId,
+            customerEmail: result.customerEmail,
+            customerFirstName: result.customerFirstName,
+            source: 'wc_checkout',
+            orderRef: result.orderId,
             cards: result.cardsSummary,
             log: request.log,
           });

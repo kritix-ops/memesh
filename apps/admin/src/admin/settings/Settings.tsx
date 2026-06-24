@@ -480,6 +480,7 @@ function SmsSection({
   reload: () => Promise<void>;
 }) {
   const [onPurchase, setOnPurchase] = useState(loaded.smsOnPurchase);
+  const [emailOnPurchase, setEmailOnPurchase] = useState(loaded.emailOnPurchase);
   const [lowThreshold, setLowThreshold] = useState(String(loaded.smsLowEntriesThreshold));
   const [quietStart, setQuietStart] = useState(formatHHMM(loaded.smsQuietStartMinutes));
   const [quietEnd, setQuietEnd] = useState(formatHHMM(loaded.smsQuietEndMinutes));
@@ -488,6 +489,7 @@ function SmsSection({
 
   useEffect(() => {
     setOnPurchase(loaded.smsOnPurchase);
+    setEmailOnPurchase(loaded.emailOnPurchase);
     setLowThreshold(String(loaded.smsLowEntriesThreshold));
     setQuietStart(formatHHMM(loaded.smsQuietStartMinutes));
     setQuietEnd(formatHHMM(loaded.smsQuietEndMinutes));
@@ -495,6 +497,7 @@ function SmsSection({
 
   const dirty =
     onPurchase !== loaded.smsOnPurchase ||
+    emailOnPurchase !== loaded.emailOnPurchase ||
     lowThreshold !== String(loaded.smsLowEntriesThreshold) ||
     quietStart !== formatHHMM(loaded.smsQuietStartMinutes) ||
     quietEnd !== formatHHMM(loaded.smsQuietEndMinutes);
@@ -511,6 +514,7 @@ function SmsSection({
     }
     setQuietError(null);
     if (onPurchase !== loaded.smsOnPurchase) patch.smsOnPurchase = onPurchase;
+    if (emailOnPurchase !== loaded.emailOnPurchase) patch.emailOnPurchase = emailOnPurchase;
     if (lt !== loaded.smsLowEntriesThreshold) patch.smsLowEntriesThreshold = lt;
     if (qs !== loaded.smsQuietStartMinutes) patch.smsQuietStartMinutes = qs;
     if (qe !== loaded.smsQuietEndMinutes) patch.smsQuietEndMinutes = qe;
@@ -519,15 +523,22 @@ function SmsSection({
 
   return (
     <SectionShell
-      title="הודעות SMS"
-      description="הודעות שיווקיות יוצאות רק ללקוחות עם הסכמה שיווקית. הודעות OTP לא מושפעות מההגדרות כאן."
+      title="הודעות לאחר רכישה"
+      description="לאחר יצירת כרטיסייה חדשה (בקופה או באתר) הלקוח מקבל הודעה עם קישור לאזור האישי. הודעות OTP לא מושפעות מההגדרות כאן."
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
         <BooleanField
           label="שליחת SMS למכירת כרטיסייה"
-          description="לקוח עם הסכמה שיווקית יקבל הודעה לאחר רכישת כרטיסייה חדשה עם המספר הסידורי ותוקף הכרטיסייה."
+          description="לקוח יקבל SMS לאחר רכישת כרטיסייה חדשה עם המספר הסידורי, התוקף וקישור לאזור האישי."
           checked={onPurchase}
           onChange={setOnPurchase}
+          disabled={submitting}
+        />
+        <BooleanField
+          label="שליחת אימייל למכירת כרטיסייה"
+          description="לקוח עם כתובת מייל יקבל בנוסף ל-SMS גם אימייל מעוצב עם פרטי הכרטיסייה וקישור לאזור האישי. נשלח רק כאשר ללקוח יש מייל בקובץ."
+          checked={emailOnPurchase}
+          onChange={setEmailOnPurchase}
           disabled={submitting}
         />
         <NumberField

@@ -43,8 +43,9 @@ const updateBodySchema = z.object({
     .optional(),
   refundPolicyText: z.string().max(L.refundPolicyText.maxLength).optional(),
   cancelRole: z.enum(['admin', 'manager']).optional(),
-  // SMS
+  // SMS + email
   smsOnPurchase: z.boolean().optional(),
+  emailOnPurchase: z.boolean().optional(),
   smsLowEntriesThreshold: z
     .number()
     .int()
