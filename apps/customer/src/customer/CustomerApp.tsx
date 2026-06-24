@@ -6,7 +6,20 @@ import {
   type CustomerProfile,
 } from '@memesh/customer-auth';
 import { fmtDate, type PunchCard as ApiPunchCard } from '@memesh/web-shared';
-import { type CSSProperties, type FormEvent, type ReactNode, useEffect, useState } from 'react';
+import {
+  type CSSProperties,
+  type FormEvent,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
+
+// Resend cooldown matches the server's per-phone RESEND_COOLDOWN_MS in
+// packages/db/src/otp.ts. Keeping the two in sync client-side prevents the
+// SPA from inviting a resend the server would silently swallow.
+const RESEND_COOLDOWN_SEC = 60;
 
 const ORANGE = '#ffa983';
 const MUTED = '#636e72';
@@ -18,6 +31,41 @@ const card: CSSProperties = {
   boxShadow: SHADOW,
   padding: 20,
 };
+// Gift card accent: warm orange border + subtle inner glow makes a gifted
+// card visually distinct from a self-purchased one without screaming. The
+// gift badge above carries the explanation in words.
+const giftCardAccent: CSSProperties = {
+  background: 'linear-gradient(180deg, #fff8f1 0%, #ffffff 60%)',
+  border: '1.5px solid #ffd9bb',
+  boxShadow: '0 8px 28px rgba(246,169,110,0.18)',
+};
+// Small pill shown ABOVE the punch-card display. "🎁 מתנה מ-{buyer}"
+// — warm orange, rounded, deliberately friendly. When buyer name is unknown
+// (legacy gift rows or rare data gaps) we drop the "מ-X" tail.
+function GiftBadge({ buyerName }: { buyerName: string | null }) {
+  return (
+    <div
+      style={{
+        alignSelf: 'stretch',
+        background: '#fff4ec',
+        border: '1px solid #ffd9bb',
+        color: '#a05a23',
+        borderRadius: 999,
+        padding: '8px 14px',
+        fontSize: 14,
+        fontWeight: 600,
+        textAlign: 'center',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+      }}
+    >
+      <span aria-hidden="true">🎁</span>
+      <span>{buyerName ? `מתנה מ-${buyerName}` : 'כרטיסיית מתנה'}</span>
+    </div>
+  );
+}
 const primaryBtn: CSSProperties = {
   background: ORANGE,
   color: '#fff',
@@ -93,6 +141,33 @@ function CustomerLogin() {
   const [code, setCode] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Resend cooldown clock. Set when a code goes out; counts down to 0. While
+  // > 0 the resend button is disabled and shows the remaining seconds — same
+  // contract the server enforces, so the SPA cannot invite a resend that
+  // would silently fail with `cooldown`.
+  const [resendIn, setResendIn] = useState(0);
+  const resendTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const startResendCooldown = useCallback(() => {
+    setResendIn(RESEND_COOLDOWN_SEC);
+    if (resendTimerRef.current) clearInterval(resendTimerRef.current);
+    resendTimerRef.current = setInterval(() => {
+      setResendIn((s) => {
+        if (s <= 1) {
+          if (resendTimerRef.current) clearInterval(resendTimerRef.current);
+          resendTimerRef.current = null;
+          return 0;
+        }
+        return s - 1;
+      });
+    }, 1000);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (resendTimerRef.current) clearInterval(resendTimerRef.current);
+    };
+  }, []);
 
   const onRequest = async (e: FormEvent) => {
     e.preventDefault();
@@ -111,6 +186,22 @@ function CustomerLogin() {
     }
     setCode('');
     setStep('code');
+    startResendCooldown();
+  };
+
+  const onResendSms = async () => {
+    const trimmed = phone.trim();
+    if (!trimmed || resendIn > 0 || submitting) return;
+    setSubmitting(true);
+    setError(null);
+    const res = await requestOtp(trimmed);
+    setSubmitting(false);
+    if (!res.ok) {
+      setError(humanizeCustomerAuthError(res.error));
+      return;
+    }
+    setCode('');
+    startResendCooldown();
   };
 
   const onVerify = async (e: FormEvent) => {
@@ -146,6 +237,22 @@ function CustomerLogin() {
     }
     setCode('');
     setStep('email-code');
+    startResendCooldown();
+  };
+
+  const onResendEmail = async () => {
+    const trimmed = email.trim();
+    if (!trimmed || resendIn > 0 || submitting) return;
+    setSubmitting(true);
+    setError(null);
+    const res = await requestEmailOtp(trimmed);
+    setSubmitting(false);
+    if (!res.ok) {
+      setError(humanizeCustomerAuthError(res.error));
+      return;
+    }
+    setCode('');
+    startResendCooldown();
   };
 
   const onVerifyEmail = async (e: FormEvent) => {
@@ -258,6 +365,23 @@ function CustomerLogin() {
           </button>
           <button
             type="button"
+            onClick={() => void onResendSms()}
+            disabled={submitting || resendIn > 0}
+            style={{
+              border: 'none',
+              background: 'transparent',
+              color: resendIn > 0 ? MUTED : ORANGE,
+              cursor: submitting || resendIn > 0 ? 'default' : 'pointer',
+              width: '100%',
+              marginTop: 12,
+              fontSize: 14,
+              fontWeight: 600,
+            }}
+          >
+            {resendIn > 0 ? `שליחת קוד חדש בעוד ${resendIn} שניות` : 'שלחו לי קוד חדש'}
+          </button>
+          <button
+            type="button"
             onClick={() => {
               setStep('phone');
               setError(null);
@@ -270,7 +394,7 @@ function CustomerLogin() {
               color: MUTED,
               cursor: 'pointer',
               width: '100%',
-              marginTop: 12,
+              marginTop: 8,
               fontSize: 14,
             }}
           >
@@ -365,6 +489,23 @@ function CustomerLogin() {
           </button>
           <button
             type="button"
+            onClick={() => void onResendEmail()}
+            disabled={submitting || resendIn > 0}
+            style={{
+              border: 'none',
+              background: 'transparent',
+              color: resendIn > 0 ? MUTED : ORANGE,
+              cursor: submitting || resendIn > 0 ? 'default' : 'pointer',
+              width: '100%',
+              marginTop: 12,
+              fontSize: 14,
+              fontWeight: 600,
+            }}
+          >
+            {resendIn > 0 ? `שליחת קוד חדש בעוד ${resendIn} שניות` : 'שלחו לי קוד חדש'}
+          </button>
+          <button
+            type="button"
             onClick={() => {
               setStep('email');
               setError(null);
@@ -377,7 +518,7 @@ function CustomerLogin() {
               color: MUTED,
               cursor: 'pointer',
               width: '100%',
-              marginTop: 12,
+              marginTop: 8,
               fontSize: 14,
             }}
           >
@@ -409,7 +550,12 @@ function ErrorBanner({ message }: { message: string }) {
 }
 
 function humanizeCustomerAuthError(code: string): string {
-  if (code === 'invalid_code') return 'קוד שגוי או שפג תוקפו. בקשו קוד חדש.';
+  // Surfaces the new server reasons from /verify-otp so a stuck customer
+  // sees a real recovery path instead of the catch-all "wrong code" loop.
+  if (code === 'invalid_code') return 'הקוד אינו תקין. בדקו שוב את הספרות.';
+  if (code === 'code_expired') return 'הקוד פג תוקף. שלחו לעצמכם קוד חדש.';
+  if (code === 'code_locked')
+    return 'הגעתם למספר ניסיונות מירבי. נסו שוב בעוד כ-15 דקות, או שלחו קוד חדש.';
   if (code === 'invalid_body') return 'הקלט אינו תקין.';
   if (code === 'http_429') return 'יותר מדי ניסיונות. נסו שוב בעוד דקה.';
   return 'תקלה זמנית. נסו שוב בעוד רגע.';
@@ -537,8 +683,10 @@ function Home({
               alignItems: 'center',
               gap: 16,
               marginBottom: 12,
+              ...(c.isGift && giftCardAccent),
             }}
           >
+            {c.isGift && <GiftBadge buyerName={c.giftBuyerFirstName ?? null} />}
             <PunchCard used={c.usedEntries} total={c.totalEntries} compact />
             <MemeshQr value={c.qrToken} size={180} title={`קוד QR — ${c.serialNumber}`} />
             <div style={{ fontSize: 13, color: MUTED }}>{c.serialNumber}</div>

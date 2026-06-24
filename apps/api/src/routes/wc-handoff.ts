@@ -15,8 +15,13 @@ import { z } from 'zod';
 import { customerAuthConfig } from '../auth.js';
 import { env } from '../config.js';
 import { cookieScope } from '../lib/cookie-scope.js';
-import { processWcOrderWebhook } from '../lib/wc-order-processor.js';
+import {
+  fireGiftBuyerEmail,
+  fireGiftRecipientClaimEmail,
+  fireGiftRecipientMagicEmail,
+} from '../lib/gift-email.js';
 import { firePostPurchaseEmail } from '../lib/post-purchase-email.js';
+import { processWcOrderWebhook } from '../lib/wc-order-processor.js';
 import { fireWcPostPurchaseSms } from '../lib/wc-post-purchase-sms.js';
 import { envKeyResolver } from '../qr.js';
 
@@ -161,6 +166,55 @@ export const wcHandoffRoutes: FastifyPluginAsync = async (fastify) => {
             source: 'wc_checkout',
             orderRef: result.orderId,
             cards: result.cardsSummary,
+            log: request.log,
+          });
+        }
+        // Gift-card branches: the inline mint path is the first surface
+        // that creates cards / pending claims for a gift order (WP thank-you
+        // runs before the async webhook), so the gift emails fire here in
+        // the common case. The async webhook re-running this code sees
+        // either cardsCreated:[] (direct-mint already done) or
+        // alreadyExisted:true (pending already minted) and skips email
+        // sending, preserving "exactly one email per real purchase".
+        if (
+          result.status === 'processed_gift_direct' &&
+          result.cardsCreated.length > 0 &&
+          result.recipientCustomerEmail
+        ) {
+          void fireGiftRecipientMagicEmail(db, {
+            recipientCustomerId: result.recipientCustomerId,
+            recipientEmail: result.recipientCustomerEmail,
+            recipientFirstName: result.recipientFirstName,
+            buyerFirstName: result.buyerFirstName,
+            orderId: result.orderId,
+            log: request.log,
+          });
+          void fireGiftBuyerEmail(db, {
+            buyerEmail: result.buyerEmail,
+            buyerFirstName: result.buyerFirstName,
+            recipientFirstName: result.recipientFirstName,
+            orderId: result.orderId,
+            log: request.log,
+          });
+        }
+        if (
+          result.status === 'processed_gift_pending' &&
+          !result.alreadyExisted &&
+          result.rawClaimToken
+        ) {
+          void fireGiftRecipientClaimEmail(db, {
+            recipientEmail: result.recipientEmail,
+            recipientFirstName: result.recipientFirstName,
+            buyerFirstName: result.buyerFirstName,
+            rawClaimToken: result.rawClaimToken,
+            orderId: result.orderId,
+            log: request.log,
+          });
+          void fireGiftBuyerEmail(db, {
+            buyerEmail: result.buyerEmail,
+            buyerFirstName: result.buyerFirstName,
+            recipientFirstName: result.recipientFirstName,
+            orderId: result.orderId,
             log: request.log,
           });
         }

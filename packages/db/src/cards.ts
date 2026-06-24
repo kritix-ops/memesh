@@ -130,6 +130,19 @@ export interface CreatePunchCardInput {
   receiptNumber?: string;
   /** Cashier who issued the card (attribution PIN at the till). */
   soldBy?: string;
+  /**
+   * Gift-card provenance (2026-06-24). When set, the card row gets
+   * `is_gift=true` and the buyer's identity denormalized onto it for audit.
+   * `claimedAt` should equal `now` for direct-mint gifts (recipient was
+   * already a Memesh customer) and the actual claim timestamp for cards
+   * minted from a pending-claim row.
+   */
+  gift?: {
+    buyerFirstName: string;
+    buyerLastName: string;
+    buyerPhone: string;
+    claimedAt: Date;
+  };
   now?: Date;
 }
 
@@ -182,6 +195,16 @@ export const createPunchCard = async (
       wcOrderId: input.wcOrderId ?? null,
       ...(input.receiptNumber !== undefined && { receiptNumber: input.receiptNumber }),
       ...(input.soldBy !== undefined && { soldBy: input.soldBy }),
+      // Gift provenance — populated as a group when the card originated
+      // from a gift order. Stays at defaults (is_gift=false, NULLs) for
+      // every non-gift sale.
+      ...(input.gift !== undefined && {
+        isGift: true,
+        giftBuyerFirstName: input.gift.buyerFirstName,
+        giftBuyerLastName: input.gift.buyerLastName,
+        giftBuyerPhone: input.gift.buyerPhone,
+        giftClaimedAt: input.gift.claimedAt,
+      }),
       // When the caller injects `now` (tests, backfill), honor it for
       // createdAt too — otherwise the row default Now() would diverge
       // from expiresAt arithmetic.

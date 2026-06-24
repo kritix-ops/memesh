@@ -15,4 +15,6 @@ export * from './staff-password-resets.js';
 export * from './role-permissions.js';
 export * from './permissions-catalog.js';
 export * from './wc-orders.js';
+export * from './gift-claims.js';
+export * from './gift-template.js';
 export * from './migrations-path.js';
