@@ -37,6 +37,11 @@ export const CARD_SETTINGS_LIMITS = {
   checkoutThankyouTitle: { minLength: 1, maxLength: 200 },
   checkoutThankyouBody: { minLength: 1, maxLength: 2000 },
   checkoutThankyouButtonText: { minLength: 1, maxLength: 100 },
+  emailOnPurchaseSubject: { minLength: 1, maxLength: 200 },
+  emailOnPurchaseHeadline: { minLength: 1, maxLength: 200 },
+  emailOnPurchaseIntro: { minLength: 1, maxLength: 500 },
+  emailOnPurchaseCtaText: { minLength: 1, maxLength: 60 },
+  emailOnPurchaseFooterNote: { minLength: 1, maxLength: 500 },
 } as const;
 
 export type CardSettingsValidationError =
@@ -66,6 +71,14 @@ export type CardSettingsValidationError =
   | 'checkout_thankyou_body_length'
   | 'checkout_thankyou_body_unknown_placeholder'
   | 'checkout_thankyou_button_text_length'
+  | 'email_on_purchase_subject_length'
+  | 'email_on_purchase_subject_unknown_placeholder'
+  | 'email_on_purchase_headline_length'
+  | 'email_on_purchase_headline_unknown_placeholder'
+  | 'email_on_purchase_intro_length'
+  | 'email_on_purchase_intro_unknown_placeholder'
+  | 'email_on_purchase_cta_text_length'
+  | 'email_on_purchase_footer_note_length'
   | 'no_changes';
 
 /**
@@ -124,6 +137,14 @@ export interface UpdateCardSettingsInput {
   checkoutThankyouTitle?: string | undefined;
   checkoutThankyouBody?: string | undefined;
   checkoutThankyouButtonText?: string | undefined;
+  // Editable post-purchase email copy (2026-06-24). Subject + headline +
+  // intro support {{firstName}}; CTA + footer are plain text. Visual
+  // structure (logo, colors, layout) stays in code.
+  emailOnPurchaseSubject?: string | undefined;
+  emailOnPurchaseHeadline?: string | undefined;
+  emailOnPurchaseIntro?: string | undefined;
+  emailOnPurchaseCtaText?: string | undefined;
+  emailOnPurchaseFooterNote?: string | undefined;
 
   /** Staff member making the change; recorded on the row and in the action log. */
   staffId?: string | undefined;
@@ -260,6 +281,46 @@ export const updateCardSettings = async (
       return { ok: false, error: 'checkout_thankyou_button_text_length' };
     }
   }
+  if (input.emailOnPurchaseSubject !== undefined) {
+    const trimmed = input.emailOnPurchaseSubject.trim();
+    if (trimmed.length < L.emailOnPurchaseSubject.minLength || trimmed.length > L.emailOnPurchaseSubject.maxLength) {
+      return { ok: false, error: 'email_on_purchase_subject_length' };
+    }
+    const placeholderCheck = validateHandoffThankyouTemplate(trimmed);
+    if (!placeholderCheck.ok) {
+      return { ok: false, error: 'email_on_purchase_subject_unknown_placeholder' };
+    }
+  }
+  if (input.emailOnPurchaseHeadline !== undefined) {
+    const trimmed = input.emailOnPurchaseHeadline.trim();
+    if (trimmed.length < L.emailOnPurchaseHeadline.minLength || trimmed.length > L.emailOnPurchaseHeadline.maxLength) {
+      return { ok: false, error: 'email_on_purchase_headline_length' };
+    }
+    const placeholderCheck = validateHandoffThankyouTemplate(trimmed);
+    if (!placeholderCheck.ok) {
+      return { ok: false, error: 'email_on_purchase_headline_unknown_placeholder' };
+    }
+  }
+  if (input.emailOnPurchaseIntro !== undefined) {
+    if (input.emailOnPurchaseIntro.length < L.emailOnPurchaseIntro.minLength || input.emailOnPurchaseIntro.length > L.emailOnPurchaseIntro.maxLength) {
+      return { ok: false, error: 'email_on_purchase_intro_length' };
+    }
+    const placeholderCheck = validateHandoffThankyouTemplate(input.emailOnPurchaseIntro);
+    if (!placeholderCheck.ok) {
+      return { ok: false, error: 'email_on_purchase_intro_unknown_placeholder' };
+    }
+  }
+  if (input.emailOnPurchaseCtaText !== undefined) {
+    const trimmed = input.emailOnPurchaseCtaText.trim();
+    if (trimmed.length < L.emailOnPurchaseCtaText.minLength || trimmed.length > L.emailOnPurchaseCtaText.maxLength) {
+      return { ok: false, error: 'email_on_purchase_cta_text_length' };
+    }
+  }
+  if (input.emailOnPurchaseFooterNote !== undefined) {
+    if (input.emailOnPurchaseFooterNote.length < L.emailOnPurchaseFooterNote.minLength || input.emailOnPurchaseFooterNote.length > L.emailOnPurchaseFooterNote.maxLength) {
+      return { ok: false, error: 'email_on_purchase_footer_note_length' };
+    }
+  }
 
   const now = input.now ?? new Date();
   const current = await getCardSettings(db);
@@ -332,6 +393,14 @@ export const updateCardSettings = async (
   // copy (operators may want a paragraph break before the CTA).
   assignStringRaw('checkoutThankyouBody', input.checkoutThankyouBody);
   assignString('checkoutThankyouButtonText', input.checkoutThankyouButtonText);
+  // Post-purchase email copy. Subject + headline + cta are trimmed; intro
+  // and footer use assignStringRaw so operators can include a deliberate
+  // newline (rare but allowed — they render as <br> in the HTML body).
+  assignString('emailOnPurchaseSubject', input.emailOnPurchaseSubject);
+  assignString('emailOnPurchaseHeadline', input.emailOnPurchaseHeadline);
+  assignStringRaw('emailOnPurchaseIntro', input.emailOnPurchaseIntro);
+  assignString('emailOnPurchaseCtaText', input.emailOnPurchaseCtaText);
+  assignStringRaw('emailOnPurchaseFooterNote', input.emailOnPurchaseFooterNote);
 
   if (Object.keys(diff).length === 0) return { ok: false, error: 'no_changes' };
 
@@ -391,6 +460,11 @@ const FIELD_LABELS: Record<string, string> = {
   checkoutThankyouTitle: 'כותרת דף תודה',
   checkoutThankyouBody: 'גוף דף תודה',
   checkoutThankyouButtonText: 'כפתור דף תודה',
+  emailOnPurchaseSubject: 'נושא אימייל',
+  emailOnPurchaseHeadline: 'כותרת אימייל',
+  emailOnPurchaseIntro: 'גוף אימייל',
+  emailOnPurchaseCtaText: 'טקסט כפתור באימייל',
+  emailOnPurchaseFooterNote: 'הערת רגל באימייל',
 };
 
 const summarizeDiff = (diff: Record<string, [unknown, unknown]>): string => {

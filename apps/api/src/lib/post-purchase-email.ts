@@ -25,7 +25,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import { getCardSettings, mintHandoffToken } from '@memesh/db';
+import { getCardSettings, mintHandoffToken, renderHandoffThankyou } from '@memesh/db';
 import type { PgDatabase } from 'drizzle-orm/pg-core';
 import type { FastifyBaseLogger } from 'fastify';
 import { env } from '../config.js';
@@ -97,10 +97,22 @@ export async function firePostPurchaseEmail(
     );
 
     const link = `${env.CUSTOMER_BASE_URL}/c/${minted.raw}`;
+    // Memesh logo is served by the customer Vercel project at
+    // /og-image.png; same domain as the magic link so we get the https
+    // guarantee for free via the config.ts prod superRefine.
+    const logoUrl = `${env.CUSTOMER_BASE_URL}/og-image.png`;
     const { subject, html, text } = buildPostPurchaseEmailBody({
       firstName: input.customerFirstName,
       cards: input.cards,
       link,
+      logoUrl,
+      copy: {
+        subject: settings.emailOnPurchaseSubject,
+        headline: settings.emailOnPurchaseHeadline,
+        intro: settings.emailOnPurchaseIntro,
+        ctaText: settings.emailOnPurchaseCtaText,
+        footerNote: settings.emailOnPurchaseFooterNote,
+      },
     });
 
     const res = await emailProvider.send({
@@ -139,27 +151,54 @@ export interface PostPurchaseEmailBody {
   text: string;
 }
 
+export interface PostPurchaseEmailCopy {
+  /** Subject line — supports {{firstName}}. */
+  subject: string;
+  /** H1 inside the email body — supports {{firstName}}. */
+  headline: string;
+  /** Paragraph under the card-detail line — supports {{firstName}}. */
+  intro: string;
+  /** Label on the CTA button. Plain text, no placeholders. */
+  ctaText: string;
+  /** Footnote at the bottom. Plain text, no placeholders. */
+  footerNote: string;
+}
+
 export interface BuildPostPurchaseEmailBodyInput {
   /** Customer first name. Falls back to "לקוח/ה" when empty. */
   firstName: string;
   cards: ReadonlyArray<PostSaleSmsCard>;
   link: string;
+  /** Editable copy loaded from card_settings (admin Settings → email). */
+  copy: PostPurchaseEmailCopy;
+  /** Absolute https URL to the Memesh logo PNG; rendered at width 200px. */
+  logoUrl: string;
 }
-
-const SAFE_FIRST_NAME_FALLBACK = 'לקוח/ה';
 
 export function buildPostPurchaseEmailBody(
   input: BuildPostPurchaseEmailBodyInput,
 ): PostPurchaseEmailBody {
-  const firstName = input.firstName.trim() || SAFE_FIRST_NAME_FALLBACK;
+  // {{firstName}} substitution via the shared renderer; null-safe so an
+  // empty name resolves to "לקוח/ה". The subject and headline and intro
+  // each carry this placeholder; cta + footer are plain text.
+  const subject = renderHandoffThankyou(input.copy.subject, {
+    firstName: input.firstName,
+  });
+  const headline = renderHandoffThankyou(input.copy.headline, {
+    firstName: input.firstName,
+  });
+  const intro = renderHandoffThankyou(input.copy.intro, {
+    firstName: input.firstName,
+  });
+  const ctaText = input.copy.ctaText;
+  const footerNote = input.copy.footerNote;
+
   const cardCount = input.cards.length;
-  const isMulti = cardCount > 1;
 
-  const subject = isMulti
-    ? `${cardCount} כרטיסיות חדשות ב-Memesh`
-    : `הכרטיסייה שלך ב-Memesh מוכנה`;
-
-  const detailLine = (() => {
+  // The card-detail line is data-driven — entry count + expiry from the
+  // purchase — so it stays in code. Two HTML/text variants: one with
+  // <strong> for the HTML body, one plain for the text body.
+  const detailLineHtml = (() => {
     if (cardCount === 0) {
       return 'הכרטיסייה שלך מוכנה לשימוש.';
     }
@@ -172,7 +211,6 @@ export function buildPostPurchaseEmailBody(
     }
     return `נוצרו עבורך <strong>${cardCount} כרטיסיות חדשות</strong>.`;
   })();
-
   const detailLineText = (() => {
     if (cardCount === 0) return 'הכרטיסייה שלך מוכנה לשימוש.';
     if (cardCount === 1) {
@@ -185,52 +223,80 @@ export function buildPostPurchaseEmailBody(
     return `נוצרו עבורך ${cardCount} כרטיסיות חדשות.`;
   })();
 
-  const escapedName = escapeHtmlText(firstName);
+  const escapedHeadline = escapeHtmlText(headline);
+  const escapedIntro = escapeHtmlText(intro);
+  const escapedCtaText = escapeHtmlText(ctaText);
+  const escapedFooterNote = escapeHtmlText(footerNote);
+  const escapedSubject = escapeHtmlText(subject);
   const escapedLink = escapeHtmlAttr(input.link);
+  const escapedLogoUrl = escapeHtmlAttr(input.logoUrl);
 
   // HTML body. Inline styles are the right call here — email clients
   // famously ignore <style> blocks, so every visual choice must be inlined.
   // Color palette + typography match the customer-area shell on
   // my.memesh.co.il so the email feels of-a-piece with the destination.
+  //
+  // RTL note (Yanay 2026-06-24): Gmail and most email clients strip the
+  // outer `<html dir="rtl">` and fall back to LTR defaults, causing every
+  // Hebrew line to render left-aligned. The defensive fix: set `dir="rtl"`
+  // as an HTML attribute AND inline `text-align:right;` on every text-
+  // bearing element (table, td, p, h1). Two mechanisms because different
+  // clients respect different ones — belt-and-suspenders. The logo + CTA
+  // button cells stay align="center" (centered visuals work in both
+  // directions); the copy-paste-link block stays text-align:left;
+  // direction:ltr (URLs read left-to-right even inside RTL email).
+  //
+  // Logo: width=200 attribute (Outlook 2016 ignores CSS width); display:block
+  // kills the small bottom gap older mail clients insert under inline
+  // images; border:0 prevents Outlook 2007's inherited blue link border on
+  // linked images; outline:none mutes the focus ring some webmail clients
+  // draw around the linked image. Wrapped in <a href="https://memesh.co.il">
+  // so clicking the logo opens the main marketing site (conventional UX).
   const html = `<!doctype html>
 <html lang="he" dir="rtl">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>${escapeHtmlText(subject)}</title>
+    <title>${escapedSubject}</title>
   </head>
-  <body style="margin:0;padding:0;background:#fff8f1;font-family:'Assistant','Segoe UI','Helvetica Neue',Arial,sans-serif;color:#2d3436;">
+  <body dir="rtl" style="margin:0;padding:0;background:#fff8f1;font-family:'Assistant','Segoe UI','Helvetica Neue',Arial,sans-serif;color:#2d3436;direction:rtl;text-align:right;">
     <div style="display:none;max-height:0;overflow:hidden;color:transparent;">${escapeHtmlText(detailLineText)}</div>
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#fff8f1;padding:32px 16px;">
+    <table dir="rtl" role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#fff8f1;padding:32px 16px;direction:rtl;">
       <tr>
         <td align="center">
-          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:520px;background:#ffffff;border-radius:16px;box-shadow:0 6px 24px rgba(45,52,54,0.08);">
+          <table dir="rtl" role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:520px;background:#ffffff;border-radius:16px;box-shadow:0 6px 24px rgba(45,52,54,0.08);direction:rtl;">
             <tr>
-              <td style="padding:32px 32px 8px 32px;">
-                <div style="font-size:14px;font-weight:600;letter-spacing:0.04em;color:#a98d7d;text-transform:uppercase;">Memesh</div>
-                <h1 style="margin:12px 0 8px 0;font-size:24px;font-weight:700;color:#2d3436;line-height:1.3;">שלום ${escapedName}, הכרטיסייה שלך מוכנה!</h1>
+              <td style="padding:32px 32px 8px 32px;" align="center">
+                <a href="https://memesh.co.il" style="display:inline-block;text-decoration:none;border:0;outline:none;">
+                  <img src="${escapedLogoUrl}" alt="Memesh" width="200" style="display:block;width:200px;height:auto;border:0;outline:none;text-decoration:none;" />
+                </a>
               </td>
             </tr>
             <tr>
-              <td style="padding:0 32px 8px 32px;font-size:16px;line-height:1.6;color:#2d3436;">
-                <p style="margin:0 0 12px 0;">${detailLine}</p>
-                <p style="margin:0 0 24px 0;color:#5a6168;">תודה שרכשת אצלנו — אנחנו מחכים לראותך.</p>
+              <td dir="rtl" style="padding:8px 32px 8px 32px;direction:rtl;text-align:center;">
+                <h1 dir="rtl" style="margin:12px 0 8px 0;font-size:24px;font-weight:700;color:#2d3436;line-height:1.3;text-align:center;direction:rtl;">${escapedHeadline}</h1>
+              </td>
+            </tr>
+            <tr>
+              <td dir="rtl" style="padding:0 32px 8px 32px;font-size:16px;line-height:1.6;color:#2d3436;direction:rtl;text-align:right;">
+                <p dir="rtl" style="margin:0 0 12px 0;direction:rtl;text-align:right;">${detailLineHtml}</p>
+                <p dir="rtl" style="margin:0 0 24px 0;color:#5a6168;direction:rtl;text-align:right;">${escapedIntro}</p>
               </td>
             </tr>
             <tr>
               <td style="padding:0 32px 24px 32px;" align="center">
-                <a href="${escapedLink}" style="display:inline-block;background:#f6a96e;color:#ffffff;text-decoration:none;font-weight:700;font-size:16px;padding:14px 28px;border-radius:12px;">לצפייה באזור האישי</a>
+                <a href="${escapedLink}" style="display:inline-block;background:#f6a96e;color:#ffffff;text-decoration:none;font-weight:700;font-size:16px;padding:14px 28px;border-radius:12px;">${escapedCtaText}</a>
               </td>
             </tr>
             <tr>
-              <td style="padding:0 32px 24px 32px;font-size:12px;line-height:1.5;color:#8a8f95;">
-                <p style="margin:0 0 8px 0;">אם הכפתור לא נפתח, אפשר להעתיק את הקישור הבא:</p>
+              <td dir="rtl" style="padding:0 32px 24px 32px;font-size:12px;line-height:1.5;color:#8a8f95;direction:rtl;text-align:right;">
+                <p dir="rtl" style="margin:0 0 8px 0;direction:rtl;text-align:right;">אם הכפתור לא נפתח, אפשר להעתיק את הקישור הבא:</p>
                 <p style="margin:0;word-break:break-all;direction:ltr;text-align:left;"><a href="${escapedLink}" style="color:#a98d7d;text-decoration:underline;">${escapeHtmlText(input.link)}</a></p>
               </td>
             </tr>
             <tr>
-              <td style="padding:0 32px 28px 32px;font-size:12px;color:#a98d7d;border-top:1px solid #f0eae5;">
-                <p style="margin:16px 0 0 0;">הודעה זו נשלחה לאחר רכישה ב-Memesh. אין צורך להשיב אליה.</p>
+              <td dir="rtl" style="padding:0 32px 28px 32px;font-size:12px;color:#a98d7d;border-top:1px solid #f0eae5;direction:rtl;text-align:right;">
+                <p dir="rtl" style="margin:16px 0 0 0;direction:rtl;text-align:right;">${escapedFooterNote}</p>
               </td>
             </tr>
           </table>
@@ -244,12 +310,14 @@ export function buildPostPurchaseEmailBody(
   // contract still asks for a text body. Some clients (and accessibility
   // tools) prefer the text variant; building one explicitly is cheap.
   const text = [
-    `שלום ${firstName}, הכרטיסייה שלך מוכנה!`,
+    headline,
     '',
     detailLineText,
-    'תודה שרכשת אצלנו — אנחנו מחכים לראותך.',
+    intro,
     '',
-    `לצפייה באזור האישי: ${input.link}`,
+    `${ctaText}: ${input.link}`,
+    '',
+    footerNote,
   ].join('\n');
 
   return { subject, html, text };

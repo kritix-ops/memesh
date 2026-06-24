@@ -140,6 +140,37 @@ const updateBodySchema = z.object({
     .min(L.checkoutThankyouButtonText.minLength)
     .max(L.checkoutThankyouButtonText.maxLength)
     .optional(),
+  // Editable post-purchase email copy (2026-06-24). Subject/headline/cta
+  // trim; intro/footer preserve whitespace so operators can include a
+  // deliberate newline inside the email body.
+  emailOnPurchaseSubject: z
+    .string()
+    .trim()
+    .min(L.emailOnPurchaseSubject.minLength)
+    .max(L.emailOnPurchaseSubject.maxLength)
+    .optional(),
+  emailOnPurchaseHeadline: z
+    .string()
+    .trim()
+    .min(L.emailOnPurchaseHeadline.minLength)
+    .max(L.emailOnPurchaseHeadline.maxLength)
+    .optional(),
+  emailOnPurchaseIntro: z
+    .string()
+    .min(L.emailOnPurchaseIntro.minLength)
+    .max(L.emailOnPurchaseIntro.maxLength)
+    .optional(),
+  emailOnPurchaseCtaText: z
+    .string()
+    .trim()
+    .min(L.emailOnPurchaseCtaText.minLength)
+    .max(L.emailOnPurchaseCtaText.maxLength)
+    .optional(),
+  emailOnPurchaseFooterNote: z
+    .string()
+    .min(L.emailOnPurchaseFooterNote.minLength)
+    .max(L.emailOnPurchaseFooterNote.maxLength)
+    .optional(),
 });
 
 const validationStatus: Record<CardSettingsValidationError, number> = {
@@ -169,6 +200,14 @@ const validationStatus: Record<CardSettingsValidationError, number> = {
   checkout_thankyou_body_length: 400,
   checkout_thankyou_body_unknown_placeholder: 400,
   checkout_thankyou_button_text_length: 400,
+  email_on_purchase_subject_length: 400,
+  email_on_purchase_subject_unknown_placeholder: 400,
+  email_on_purchase_headline_length: 400,
+  email_on_purchase_headline_unknown_placeholder: 400,
+  email_on_purchase_intro_length: 400,
+  email_on_purchase_intro_unknown_placeholder: 400,
+  email_on_purchase_cta_text_length: 400,
+  email_on_purchase_footer_note_length: 400,
   no_changes: 409,
 };
 

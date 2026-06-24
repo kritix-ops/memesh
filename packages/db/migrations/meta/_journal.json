@@ -92,6 +92,13 @@
       "when": 1782777600000,
       "tag": "0012_email_on_purchase",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1782864000000,
+      "tag": "0013_email_on_purchase_copy",
+      "breakpoints": true
     }
   ]
 }
