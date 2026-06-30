@@ -17,20 +17,45 @@
 --   - booking_status    : held | confirmed | used | cancelled | expired
 --   - waitlist_status   : waiting | notified | claimed | expired | cancelled
 --
--- CHECK constraints are belt-and-suspenders for the application-layer
--- validation in step 2b. A negative capacity or a sub-zero companion count
--- is corrupt state that should fail loudly even if a bug bypasses the API.
+-- IDEMPOTENCY (2026-07-01 hotfix):
+-- The first production apply of this migration failed mid-way and left the
+-- enum types behind (PostgreSQL CREATE TYPE doesn't roll back when a later
+-- statement in the same migration fails). Re-running then errored on
+-- `type "ticket_type" already exists`. This rewrite makes every statement
+-- safe to re-apply:
+--   - CREATE TYPE is wrapped in DO blocks that swallow duplicate_object
+--   - CREATE TABLE uses IF NOT EXISTS
+--   - CREATE INDEX uses IF NOT EXISTS
+--   - UNIQUE / CHECK / FOREIGN KEY constraints are declared inline in the
+--     CREATE TABLE so they only fire when the table is newly created
+-- CHECK constraints are belt-and-suspenders for application-layer validation.
 
-CREATE TYPE "ticket_type" AS ENUM ('child_under_walking', 'child_over_walking');
+DO $$ BEGIN
+  CREATE TYPE "ticket_type" AS ENUM ('child_under_walking', 'child_over_walking');
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
 --> statement-breakpoint
-CREATE TYPE "booking_source" AS ENUM ('paid', 'punchcard', 'gift', 'manual');
+DO $$ BEGIN
+  CREATE TYPE "booking_source" AS ENUM ('paid', 'punchcard', 'gift', 'manual');
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
 --> statement-breakpoint
-CREATE TYPE "booking_status" AS ENUM ('held', 'confirmed', 'used', 'cancelled', 'expired');
+DO $$ BEGIN
+  CREATE TYPE "booking_status" AS ENUM ('held', 'confirmed', 'used', 'cancelled', 'expired');
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
 --> statement-breakpoint
-CREATE TYPE "waitlist_status" AS ENUM ('waiting', 'notified', 'claimed', 'expired', 'cancelled');
+DO $$ BEGIN
+  CREATE TYPE "waitlist_status" AS ENUM ('waiting', 'notified', 'claimed', 'expired', 'cancelled');
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
 --> statement-breakpoint
 
-CREATE TABLE "rounds" (
+CREATE TABLE IF NOT EXISTS "rounds" (
   "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
   "label" varchar(64) NOT NULL,
   "display_name" varchar(128) NOT NULL,
@@ -49,7 +74,7 @@ CREATE TABLE "rounds" (
 );
 --> statement-breakpoint
 
-CREATE TABLE "round_instances" (
+CREATE TABLE IF NOT EXISTS "round_instances" (
   "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
   "round_id" uuid NOT NULL REFERENCES "rounds"("id"),
   "date" date NOT NULL,
@@ -69,10 +94,10 @@ CREATE TABLE "round_instances" (
 -- Hot path: dashboard "today's rounds" lookup, customer round selector
 -- ("show me availability for date X"). Indexed up-front; even a few months
 -- of round_instances will outgrow a sequential scan.
-CREATE INDEX "round_instances_date_idx" ON "round_instances" ("date");
+CREATE INDEX IF NOT EXISTS "round_instances_date_idx" ON "round_instances" ("date");
 --> statement-breakpoint
 
-CREATE TABLE "bookings" (
+CREATE TABLE IF NOT EXISTS "bookings" (
   "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
   "round_instance_id" uuid NOT NULL REFERENCES "round_instances"("id"),
   "customer_id" uuid NOT NULL REFERENCES "customers"("id"),
@@ -109,21 +134,21 @@ CREATE TABLE "bookings" (
 --> statement-breakpoint
 -- Hot path: dashboard availability calculation (COUNT per round_instance
 -- filtered by status). Composite index lets it index-only-scan.
-CREATE INDEX "bookings_round_instance_status_idx" ON "bookings" ("round_instance_id", "status");
+CREATE INDEX IF NOT EXISTS "bookings_round_instance_status_idx" ON "bookings" ("round_instance_id", "status");
 --> statement-breakpoint
 -- Customer personal area: "my upcoming bookings" — by customer + active status.
-CREATE INDEX "bookings_customer_status_idx" ON "bookings" ("customer_id", "status");
+CREATE INDEX IF NOT EXISTS "bookings_customer_status_idx" ON "bookings" ("customer_id", "status");
 --> statement-breakpoint
 -- Cleanup job (runs every minute): expire held rows past their TTL. Partial
 -- index keeps it tiny — only the rows that are actually candidates for expiry.
-CREATE INDEX "bookings_hold_expires_idx" ON "bookings" ("hold_expires_at") WHERE "status" = 'held';
+CREATE INDEX IF NOT EXISTS "bookings_hold_expires_idx" ON "bookings" ("hold_expires_at") WHERE "status" = 'held';
 --> statement-breakpoint
 -- Webhook idempotency: mint endpoint looks up existing booking by wc_order_id
 -- before creating a new one. Same pattern as punch_cards.wc_order_id_idx.
-CREATE INDEX "bookings_wc_order_idx" ON "bookings" ("wc_order_id");
+CREATE INDEX IF NOT EXISTS "bookings_wc_order_idx" ON "bookings" ("wc_order_id");
 --> statement-breakpoint
 
-CREATE TABLE "waitlist_entries" (
+CREATE TABLE IF NOT EXISTS "waitlist_entries" (
   "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
   "round_instance_id" uuid NOT NULL REFERENCES "round_instances"("id"),
   "customer_id" uuid NOT NULL REFERENCES "customers"("id"),
@@ -139,4 +164,4 @@ CREATE TABLE "waitlist_entries" (
 --> statement-breakpoint
 -- FIFO lookup: "next waiting entry for round X" — composite covers the
 -- ORDER BY created_at ASC LIMIT 1 query in on_slot_freed().
-CREATE INDEX "waitlist_round_status_created_idx" ON "waitlist_entries" ("round_instance_id", "status", "created_at");
+CREATE INDEX IF NOT EXISTS "waitlist_round_status_created_idx" ON "waitlist_entries" ("round_instance_id", "status", "created_at");
