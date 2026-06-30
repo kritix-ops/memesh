@@ -1,9 +1,9 @@
+import { createHash } from 'node:crypto';
 import {
   hashPassword,
   isAuthSuccess,
   signAccessToken,
   signRefreshToken,
-  STAFF_ROLES,
   verifyRefreshToken,
 } from '@memesh/auth';
 import {
@@ -37,11 +37,6 @@ const emailField = z.string().trim().toLowerCase().email().max(255);
 const staffLoginBodySchema = z.object({
   email: emailField,
   password: z.string().min(1).max(256),
-});
-
-const devLoginBodySchema = z.object({
-  userId: z.string().uuid(),
-  role: z.enum(STAFF_ROLES),
 });
 
 const refreshBodySchema = z
@@ -89,6 +84,34 @@ const buildResetUrl = (rawToken: string): string => {
 };
 
 export const authRoutes: FastifyPluginAsync = async (fastify) => {
+  // Manual brute-force gate for /auth/login.
+  //
+  // We attempted to use @fastify/rate-limit's per-route `config: { rateLimit }`
+  // shape (matches the existing pattern in this file), but in our setup the
+  // plugin's request-dedup symbol — set by the global handler — silently
+  // skips the per-route handler. The pattern is a no-op here. Rather than
+  // refactor the plugin layer hours before launch, this in-process bucket
+  // gives us deterministic per-(ip, email) brute-force protection that's
+  // also unit-testable.
+  //
+  // Bucket: keyed on (ip + sha256(email)), 10 attempts per 15-minute rolling
+  // window. Email is hashed so we never log raw addresses into the limiter's
+  // memory. Counter resets when the window expires. State is per-process —
+  // acceptable because each Vercel function instance handles its own slice
+  // of traffic and we only need to block automated guessing, not coordinate
+  // across the fleet.
+  const LOGIN_BUCKET_MAX = 10;
+  const LOGIN_BUCKET_WINDOW_MS = 15 * 60 * 1000;
+  const loginBucket = new Map<string, { count: number; resetAt: number }>();
+
+  const loginBucketKey = (ip: string, email: string): string => {
+    const emailHash = createHash('sha256')
+      .update(`auth-login:${email}`)
+      .digest('hex')
+      .slice(0, 16);
+    return `${ip}:${emailHash}`;
+  };
+
   // Staff login with email + password. Username moved from phone to email on
   // 2026-06-21 so a staff member's credential survives a phone change.
   fastify.post('/auth/login', async (request, reply) => {
@@ -96,41 +119,39 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
     if (!parsed.success) {
       return reply.code(400).send({ error: 'invalid_body' });
     }
+
+    const now = Date.now();
+    const key = loginBucketKey(request.ip, parsed.data.email);
+    const entry = loginBucket.get(key);
+    if (entry && entry.resetAt > now) {
+      if (entry.count >= LOGIN_BUCKET_MAX) {
+        const retryAfterSec = Math.max(1, Math.ceil((entry.resetAt - now) / 1000));
+        request.log.warn(
+          { email: parsed.data.email, retryAfterSec },
+          '[auth login] rate-limit exceeded',
+        );
+        reply.header('retry-after', String(retryAfterSec));
+        return reply.code(429).send({ error: 'too_many_attempts', retryAfterSec });
+      }
+      entry.count += 1;
+    } else {
+      loginBucket.set(key, { count: 1, resetAt: now + LOGIN_BUCKET_WINDOW_MS });
+    }
+
     request.log.info({ email: parsed.data.email }, '[auth login] attempt');
     const login = await verifyStaffLogin(parsed.data.email, parsed.data.password);
     if (!login) {
       request.log.info({ email: parsed.data.email }, '[auth login] rejected');
       return reply.code(401).send({ error: 'invalid_credentials' });
     }
+    // Burn the bucket on success so a real user's typo attempts don't
+    // count against their next legitimate login.
+    loginBucket.delete(key);
     const accessToken = await signAccessToken({ sub: login.id, role: login.role }, authConfig);
     const refreshToken = await signRefreshToken({ sub: login.id, role: login.role }, authConfig);
     setAuthCookies(reply, accessToken, refreshToken);
     request.log.info({ sub: login.id, role: login.role }, '[auth login] issued');
     return { accessToken, refreshToken, role: login.role };
-  });
-
-  fastify.post('/auth/dev-login', async (request, reply) => {
-    if (env.NODE_ENV === 'production') {
-      return reply.code(404).send({ error: 'not_found' });
-    }
-    const parsed = devLoginBodySchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.code(400).send({ error: 'invalid_body', issues: parsed.error.issues });
-    }
-    const accessToken = await signAccessToken(
-      { sub: parsed.data.userId, role: parsed.data.role },
-      authConfig,
-    );
-    const refreshToken = await signRefreshToken(
-      { sub: parsed.data.userId, role: parsed.data.role },
-      authConfig,
-    );
-    setAuthCookies(reply, accessToken, refreshToken);
-    request.log.info(
-      { sub: parsed.data.userId, role: parsed.data.role },
-      '[auth dev-login] issued',
-    );
-    return { accessToken, refreshToken };
   });
 
   fastify.post('/auth/refresh', async (request, reply) => {

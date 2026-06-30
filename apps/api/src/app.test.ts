@@ -358,3 +358,80 @@ test('every response carries X-Robots-Tag: noindex, nofollow (401)', async () =>
   assert.equal(res.statusCode, 401);
   assert.equal(res.headers['x-robots-tag'], 'noindex, nofollow');
 });
+
+// ---------------------------------------------------------------------------
+// Regression: /auth/dev-login was removed 2026-06-22 (P0-2 of the launch-
+// readiness audit). It used to mint an admin JWT for any UUID when NODE_ENV
+// !== 'production' — a realistic preview-deploy escalation if NODE_ENV ever
+// reverted. This test guards against accidental re-introduction in any env.
+// ---------------------------------------------------------------------------
+
+test('POST /auth/dev-login is gone (returns 404, never mints a token)', async () => {
+  const res = await app.inject({
+    method: 'POST',
+    url: '/auth/dev-login',
+    payload: { userId: '00000000-0000-0000-0000-000000000000', role: 'admin' },
+  });
+  assert.equal(res.statusCode, 404);
+  // Belt-and-braces: even if some shim ever responds, the body must not look
+  // like a successful login.
+  const text = res.body ?? '';
+  assert.equal(text.includes('accessToken'), false, 'dev-login must not return a JWT');
+  assert.equal(text.includes('refreshToken'), false);
+});
+
+// ---------------------------------------------------------------------------
+// Regression: /auth/login per-(ip, email) rate limit. 5 attempts per 15 min
+// is the brute-force gate added 2026-06-22 (P0-6 of the launch audit).
+// We pick a unique sentinel email so this test is hermetic — the limiter is
+// in-memory and the email key segregates this test's bucket from anything
+// else in app.test.ts.
+// ---------------------------------------------------------------------------
+
+test('POST /auth/login locks an email after 10 wrong-password attempts (brute-force defence)', async () => {
+  // The manual bucket counts only well-formed bodies that reach the limiter
+  // (400 invalid-body responses early-return before the bucket touches them),
+  // and is keyed on (ip, sha256(email)). A unique sentinel email isolates
+  // this test from any other login activity in the file. In the CI test env
+  // there's no real DB attached, so the handler either returns 401 (wrong
+  // creds, real DB) or 500 (DB connection refused) — both prove the bucket
+  // counted them. The 11th attempt must be 429.
+  const payload = {
+    email: 'login-brute-force-sentinel@memesh-test.invalid',
+    password: 'wrong-password',
+  };
+  for (let i = 0; i < 10; i += 1) {
+    const res = await app.inject({ method: 'POST', url: '/auth/login', payload });
+    assert.ok(
+      res.statusCode === 401 || res.statusCode === 500,
+      `attempt ${i + 1} should pass the limiter (got ${res.statusCode})`,
+    );
+  }
+  const eleventh = await app.inject({ method: 'POST', url: '/auth/login', payload });
+  assert.equal(eleventh.statusCode, 429, '11th attempt should be 429 (rate-limited)');
+  // Retry-After is set so well-behaved clients back off.
+  assert.ok(eleventh.headers['retry-after'], 'retry-after header should be set');
+  const body = eleventh.json();
+  assert.equal(body.error, 'too_many_attempts');
+  assert.ok(typeof body.retryAfterSec === 'number' && body.retryAfterSec > 0);
+});
+
+test('POST /auth/login bucket segregates by email — a different account is not gated', async () => {
+  // After the previous test locked `login-brute-force-sentinel`, a DIFFERENT
+  // email must still pass through to the handler. Proves the bucket key
+  // includes the email hash, so a single brute-forcer's IP cannot DoS every
+  // staff account by hammering one email.
+  const res = await app.inject({
+    method: 'POST',
+    url: '/auth/login',
+    payload: {
+      email: 'different-login-sentinel@memesh-test.invalid',
+      password: 'wrong-password',
+    },
+  });
+  assert.ok(
+    res.statusCode === 401 || res.statusCode === 500,
+    `a different email should not inherit the previous email's lockout (got ${res.statusCode})`,
+  );
+  assert.notEqual(res.statusCode, 429);
+});
