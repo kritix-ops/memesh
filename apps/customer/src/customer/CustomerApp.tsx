@@ -409,7 +409,10 @@ function ErrorBanner({ message }: { message: string }) {
 }
 
 function humanizeCustomerAuthError(code: string): string {
-  if (code === 'invalid_code') return 'קוד שגוי או שפג תוקפו. בקשו קוד חדש.';
+  if (code === 'invalid_code') return 'קוד שגוי. בקשו קוד חדש אם תרצו.';
+  if (code === 'code_expired') return 'תוקף הקוד פג. בקשו קוד חדש.';
+  if (code === 'code_locked')
+    return 'יותר מדי ניסיונות שגויים. בקשו קוד חדש בעוד מספר דקות.';
   if (code === 'invalid_body') return 'הקלט אינו תקין.';
   if (code === 'http_429') return 'יותר מדי ניסיונות. נסו שוב בעוד דקה.';
   return 'תקלה זמנית. נסו שוב בעוד רגע.';
