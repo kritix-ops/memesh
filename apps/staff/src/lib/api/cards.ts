@@ -26,6 +26,17 @@ export interface SellCardInput {
 
 export interface SellCardResponse {
   card: PunchCard;
+  /**
+   * True when the server WILL ATTEMPT the post-sale magic-link SMS (the
+   * `smsOnPurchase` operator switch is on). False means the switch is off
+   * and no SMS goes out — the cashier success screen must reflect this so
+   * we never lie to the customer about a message they will not receive.
+   *
+   * The flag does NOT promise delivery; provider failures still arrive
+   * silently via fire-and-log. From the cashier's POV, "we are sending" is
+   * the most honest claim we can make at the moment of sale.
+   */
+  smsWillSend: boolean;
 }
 
 /** Sell a punch card to an existing customer. */

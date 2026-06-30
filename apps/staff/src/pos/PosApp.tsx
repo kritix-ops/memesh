@@ -2330,7 +2330,9 @@ function Sell({
             </div>
           )}
           <div style={{ color: MUTED, fontSize: 14, marginTop: 6 }}>
-            הכרטיסייה זמינה בכרטיס הלקוח. נשלח ללקוח/ה SMS עם קישור אישי לצפייה בכרטיסייה.
+            {sellResponse.smsWillSend
+              ? 'הכרטיסייה זמינה בכרטיס הלקוח. אנחנו שולחים ללקוח/ה SMS עם קישור אישי לצפייה בכרטיסייה.'
+              : 'הכרטיסייה זמינה בכרטיס הלקוח. שליחת SMS כבויה כעת — הקישור לא ישלח אוטומטית.'}
           </div>
           <div style={{ display: 'flex', justifyContent: 'center', margin: '18px 0' }}>
             <MemeshQr
