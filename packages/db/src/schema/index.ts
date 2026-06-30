@@ -15,3 +15,4 @@ export * from './card-settings';
 export * from './wc-product-card-configs';
 export * from './wc-processed-webhooks';
 export * from './wc-webhook-failures';
+export * from './gift-pending-claims';

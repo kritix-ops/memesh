@@ -3,6 +3,11 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { FastifyPluginAsync } from 'fastify';
 import { env } from '../config.js';
 import {
+  fireGiftBuyerEmail,
+  fireGiftRecipientClaimEmail,
+  fireGiftRecipientMagicEmail,
+} from '../lib/gift-email.js';
+import {
   processWcOrderWebhook,
   type ProcessWcOrderWebhookResult,
 } from '../lib/wc-order-processor.js';
@@ -187,6 +192,101 @@ export const webhooksWcRoutes: FastifyPluginAsync = async (fastify) => {
           '[webhook wc] failure_recorded',
         );
         return reply.send({ ok: true, failure: result.reason });
+      case 'processed_gift_direct':
+        // Direct-mint gift order: recipient was already a Memesh customer,
+        // card was added to their account. Fire the recipient magic-link
+        // email + the buyer confirmation. Both are fire-and-log helpers
+        // that never throw, so the webhook 200 response is not blocked on
+        // Pulseem availability.
+        log.info(
+          {
+            deliveryId,
+            orderId: result.orderId,
+            recipientCustomerId: result.recipientCustomerId,
+            cardsCreated: result.cardsCreated.length,
+            matchedBy: result.matchedBy,
+            ...(result.recipientMatchConflictCustomerId && {
+              conflictWithEmailMatchCustomerId: result.recipientMatchConflictCustomerId,
+            }),
+          },
+          '[webhook wc gift] mint_immediate',
+        );
+        if (result.recipientMatchConflictCustomerId) {
+          log.warn(
+            {
+              deliveryId,
+              orderId: result.orderId,
+              phoneCustomerId: result.recipientCustomerId,
+              emailCustomerId: result.recipientMatchConflictCustomerId,
+            },
+            '[webhook wc gift] match_conflict — phone wins, admin review',
+          );
+        }
+        // Only fire emails on the delivery that actually created cards.
+        // A re-delivery whose cards were already minted (cardsCreated: [])
+        // must not send a second pair of emails.
+        if (result.cardsCreated.length > 0 && result.recipientCustomerEmail) {
+          void fireGiftRecipientMagicEmail(db, {
+            recipientCustomerId: result.recipientCustomerId,
+            recipientEmail: result.recipientCustomerEmail,
+            recipientFirstName: result.recipientFirstName,
+            buyerFirstName: result.buyerFirstName,
+            orderId: result.orderId,
+            log,
+          });
+          void fireGiftBuyerEmail(db, {
+            buyerEmail: result.buyerEmail,
+            buyerFirstName: result.buyerFirstName,
+            recipientFirstName: result.recipientFirstName,
+            orderId: result.orderId,
+            log,
+          });
+        }
+        return reply.send({
+          ok: true,
+          orderId: result.orderId,
+          gift: 'direct',
+          cardsCreated: result.cardsCreated.length,
+        });
+      case 'processed_gift_pending':
+        // Pending-claim gift order: recipient is brand new to Memesh. A
+        // gift_pending_claims row holds the gift until the recipient
+        // verifies their phone via the claim flow. Fire emails only on the
+        // delivery that minted the pending row — re-deliveries have
+        // alreadyExisted=true and no rawClaimToken, so the first delivery
+        // already sent both emails.
+        log.info(
+          {
+            deliveryId,
+            orderId: result.orderId,
+            pendingClaimId: result.pendingClaimId,
+            alreadyExisted: result.alreadyExisted,
+          },
+          '[webhook wc gift] pending_created',
+        );
+        if (!result.alreadyExisted && result.rawClaimToken) {
+          void fireGiftRecipientClaimEmail(db, {
+            recipientEmail: result.recipientEmail,
+            recipientFirstName: result.recipientFirstName,
+            buyerFirstName: result.buyerFirstName,
+            rawClaimToken: result.rawClaimToken,
+            orderId: result.orderId,
+            log,
+          });
+          void fireGiftBuyerEmail(db, {
+            buyerEmail: result.buyerEmail,
+            buyerFirstName: result.buyerFirstName,
+            recipientFirstName: result.recipientFirstName,
+            orderId: result.orderId,
+            log,
+          });
+        }
+        return reply.send({
+          ok: true,
+          orderId: result.orderId,
+          gift: 'pending',
+          alreadyExisted: result.alreadyExisted,
+        });
     }
   });
 };

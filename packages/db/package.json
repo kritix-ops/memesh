@@ -10,7 +10,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --test --import tsx src/punch.test.ts src/cards.test.ts src/otp.test.ts src/email-otp.test.ts src/accounts.test.ts src/reports.test.ts src/card-settings.test.ts src/staff-pins.test.ts src/wc-orders.test.ts src/handoff-tokens.test.ts src/staff-password-resets.test.ts src/role-permissions.test.ts",
+    "test": "node --test --import tsx src/punch.test.ts src/cards.test.ts src/otp.test.ts src/email-otp.test.ts src/accounts.test.ts src/reports.test.ts src/card-settings.test.ts src/staff-pins.test.ts src/wc-orders.test.ts src/handoff-tokens.test.ts src/staff-password-resets.test.ts src/role-permissions.test.ts src/gift-claims.test.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",

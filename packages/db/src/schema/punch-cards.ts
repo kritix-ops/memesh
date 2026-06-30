@@ -48,6 +48,22 @@ export const punchCards = pgTable(
     cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
     cancelledBy: uuid('cancelled_by').references(() => staff.id),
     cancelReason: text('cancel_reason'),
+    // Gift-card provenance (2026-06-24). True when the card was minted from a
+    // gift order — either directly to a recipient who was already a Memesh
+    // customer, or via the gift_pending_claims → claim flow. The buyer's
+    // identity is denormalized onto the row so support can trace the gift
+    // without joining to wc_orders / gift_pending_claims. Buyer email is
+    // intentionally NOT stored here — only needed at order time for the
+    // buyer-confirmation email, no audit value beyond that.
+    isGift: boolean('is_gift').notNull().default(false),
+    giftBuyerFirstName: text('gift_buyer_first_name'),
+    giftBuyerLastName: text('gift_buyer_last_name'),
+    giftBuyerPhone: varchar('gift_buyer_phone', { length: 32 }),
+    // For pending-claim cards: timestamp the recipient claimed and minting
+    // happened. For direct-mint gifts: equals created_at (set at mint time
+    // so a single column distinguishes "this card came from a gift" cards
+    // from non-gift cards regardless of path).
+    giftClaimedAt: timestamp('gift_claimed_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },

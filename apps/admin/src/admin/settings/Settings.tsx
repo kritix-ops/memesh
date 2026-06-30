@@ -31,7 +31,8 @@ type SectionKey =
   | 'operations'
   | 'pos-controls'
   | 'thankyou'
-  | 'email-content';
+  | 'email-content'
+  | 'gift-cards';
 
 const SECTIONS: { key: SectionKey; label: string }[] = [
   { key: 'pricing', label: 'כרטיסייה' },
@@ -42,6 +43,7 @@ const SECTIONS: { key: SectionKey; label: string }[] = [
   { key: 'pos-controls', label: 'קופה ובקרה' },
   { key: 'thankyou', label: 'דף תודה' },
   { key: 'email-content', label: 'תוכן אימייל' },
+  { key: 'gift-cards', label: 'כרטיסיות מתנה' },
 ];
 
 const subNavStyle = (active: boolean): CSSProperties => ({
@@ -170,6 +172,9 @@ export function Settings() {
         )}
         {active === 'email-content' && (
           <EmailContentSection loaded={loaded} onSaved={onSaved} reload={reload} />
+        )}
+        {active === 'gift-cards' && (
+          <GiftCardsSection loaded={loaded} onSaved={onSaved} reload={reload} />
         )}
       </div>
     </div>
@@ -1016,6 +1021,313 @@ function EmailContentSection({
           rows={2}
         />
       </div>
+      <SaveBar dirty={dirty} submitting={submitting} error={error} flash={flash} onSubmit={submit} />
+    </SectionShell>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Gift cards (2026-06-24)
+// ---------------------------------------------------------------------------
+//
+// The gift-card flow has THREE distinct emails (recipient, buyer confirm,
+// buyer claim notification) on top of the master toggles. To keep the form
+// manageable, fields are grouped under sub-headings — operator scans by
+// audience ("who reads this email?") rather than by a flat 14-field list.
+//
+// Placeholders: recipient-facing copy supports {{buyerFirstName}};
+// buyer-facing copy supports {{recipientFirstName}}. Server validates on
+// save so a typo fails fast with a 400 instead of shipping garbage.
+function GiftCardsSection({
+  loaded,
+  onSaved,
+  reload,
+}: {
+  loaded: CardSettings;
+  onSaved: (next: CardSettings) => void;
+  reload: () => Promise<void>;
+}) {
+  const [enabled, setEnabled] = useState(loaded.giftCardsEnabled);
+  const [ttlDays, setTtlDays] = useState(String(loaded.giftClaimTtlDays));
+  const [notifyOnClaim, setNotifyOnClaim] = useState(loaded.giftBuyerNotifyOnClaim);
+
+  const [rcpSubject, setRcpSubject] = useState(loaded.giftRecipientEmailSubject);
+  const [rcpHeadline, setRcpHeadline] = useState(loaded.giftRecipientEmailHeadline);
+  const [rcpIntro, setRcpIntro] = useState(loaded.giftRecipientEmailIntro);
+  const [rcpMagicCta, setRcpMagicCta] = useState(loaded.giftRecipientEmailMagicCtaText);
+  const [rcpClaimCta, setRcpClaimCta] = useState(loaded.giftRecipientEmailClaimCtaText);
+  const [rcpFooter, setRcpFooter] = useState(loaded.giftRecipientEmailFooterNote);
+
+  const [byrSubject, setByrSubject] = useState(loaded.giftBuyerEmailSubject);
+  const [byrHeadline, setByrHeadline] = useState(loaded.giftBuyerEmailHeadline);
+  const [byrIntro, setByrIntro] = useState(loaded.giftBuyerEmailIntro);
+  const [byrFooter, setByrFooter] = useState(loaded.giftBuyerEmailFooterNote);
+
+  const [byrClaimSubject, setByrClaimSubject] = useState(loaded.giftBuyerClaimEmailSubject);
+  const [byrClaimHeadline, setByrClaimHeadline] = useState(loaded.giftBuyerClaimEmailHeadline);
+  const [byrClaimIntro, setByrClaimIntro] = useState(loaded.giftBuyerClaimEmailIntro);
+  const [byrClaimFooter, setByrClaimFooter] = useState(loaded.giftBuyerClaimEmailFooterNote);
+
+  const { submitting, error, flash, save } = useSectionSave(onSaved, reload);
+
+  useEffect(() => {
+    setEnabled(loaded.giftCardsEnabled);
+    setTtlDays(String(loaded.giftClaimTtlDays));
+    setNotifyOnClaim(loaded.giftBuyerNotifyOnClaim);
+    setRcpSubject(loaded.giftRecipientEmailSubject);
+    setRcpHeadline(loaded.giftRecipientEmailHeadline);
+    setRcpIntro(loaded.giftRecipientEmailIntro);
+    setRcpMagicCta(loaded.giftRecipientEmailMagicCtaText);
+    setRcpClaimCta(loaded.giftRecipientEmailClaimCtaText);
+    setRcpFooter(loaded.giftRecipientEmailFooterNote);
+    setByrSubject(loaded.giftBuyerEmailSubject);
+    setByrHeadline(loaded.giftBuyerEmailHeadline);
+    setByrIntro(loaded.giftBuyerEmailIntro);
+    setByrFooter(loaded.giftBuyerEmailFooterNote);
+    setByrClaimSubject(loaded.giftBuyerClaimEmailSubject);
+    setByrClaimHeadline(loaded.giftBuyerClaimEmailHeadline);
+    setByrClaimIntro(loaded.giftBuyerClaimEmailIntro);
+    setByrClaimFooter(loaded.giftBuyerClaimEmailFooterNote);
+  }, [loaded]);
+
+  const ttlAsNumber = Number(ttlDays);
+  const ttlValid = Number.isInteger(ttlAsNumber) && ttlAsNumber >= 1 && ttlAsNumber <= 1825;
+
+  const dirty =
+    enabled !== loaded.giftCardsEnabled ||
+    (ttlValid && ttlAsNumber !== loaded.giftClaimTtlDays) ||
+    notifyOnClaim !== loaded.giftBuyerNotifyOnClaim ||
+    rcpSubject.trim() !== loaded.giftRecipientEmailSubject ||
+    rcpHeadline.trim() !== loaded.giftRecipientEmailHeadline ||
+    rcpIntro !== loaded.giftRecipientEmailIntro ||
+    rcpMagicCta.trim() !== loaded.giftRecipientEmailMagicCtaText ||
+    rcpClaimCta.trim() !== loaded.giftRecipientEmailClaimCtaText ||
+    rcpFooter !== loaded.giftRecipientEmailFooterNote ||
+    byrSubject.trim() !== loaded.giftBuyerEmailSubject ||
+    byrHeadline.trim() !== loaded.giftBuyerEmailHeadline ||
+    byrIntro !== loaded.giftBuyerEmailIntro ||
+    byrFooter !== loaded.giftBuyerEmailFooterNote ||
+    byrClaimSubject.trim() !== loaded.giftBuyerClaimEmailSubject ||
+    byrClaimHeadline.trim() !== loaded.giftBuyerClaimEmailHeadline ||
+    byrClaimIntro !== loaded.giftBuyerClaimEmailIntro ||
+    byrClaimFooter !== loaded.giftBuyerClaimEmailFooterNote;
+
+  const submit = async () => {
+    const patch: CardSettingsPatch = {};
+    if (enabled !== loaded.giftCardsEnabled) patch.giftCardsEnabled = enabled;
+    if (ttlValid && ttlAsNumber !== loaded.giftClaimTtlDays) patch.giftClaimTtlDays = ttlAsNumber;
+    if (notifyOnClaim !== loaded.giftBuyerNotifyOnClaim) patch.giftBuyerNotifyOnClaim = notifyOnClaim;
+    if (rcpSubject.trim() !== loaded.giftRecipientEmailSubject)
+      patch.giftRecipientEmailSubject = rcpSubject.trim();
+    if (rcpHeadline.trim() !== loaded.giftRecipientEmailHeadline)
+      patch.giftRecipientEmailHeadline = rcpHeadline.trim();
+    if (rcpIntro !== loaded.giftRecipientEmailIntro) patch.giftRecipientEmailIntro = rcpIntro;
+    if (rcpMagicCta.trim() !== loaded.giftRecipientEmailMagicCtaText)
+      patch.giftRecipientEmailMagicCtaText = rcpMagicCta.trim();
+    if (rcpClaimCta.trim() !== loaded.giftRecipientEmailClaimCtaText)
+      patch.giftRecipientEmailClaimCtaText = rcpClaimCta.trim();
+    if (rcpFooter !== loaded.giftRecipientEmailFooterNote)
+      patch.giftRecipientEmailFooterNote = rcpFooter;
+    if (byrSubject.trim() !== loaded.giftBuyerEmailSubject)
+      patch.giftBuyerEmailSubject = byrSubject.trim();
+    if (byrHeadline.trim() !== loaded.giftBuyerEmailHeadline)
+      patch.giftBuyerEmailHeadline = byrHeadline.trim();
+    if (byrIntro !== loaded.giftBuyerEmailIntro) patch.giftBuyerEmailIntro = byrIntro;
+    if (byrFooter !== loaded.giftBuyerEmailFooterNote) patch.giftBuyerEmailFooterNote = byrFooter;
+    if (byrClaimSubject.trim() !== loaded.giftBuyerClaimEmailSubject)
+      patch.giftBuyerClaimEmailSubject = byrClaimSubject.trim();
+    if (byrClaimHeadline.trim() !== loaded.giftBuyerClaimEmailHeadline)
+      patch.giftBuyerClaimEmailHeadline = byrClaimHeadline.trim();
+    if (byrClaimIntro !== loaded.giftBuyerClaimEmailIntro)
+      patch.giftBuyerClaimEmailIntro = byrClaimIntro;
+    if (byrClaimFooter !== loaded.giftBuyerClaimEmailFooterNote)
+      patch.giftBuyerClaimEmailFooterNote = byrClaimFooter;
+    await save(patch, 'gift-cards');
+  };
+
+  const subheadingStyle: CSSProperties = {
+    fontSize: 13.5,
+    color: MUTED,
+    fontWeight: 600,
+    marginTop: 18,
+    marginBottom: -4,
+  };
+  const subheadingHint: CSSProperties = {
+    fontSize: 12.5,
+    color: '#8a8f95',
+    marginBottom: 6,
+  };
+
+  return (
+    <SectionShell
+      title="כרטיסיות מתנה"
+      description='מאפשר ללקוח לרכוש כרטיסייה כמתנה למישהו אחר. הכרטיסייה נשלחת במייל לנמען/ת; אם הוא/היא כבר רשום/ה במערכת — הכרטיסייה נוספת אוטומטית לחשבון. תווי המיקום: באימייל לנמען השתמשו ב-{{buyerFirstName}}; באימיילים למזמין השתמשו ב-{{recipientFirstName}}.'
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <BooleanField
+          label="הפעלת מנגנון כרטיסיות מתנה"
+          description="כאשר כבוי, הזמנות עם סימון 'מתנה' מהאתר יטופלו כרכישה רגילה (הכרטיסייה תיכנס לחשבון של המזמין). שמשמש כמתג כיבוי בזמן תקלות, ללא צורך בהעלאת גרסה."
+          checked={enabled}
+          onChange={setEnabled}
+          disabled={submitting}
+        />
+        <NumberField
+          label="תוקף קישור המתנה"
+          value={ttlDays}
+          onChange={setTtlDays}
+          disabled={submitting}
+          suffix="ימים"
+          hint="כמה זמן הנמען/ת יכול/ה לקבל את המתנה לפני שהקישור פג. ברירת מחדל: 365 ימים. טווח: 1 עד 1825."
+        />
+        <BooleanField
+          label="הודעת אישור למזמין כשהמתנה נפתחת"
+          description="כשהנמען/ת לוחץ/ת על הקישור ומקבל/ת את המתנה, המזמין מקבל מייל אישור 'המתנה נפתחה!'."
+          checked={notifyOnClaim}
+          onChange={setNotifyOnClaim}
+          disabled={submitting}
+        />
+
+        <div style={subheadingStyle}>אימייל לנמען/ת המתנה</div>
+        <div style={subheadingHint}>
+          זה האימייל ש-{'{{buyerFirstName}}'} שולח/ת בעצם. הכפתור שונה לפי המצב — אם הנמען/ת כבר רשום/ה
+          מופיע "פתחו את הכרטיסייה" (כניסה ישירה); אם לא, מופיע "קבלו את המתנה" (כניסה לאזור הקבלה).
+        </div>
+        <TextField
+          label="נושא"
+          value={rcpSubject}
+          onChange={setRcpSubject}
+          disabled={submitting}
+          hint='שורת הנושא בתיבת הדואר. דוגמה: "{{buyerFirstName}} שלח/ה לך כרטיסיית מתנה!".'
+          maxLength={200}
+        />
+        <TextField
+          label="כותרת ראשית"
+          value={rcpHeadline}
+          onChange={setRcpHeadline}
+          disabled={submitting}
+          hint='הכותרת הגדולה בראש האימייל. דוגמה: "קיבלת מתנה!".'
+          maxLength={200}
+        />
+        <TextAreaField
+          label="טקסט גוף"
+          value={rcpIntro}
+          onChange={setRcpIntro}
+          disabled={submitting}
+          hint="המשפט שמופיע מתחת לכותרת. הסבר קצר וחם."
+          maxLength={500}
+          rows={3}
+        />
+        <TextField
+          label='כפתור — מצב "כניסה ישירה"'
+          value={rcpMagicCta}
+          onChange={setRcpMagicCta}
+          disabled={submitting}
+          hint='הטקסט על הכפתור כשהנמען/ת כבר רשום/ה אצלנו ונכנס/ת ישירות לכרטיסייה. דוגמה: "פתחו את הכרטיסייה".'
+          maxLength={60}
+        />
+        <TextField
+          label='כפתור — מצב "קבלת המתנה"'
+          value={rcpClaimCta}
+          onChange={setRcpClaimCta}
+          disabled={submitting}
+          hint='הטקסט על הכפתור כשהנמען/ת חדש/ה אצלנו ועובר/ת לדף קבלת המתנה. דוגמה: "קבלו את המתנה".'
+          maxLength={60}
+        />
+        <TextAreaField
+          label="הערת רגל"
+          value={rcpFooter}
+          onChange={setRcpFooter}
+          disabled={submitting}
+          hint="טקסט קטן בתחתית האימייל."
+          maxLength={500}
+          rows={2}
+        />
+
+        <div style={subheadingStyle}>אימייל אישור למזמין</div>
+        <div style={subheadingHint}>
+          המזמין מקבל את האימייל הזה מיד אחרי שהוא/היא רוכש/ת את המתנה — אישור שההזמנה התקבלה והאימייל
+          לנמען/ת נשלח. השתמשו ב-{'{{recipientFirstName}}'} כדי להתייחס לנמען/ת.
+        </div>
+        <TextField
+          label="נושא"
+          value={byrSubject}
+          onChange={setByrSubject}
+          disabled={submitting}
+          hint='דוגמה: "הזמנת כרטיסיית מתנה ל-{{recipientFirstName}}".'
+          maxLength={200}
+        />
+        <TextField
+          label="כותרת ראשית"
+          value={byrHeadline}
+          onChange={setByrHeadline}
+          disabled={submitting}
+          hint='דוגמה: "תודה על המתנה!".'
+          maxLength={200}
+        />
+        <TextAreaField
+          label="טקסט גוף"
+          value={byrIntro}
+          onChange={setByrIntro}
+          disabled={submitting}
+          hint='דוגמה: "שלחנו ל-{{recipientFirstName}} מייל עם הכרטיסייה."'
+          maxLength={500}
+          rows={3}
+        />
+        <TextAreaField
+          label="הערת רגל"
+          value={byrFooter}
+          onChange={setByrFooter}
+          disabled={submitting}
+          hint="טקסט קטן בתחתית האימייל."
+          maxLength={500}
+          rows={2}
+        />
+
+        <div style={subheadingStyle}>אימייל פתיחת מתנה (למזמין)</div>
+        <div style={subheadingHint}>
+          האימייל הזה נשלח למזמין ברגע שהנמען/ת לוחץ/ת על הקישור וקיבל/ה את המתנה. מופיע רק אם המתג
+          "הודעת אישור למזמין כשהמתנה נפתחת" למעלה דלוק.
+        </div>
+        <TextField
+          label="נושא"
+          value={byrClaimSubject}
+          onChange={setByrClaimSubject}
+          disabled={submitting}
+          hint='דוגמה: "{{recipientFirstName}} פתח/ה את המתנה שלך!".'
+          maxLength={200}
+        />
+        <TextField
+          label="כותרת ראשית"
+          value={byrClaimHeadline}
+          onChange={setByrClaimHeadline}
+          disabled={submitting}
+          hint='דוגמה: "המתנה נפתחה".'
+          maxLength={200}
+        />
+        <TextAreaField
+          label="טקסט גוף"
+          value={byrClaimIntro}
+          onChange={setByrClaimIntro}
+          disabled={submitting}
+          hint='דוגמה: "{{recipientFirstName}} פתח/ה את הכרטיסייה שהענקת. תודה שבחרת ב-Memesh."'
+          maxLength={500}
+          rows={3}
+        />
+        <TextAreaField
+          label="הערת רגל"
+          value={byrClaimFooter}
+          onChange={setByrClaimFooter}
+          disabled={submitting}
+          hint="טקסט קטן בתחתית האימייל."
+          maxLength={500}
+          rows={2}
+        />
+      </div>
+      {ttlDays !== '' && !ttlValid && (
+        <div style={{ fontSize: 13, color: '#a23a3a' }}>
+          תוקף הקישור חייב להיות מספר שלם בין 1 ל-1825 ימים.
+        </div>
+      )}
       <SaveBar dirty={dirty} submitting={submitting} error={error} flash={flash} onSubmit={submit} />
     </SectionShell>
   );
