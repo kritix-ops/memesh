@@ -574,10 +574,22 @@ const {
   findCustomerByPhoneOrEmail: findCustomerByPhoneOrEmailFn,
   findPendingClaimByOrderId,
   giftPendingClaims,
+  updateCardSettings: updateCardSettingsFn,
 } = await import('@memesh/db');
 
-test('gift order with unknown recipient creates a pending claim row + no card', async () => {
+// The gift flow is shipped behind `giftCardsEnabled` (default off, so the
+// feature is dark on production until ops flips it). Every test that
+// exercises the gift branch needs to enable it explicitly. The kill-switch
+// test at line ~795 deliberately stays on plain freshDb() to prove the
+// default-off behavior.
+async function freshDbWithGiftCardsEnabled() {
   const db = await freshDb();
+  await updateCardSettingsFn(db, { giftCardsEnabled: true });
+  return db;
+}
+
+test('gift order with unknown recipient creates a pending claim row + no card', async () => {
+  const db = await freshDbWithGiftCardsEnabled();
   const result = await processWcOrderWebhook(db, {
     deliveryId: nextDeliveryId(),
     topic: 'order.updated',
@@ -618,7 +630,7 @@ test('gift order with unknown recipient creates a pending claim row + no card', 
 });
 
 test('gift order with existing recipient (phone match) mints directly with is_gift=true', async () => {
-  const db = await freshDb();
+  const db = await freshDbWithGiftCardsEnabled();
   // Customer rows store the canonical 05XXXXXXXX phone form; the processor
   // normalizes the WC-side recipient phone the same way before lookup.
   const recipient = await createCustomer(db, {
@@ -666,7 +678,7 @@ test('gift order with existing recipient (phone match) mints directly with is_gi
 });
 
 test('gift order with existing recipient (email match) sets matchedBy=email', async () => {
-  const db = await freshDb();
+  const db = await freshDbWithGiftCardsEnabled();
   const recipient = await createCustomer(db, {
     firstName: 'יואב',
     lastName: 'מייל',
@@ -695,7 +707,7 @@ test('gift order with existing recipient (email match) sets matchedBy=email', as
 });
 
 test('gift order with phone-vs-email conflict surfaces recipientMatchConflictCustomerId', async () => {
-  const db = await freshDb();
+  const db = await freshDbWithGiftCardsEnabled();
   const phoneOwner = await createCustomer(db, {
     firstName: 'בעל',
     lastName: 'טלפון',
@@ -732,7 +744,7 @@ test('gift order with phone-vs-email conflict surfaces recipientMatchConflictCus
 });
 
 test('gift order with malformed recipient phone records a failure row', async () => {
-  const db = await freshDb();
+  const db = await freshDbWithGiftCardsEnabled();
   const result = await processWcOrderWebhook(db, {
     deliveryId: nextDeliveryId(),
     topic: 'order.updated',
@@ -754,7 +766,7 @@ test('gift order with malformed recipient phone records a failure row', async ()
 });
 
 test('gift order with missing recipient email records a failure row', async () => {
-  const db = await freshDb();
+  const db = await freshDbWithGiftCardsEnabled();
   const result = await processWcOrderWebhook(db, {
     deliveryId: nextDeliveryId(),
     topic: 'order.updated',
@@ -773,7 +785,7 @@ test('gift order with missing recipient email records a failure row', async () =
 });
 
 test('gift order with missing recipient first name records a failure row', async () => {
-  const db = await freshDb();
+  const db = await freshDbWithGiftCardsEnabled();
   const result = await processWcOrderWebhook(db, {
     deliveryId: nextDeliveryId(),
     topic: 'order.updated',
@@ -825,7 +837,7 @@ test('gift toggle off makes the processor treat the order as a normal purchase',
 });
 
 test('gift order re-delivery returns alreadyExisted=true with no fresh raw token', async () => {
-  const db = await freshDb();
+  const db = await freshDbWithGiftCardsEnabled();
   const payload = wcGiftPayload({
     id: 2070,
     billing: { phone: '052-701-7010', email: 'dana9@example.com' },
@@ -865,7 +877,7 @@ test('gift order re-delivery returns alreadyExisted=true with no fresh raw token
 });
 
 test('gift order re-delivery for existing-recipient direct-mint returns cardsCreated empty', async () => {
-  const db = await freshDb();
+  const db = await freshDbWithGiftCardsEnabled();
   await createCustomer(db, {
     firstName: 'נמען',
     lastName: 'קיים',

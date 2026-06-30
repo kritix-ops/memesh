@@ -45,7 +45,7 @@ ALTER TABLE "punch_cards"
   ADD COLUMN "gift_claimed_at" timestamp with time zone;
 --> statement-breakpoint
 ALTER TABLE "card_settings"
-  ADD COLUMN "gift_cards_enabled" boolean NOT NULL DEFAULT true,
+  ADD COLUMN "gift_cards_enabled" boolean NOT NULL DEFAULT false,
   ADD COLUMN "gift_claim_ttl_days" integer NOT NULL DEFAULT 365,
   ADD COLUMN "gift_buyer_notify_on_claim" boolean NOT NULL DEFAULT true,
   ADD COLUMN "gift_recipient_email_subject" text NOT NULL DEFAULT '{{buyerFirstName}} שלח/ה לך כרטיסיית מתנה!',

@@ -138,7 +138,12 @@ export const cardSettings = pgTable('card_settings', {
   // processor ignores `_memesh_gift` meta and treats the order as a normal
   // purchase (card lands on the buyer's account). Lets ops disable the
   // feature in an incident without redeploying.
-  giftCardsEnabled: boolean('gift_cards_enabled').notNull().default(true),
+  //
+  // Defaults to false so a fresh deploy ships SAFE — the gift checkout flow
+  // is not live until ops explicitly flips this in Settings. Avoids the
+  // "ship and the feature is immediately live" surprise. Flip on once the
+  // WP plugin + email copy + claim flow are confirmed end-to-end.
+  giftCardsEnabled: boolean('gift_cards_enabled').notNull().default(false),
   // How long an unclaimed gift_pending_claims row stays valid. Default a
   // year — gifts are emotional items, recipients can lose the email and
   // come back months later.
