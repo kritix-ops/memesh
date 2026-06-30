@@ -16,3 +16,7 @@ export * from './wc-product-card-configs';
 export * from './wc-processed-webhooks';
 export * from './wc-webhook-failures';
 export * from './gift-pending-claims';
+export * from './rounds';
+export * from './round-instances';
+export * from './bookings';
+export * from './waitlist-entries';
