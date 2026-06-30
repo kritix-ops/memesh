@@ -20,3 +20,4 @@ export * from './rounds';
 export * from './round-instances';
 export * from './bookings';
 export * from './waitlist-entries';
+export * from './dashboard-settings';
