@@ -28,6 +28,18 @@ export interface PunchCard {
   cancelledAt: string | null;
   cancelledBy: string | null;
   cancelReason: string | null;
+  /**
+   * Gift-card provenance (2026-06-24). `true` when this card was minted
+   * from a gift order, either via direct-mint (recipient was an existing
+   * customer) or via the claim flow (pending → claimed). The `giftBuyer*`
+   * fields are populated when this is true and null otherwise.
+   */
+  isGift: boolean;
+  giftBuyerFirstName: string | null;
+  giftBuyerLastName: string | null;
+  giftBuyerPhone: string | null;
+  /** When the recipient took ownership. For direct-mint, equals createdAt. */
+  giftClaimedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }

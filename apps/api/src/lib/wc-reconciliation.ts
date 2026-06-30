@@ -81,6 +81,19 @@ export const reconcileWcOrders = async (
       case 'processed':
         if (result.cardsCreated.length > 0) cardsHealed += 1;
         break;
+      case 'processed_gift_direct':
+        // Reconciliation healing a gift order with an existing recipient
+        // counts the same as a normal heal — a card landed on a customer
+        // account because of this pass.
+        if (result.cardsCreated.length > 0) cardsHealed += 1;
+        break;
+      case 'processed_gift_pending':
+        // A fresh pending claim row counts as a heal because the webhook
+        // path missed it. A re-delivery that found one already there is
+        // just a duplicate.
+        if (result.alreadyExisted) duplicates += 1;
+        else cardsHealed += 1;
+        break;
       case 'duplicate':
         duplicates += 1;
         break;

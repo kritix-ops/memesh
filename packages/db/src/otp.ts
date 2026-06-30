@@ -122,3 +122,104 @@ export const verifyOtp = async (
   if (!customer[0]) return { ok: false, reason: 'no_customer' };
   return { ok: true, customerId: customer[0].id };
 };
+
+// ---------------------------------------------------------------------------
+// Gift claim OTP — parallel path that does NOT require a pre-existing
+// customer row. Used by the gift-card claim flow where the recipient may be
+// brand new to Memesh.
+//
+// Anti-abuse gate is different here: the caller must hold a valid gift
+// pending claim token (validated at the route layer) before this path will
+// even fire. That's a one-per-order proof, much stronger than "is this
+// phone on file" — so we drop the customer-exists check and rely on the
+// token instead.
+// ---------------------------------------------------------------------------
+
+export type RequestGiftClaimOtpResult =
+  | { sent: true; code: string }
+  | { sent: false; reason: 'cooldown' | 'rate_limited' };
+
+/**
+ * Issue an OTP for the gift-claim flow. The anti-abuse gate (caller must
+ * present a valid pending claim token) lives at the route layer; this
+ * function only does the OTP insert + the cooldown/rate-limit guards.
+ *
+ * Uses the same `customer_otps` table so claim OTPs and login OTPs share
+ * one rate-limit budget per phone — keeps it tight against attackers and
+ * trivial to reason about.
+ */
+export const requestGiftClaimOtp = async (
+  db: AnyPgDatabase,
+  phone: string,
+  config: OtpConfig,
+): Promise<RequestGiftClaimOtpResult> => {
+  const now = config.now ?? new Date();
+
+  const recent = await db
+    .select()
+    .from(customerOtps)
+    .where(eq(customerOtps.phone, phone))
+    .orderBy(desc(customerOtps.createdAt))
+    .limit(MAX_PER_WINDOW);
+
+  const last = recent[0];
+  if (last && now.getTime() - last.createdAt.getTime() < RESEND_COOLDOWN_MS) {
+    return { sent: false, reason: 'cooldown' };
+  }
+  const inWindow = recent.filter((r) => now.getTime() - r.createdAt.getTime() < WINDOW_MS);
+  if (inWindow.length >= MAX_PER_WINDOW) {
+    return { sent: false, reason: 'rate_limited' };
+  }
+
+  const code = generateCode();
+  await db.insert(customerOtps).values({
+    phone,
+    codeHash: hashCode(code, phone, config.pepper),
+    expiresAt: new Date(now.getTime() + OTP_TTL_MS),
+    createdAt: now,
+  });
+  return { sent: true, code };
+};
+
+export type VerifyGiftClaimOtpResult =
+  | { ok: true }
+  | { ok: false; reason: 'invalid' | 'expired' | 'locked' };
+
+/**
+ * Verify an OTP previously issued via requestGiftClaimOtp. Single-use,
+ * constant-time, attempt-counted — same semantics as verifyOtp but without
+ * the customer-lookup at the end. The caller already knows which pending
+ * claim (and therefore which buyer/recipient identity) this OTP gates.
+ */
+export const verifyGiftClaimOtp = async (
+  db: AnyPgDatabase,
+  phone: string,
+  code: string,
+  config: OtpConfig,
+): Promise<VerifyGiftClaimOtpResult> => {
+  const now = config.now ?? new Date();
+
+  const rows = await db
+    .select()
+    .from(customerOtps)
+    .where(and(eq(customerOtps.phone, phone), isNull(customerOtps.consumedAt)))
+    .orderBy(desc(customerOtps.createdAt))
+    .limit(1);
+  const otp = rows[0];
+  if (!otp) return { ok: false, reason: 'invalid' };
+  if (otp.expiresAt.getTime() <= now.getTime()) return { ok: false, reason: 'expired' };
+  if (otp.attempts >= MAX_ATTEMPTS) return { ok: false, reason: 'locked' };
+
+  await db
+    .update(customerOtps)
+    .set({ attempts: otp.attempts + 1 })
+    .where(eq(customerOtps.id, otp.id));
+
+  const expected = Buffer.from(hashCode(code, phone, config.pepper), 'hex');
+  const actual = Buffer.from(otp.codeHash, 'hex');
+  const match = expected.length === actual.length && timingSafeEqual(expected, actual);
+  if (!match) return { ok: false, reason: 'invalid' };
+
+  await db.update(customerOtps).set({ consumedAt: now }).where(eq(customerOtps.id, otp.id));
+  return { ok: true };
+};

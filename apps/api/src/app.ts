@@ -12,8 +12,10 @@ import { cardsRoutes } from './routes/cards.js';
 import { customerAuthRoutes } from './routes/customer-auth.js';
 import { customersRoutes } from './routes/customers.js';
 import { debugQrRoutes } from './routes/debug-qr.js';
+import { giftClaimRoutes } from './routes/gift-claim.js';
 import { meRoutes } from './routes/me.js';
 import { punchRoutes } from './routes/punch.js';
+import { cronGiftExpireRoutes } from './routes/cron-gift-expire.js';
 import { cronWcReconcileRoutes } from './routes/cron-wc-reconcile.js';
 import { reportsRoutes } from './routes/reports.js';
 import { rolePermissionsRoutes } from './routes/role-permissions.js';
@@ -83,6 +85,7 @@ export const buildApp = async (): Promise<FastifyInstance> => {
   await fastify.register(authPlugin);
   await fastify.register(authRoutes);
   await fastify.register(customerAuthRoutes);
+  await fastify.register(giftClaimRoutes);
   await fastify.register(wcHandoffRoutes);
   await fastify.register(meRoutes);
   await fastify.register(customersRoutes);
@@ -97,6 +100,7 @@ export const buildApp = async (): Promise<FastifyInstance> => {
   await fastify.register(reportsRoutes);
   await fastify.register(webhooksWcRoutes);
   await fastify.register(cronWcReconcileRoutes);
+  await fastify.register(cronGiftExpireRoutes);
 
   fastify.get('/health', async () => ({
     status: 'ok',

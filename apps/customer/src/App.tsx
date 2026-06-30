@@ -3,6 +3,7 @@ import { CustomerSessionProvider } from '@memesh/customer-auth';
 import type { CSSProperties } from 'react';
 import { CheckoutComplete } from './customer/CheckoutComplete';
 import { CustomerApp } from './customer/CustomerApp';
+import { GiftClaim } from './customer/GiftClaim';
 
 // Thin shell for the customer personal area. No staff/admin component is
 // reachable from any path on this origin — by design. CustomerApp owns its
@@ -27,11 +28,20 @@ const MAIN_SITE_URL = 'https://memesh.co.il';
 // base64url alphabet for the short-link path. Anchored end-to-end so a
 // stray dot or fragment (`/c/abc.png`) doesn't accidentally match.
 const SHORT_LINK_PATH = /^\/c\/[A-Za-z0-9_-]+\/?$/;
+// Gift-claim link delivered in the recipient's email (long token form, 32
+// chars from 24 random bytes — see packages/db/src/gift-claims.ts).
+const GIFT_CLAIM_PATH = /^\/gift\/([A-Za-z0-9_-]+)\/?$/;
 
 const isCheckoutComplete = (): boolean => {
   if (typeof window === 'undefined') return false;
   const p = window.location.pathname;
   return p === '/checkout-complete' || SHORT_LINK_PATH.test(p);
+};
+
+const readGiftClaimToken = (): string | null => {
+  if (typeof window === 'undefined') return null;
+  const match = window.location.pathname.match(GIFT_CLAIM_PATH);
+  return match ? match[1]! : null;
 };
 
 export function App() {
@@ -47,7 +57,12 @@ export function App() {
             <span>לאתר הראשי</span>
           </a>
         </header>
-        {isCheckoutComplete() ? <CheckoutComplete /> : <CustomerApp />}
+        {(() => {
+          const giftToken = readGiftClaimToken();
+          if (giftToken) return <GiftClaim claimToken={giftToken} />;
+          if (isCheckoutComplete()) return <CheckoutComplete />;
+          return <CustomerApp />;
+        })()}
       </div>
     </CustomerSessionProvider>
   );
