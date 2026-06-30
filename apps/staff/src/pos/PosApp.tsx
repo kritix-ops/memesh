@@ -32,6 +32,7 @@ import {
 } from '../lib/api/punch';
 import { getMyPinStatus, setMyPin } from '../lib/api/staff';
 import { entriesLabel } from '../mock';
+import { MarkEntryAtSale, type MarkEntryTile } from './MarkEntryAtSale';
 import { PunchConfirmModal } from './PunchConfirmModal';
 import { RefundEntryModal } from './RefundEntryModal';
 
@@ -192,7 +193,12 @@ function humanizeScanError(kind: IScannerError['kind']): string {
 }
 
 type Screen = 'home' | 'search' | 'customer' | 'new' | 'sell' | 'scan';
-type SellStep = 'choose' | 'confirm' | 'done';
+// 'mark-entry' fires after POST /cards succeeds and before 'done' (QR + nav).
+// The cashier picks 0/1/2/custom entries to punch on the spot, removing the
+// scan-and-punch loop that used to follow every in-person sale. The step
+// always shows — no operator toggle today (see Settings audit in
+// _plans/2026-06-25-pos-sell-mark-entry-prompt.md).
+type SellStep = 'choose' | 'confirm' | 'mark-entry' | 'done';
 
 // Fallback if /pos/card-pricing fails (network blip, brief API outage). The
 // sale must still go through — the server uses its own settings on POST /cards,
@@ -408,6 +414,26 @@ export function PosApp() {
   const [sellError, setSellError] = useState<string | null>(null);
   const [sellSubmitting, setSellSubmitting] = useState(false);
 
+  // Mark-entry-at-sale state. Lives at PosApp so the parent owns the
+  // idempotency key and the punch call (same shape as the punch flow
+  // higher up). `markEntryTile` is `null` until the cashier actively
+  // picks one — that's the no-default contract from the spec.
+  const [markEntryTile, setMarkEntryTile] = useState<MarkEntryTile | null>(null);
+  const [markEntryCount, setMarkEntryCount] = useState<number | null>(null);
+  const [markEntryRemaining, setMarkEntryRemaining] = useState<number | null>(null);
+  const [markEntryPunching, setMarkEntryPunching] = useState(false);
+  const [markEntryError, setMarkEntryError] = useState<string | null>(null);
+  const [markEntryKey, setMarkEntryKey] = useState('');
+
+  const resetMarkEntryState = () => {
+    setMarkEntryTile(null);
+    setMarkEntryCount(null);
+    setMarkEntryRemaining(null);
+    setMarkEntryPunching(false);
+    setMarkEntryError(null);
+    setMarkEntryKey('');
+  };
+
   const submitNewCustomer = async () => {
     const trimmedFirst = newFirst.trim();
     const trimmedLast = newLast.trim();
@@ -546,7 +572,18 @@ export function PosApp() {
       writeCachedPin(sessionUser.id, pin, sellControls.pinMemoryMinutes);
     }
     setSellResponse(res.data);
-    setSellStep('done');
+    // Hand the cashier the mark-entry prompt before the QR. Fresh
+    // idempotency key per sale so retries of the same N collapse on the
+    // server. State is reset (no carry-over from any prior aborted sale)
+    // and the tile selection is intentionally null so the UI starts with
+    // no default highlighted — see _plans/2026-06-25-pos-sell-mark-entry-prompt.md.
+    resetMarkEntryState();
+    setMarkEntryKey(crypto.randomUUID());
+    console.info('[pos sell] mark-entry shown', {
+      serial: res.data.card.serialNumber,
+      totalEntries: res.data.card.totalEntries,
+    });
+    setSellStep('mark-entry');
   };
 
   const submitSell = async () => {
@@ -596,8 +633,59 @@ export function PosApp() {
   const sellNewForSelectedCustomer = () => {
     setSellResponse(null);
     setSellError(null);
+    resetMarkEntryState();
     setSellStep('choose');
     setScreen('sell');
+  };
+
+  // Mark-entry handlers. Skipping is a single state transition; confirming
+  // posts to the same /punch endpoint the scan flow uses, with the
+  // freshly-minted idempotency key so a retry collapses into the original
+  // entry. On success we capture the remaining count for the QR screen's
+  // "✓ punched N · M left" chip and advance. On failure we surface the
+  // error inline; the cashier can retry the same tile or skip ahead.
+  const skipMarkEntry = () => {
+    if (!sellResponse) return;
+    console.info('[pos sell] mark-entry skip', {
+      serial: sellResponse.card.serialNumber,
+    });
+    setMarkEntryTile('skip');
+    setMarkEntryCount(0);
+    setMarkEntryRemaining(null);
+    setMarkEntryError(null);
+    setSellStep('done');
+  };
+
+  const confirmMarkEntry = async (entries: number) => {
+    if (!sellResponse || entries <= 0) return;
+    const serial = sellResponse.card.serialNumber;
+    setMarkEntryTile(entries === 1 ? 1 : entries === 2 ? 2 : 'custom');
+    setMarkEntryError(null);
+    setMarkEntryPunching(true);
+    console.info('[pos sell] mark-entry submit', { serial, entries });
+    const res = await punchBySerial(serial, {
+      entries,
+      idempotencyKey: markEntryKey,
+    });
+    setMarkEntryPunching(false);
+    if (!res.ok) {
+      console.warn('[pos sell] mark-entry error', {
+        serial,
+        status: res.status,
+        error: res.error,
+      });
+      setMarkEntryError(humanizePunchError(res.error));
+      return;
+    }
+    console.info('[pos sell] mark-entry success', {
+      serial,
+      entries: res.data.entriesConsumed,
+      remaining: res.data.remaining,
+      replay: res.data.replay,
+    });
+    setMarkEntryCount(res.data.entriesConsumed);
+    setMarkEntryRemaining(res.data.remaining);
+    setSellStep('done');
   };
 
   // Debounced search effect: 250ms after typing stops, fetch /customers?q=...
@@ -850,6 +938,13 @@ export function PosApp() {
             sellError={sellError}
             onSubmit={() => void submitSell()}
             sellResponse={sellResponse}
+            markEntryTile={markEntryTile}
+            markEntryCount={markEntryCount}
+            markEntryRemaining={markEntryRemaining}
+            markEntryPunching={markEntryPunching}
+            markEntryError={markEntryError}
+            onSkipMarkEntry={skipMarkEntry}
+            onConfirmMarkEntry={(n) => void confirmMarkEntry(n)}
             onClose={() => setScreen('home')}
             onGoToCustomer={() => setScreen(selectedId !== null ? 'customer' : 'home')}
           />
@@ -2015,6 +2110,13 @@ function Sell({
   sellError,
   onSubmit,
   sellResponse,
+  markEntryTile,
+  markEntryCount,
+  markEntryRemaining,
+  markEntryPunching,
+  markEntryError,
+  onSkipMarkEntry,
+  onConfirmMarkEntry,
   onClose,
   onGoToCustomer,
 }: {
@@ -2030,6 +2132,16 @@ function Sell({
   sellError: string | null;
   onSubmit: () => void;
   sellResponse: SellCardResponse | null;
+  markEntryTile: MarkEntryTile | null;
+  /** N>0 = punched at sale, 0 = explicitly skipped, null = step not run.
+   *  Drives the green confirmation chip on the QR success screen. */
+  markEntryCount: number | null;
+  /** Remaining entries reported by /punch on success. */
+  markEntryRemaining: number | null;
+  markEntryPunching: boolean;
+  markEntryError: string | null;
+  onSkipMarkEntry: () => void;
+  onConfirmMarkEntry: (entries: number) => void;
   onClose: () => void;
   onGoToCustomer: () => void;
 }) {
@@ -2176,6 +2288,17 @@ function Sell({
           </div>
         </div>
       )}
+      {sellStep === 'mark-entry' && sellResponse && (
+        <MarkEntryAtSale
+          serial={sellResponse.card.serialNumber}
+          maxEntries={sellResponse.card.totalEntries}
+          busyTile={markEntryTile}
+          submitting={markEntryPunching}
+          error={markEntryError}
+          onSkip={onSkipMarkEntry}
+          onConfirm={onConfirmMarkEntry}
+        />
+      )}
       {sellStep === 'done' && sellResponse && (
         <div style={{ ...card, textAlign: 'center' }}>
           <div
@@ -2188,6 +2311,24 @@ function Sell({
             <Sun size={96} />
           </div>
           <div style={{ fontSize: 22, fontWeight: 600, marginTop: 12 }}>הכרטיסייה נוצרה!</div>
+          {markEntryCount !== null && markEntryCount > 0 && (
+            <div
+              role="status"
+              style={{
+                marginTop: 12,
+                display: 'inline-block',
+                padding: '8px 14px',
+                background: '#eaf6df',
+                color: '#4f7a25',
+                borderRadius: 999,
+                fontSize: 13.5,
+                fontWeight: 600,
+              }}
+            >
+              ✓ נוקבו {markEntryCount === 1 ? 'כניסה אחת' : `${markEntryCount} כניסות`} בעת המכירה
+              {markEntryRemaining !== null ? ` · נותרו ${markEntryRemaining}` : ''}
+            </div>
+          )}
           <div style={{ color: MUTED, fontSize: 14, marginTop: 6 }}>
             הכרטיסייה זמינה בכרטיס הלקוח. נשלח ללקוח/ה SMS עם קישור אישי לצפייה בכרטיסייה.
           </div>

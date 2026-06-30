@@ -54,10 +54,29 @@ export const customerAuthRoutes: FastifyPluginAsync = async (fastify) => {
 
       const result = await requestOtp(db, parsed.data.phone, { pepper: env.SERVER_SECRET_KEY });
       if (result.sent) {
-        await smsProvider.send({
+        // Check the provider result so a "200 OK but status:Error" body (the
+        // documented Pulseem failure shape) is not silently swallowed. The
+        // customer is waiting on a code that the route otherwise pretends was
+        // sent. Asymmetric with cards.ts post-sale path before this fix.
+        const res = await smsProvider.send({
           to: parsed.data.phone,
           body: `קוד הכניסה שלך לממש: ${result.code}`,
         });
+        if (res.ok) {
+          request.log.info(
+            { providerId: res.id ?? null },
+            '[otp request] sms sent',
+          );
+        } else {
+          // The OTP row was already written; it will expire on its own. The
+          // outer response stays { ok: true } so the route still does not
+          // reveal whether the phone is on file — but the operator can grep
+          // this log when a customer reports "I never got my code".
+          request.log.warn(
+            { error: res.error },
+            '[otp request] sms provider error AFTER row insert',
+          );
+        }
       } else {
         request.log.info({ reason: result.reason }, '[otp request] not sent');
       }
@@ -66,6 +85,14 @@ export const customerAuthRoutes: FastifyPluginAsync = async (fastify) => {
   );
 
   // Step 2: verify the code and start a customer session.
+  //
+  // Error surfacing: we surface `code_locked` and `code_expired` distinctly so
+  // the SPA can show a real recovery message (and the resend button) instead
+  // of the catch-all "wrong code, ask for a new one" — which left customers
+  // stuck for 15 min with no clue. The narrow enumeration oracle this opens
+  // (an attacker who guesses a customer's phone could probe whether it's in
+  // a "locked" state) is acceptable in exchange for unblocking the legitimate
+  // customer at the desk. Bad-code paths still collapse to `invalid_code`.
   fastify.post(
     '/auth/customer/verify-otp',
     { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } },
@@ -78,6 +105,12 @@ export const customerAuthRoutes: FastifyPluginAsync = async (fastify) => {
       });
       if (!result.ok) {
         request.log.info({ reason: result.reason }, '[otp verify] rejected');
+        if (result.reason === 'locked') {
+          return reply.code(401).send({ ok: false, error: 'code_locked' });
+        }
+        if (result.reason === 'expired') {
+          return reply.code(401).send({ ok: false, error: 'code_expired' });
+        }
         return reply.code(401).send({ ok: false, error: 'invalid_code' });
       }
       const token = await signCustomerToken(result.customerId, customerAuthConfig);
@@ -147,6 +180,12 @@ export const customerAuthRoutes: FastifyPluginAsync = async (fastify) => {
       });
       if (!result.ok) {
         request.log.info({ reason: result.reason }, '[email otp verify] rejected');
+        if (result.reason === 'locked') {
+          return reply.code(401).send({ ok: false, error: 'code_locked' });
+        }
+        if (result.reason === 'expired') {
+          return reply.code(401).send({ ok: false, error: 'code_expired' });
+        }
         return reply.code(401).send({ ok: false, error: 'invalid_code' });
       }
       const token = await signCustomerToken(result.customerId, customerAuthConfig);
