@@ -1,4 +1,8 @@
 import {
+  dashboardLiveRoundsToday,
+  dashboardLiveStats,
+  dashboardLiveWaitlist,
+  dashboardLiveWeekAhead,
   dashboardStats,
   db,
   dormantCustomers,
@@ -101,15 +105,93 @@ export type DashboardLiveResponse = {
   weekAhead: DashboardLiveWeekAheadDay[];
 };
 
-const emptyLiveStats: DashboardLiveStats = {
-  revenueIls: 0,
-  revenueDeltaPct: null,
-  bookingsCount: 0,
-  bookingsDelta: null,
-  activeHoldsCount: 0,
-  punchCardsSold: 0,
-  punchCardsDelta: null,
-};
+// ---------------------------------------------------------------------------
+// 5-second in-memory cache for GET /admin/dashboard/live.
+//
+// With ~30s client polling, the cache prevents the 6 refreshes-per-minute
+// from hammering the DB while still giving each "minute" a few cache misses
+// for live data. State is per-process — acceptable because each Vercel
+// function instance handles its own slice of traffic and the data is
+// cheap to recompute on miss.
+//
+// No invalidation hook: TTL-only. Operator-visible state changes (booking
+// confirmed, round closed) become visible to the dashboard within 5s of
+// the change — well below the human "is this live?" threshold.
+// ---------------------------------------------------------------------------
+const LIVE_CACHE_TTL_MS = 5_000;
+let liveCache: { data: DashboardLiveResponse; expiresAt: number } | null = null;
+
+async function computeDashboardLive(): Promise<DashboardLiveResponse> {
+  const now = new Date();
+  // Sequential queries — PGlite (test fixture) is single-connection. Prod
+  // driver handles serial fine and the total wall time stays under 100ms
+  // even on a few thousand rows. Parallelize if we ever measure regret.
+  const rounds = await dashboardLiveRoundsToday(db, now);
+  const stats = await dashboardLiveStats(db, now);
+  const waitlistRows = await dashboardLiveWaitlist(db, now);
+  const weekAhead = await dashboardLiveWeekAhead(db, now);
+  return {
+    asOf: now.toISOString(),
+    today: {
+      rounds: rounds.map((r) => ({
+        roundInstanceId: r.roundInstanceId,
+        label: r.label,
+        startTime: r.startTime,
+        endTime: r.endTime,
+        capacity: r.capacity,
+        taken: r.taken,
+        heldCount: r.heldCount,
+        pctFull: r.pctFull,
+        isClosed: r.isClosed,
+      })),
+      stats: {
+        revenueIls: stats.revenueIls,
+        revenueDeltaPct: stats.revenueDeltaPct,
+        bookingsCount: stats.bookingsCount,
+        bookingsDelta: stats.bookingsDelta,
+        activeHoldsCount: stats.activeHoldsCount,
+        punchCardsSold: stats.punchCardsSold,
+        punchCardsDelta: stats.punchCardsDelta,
+      },
+    },
+    // Alerts intentionally empty until the application-layer detection lands
+    // (payment_received_no_slot status, stuck-hold detection, full-round
+    // waitlist threshold). Empty array → SPA hides the zone.
+    alerts: [],
+    waitlist: waitlistRows.map((w) => ({
+      roundInstanceId: w.roundInstanceId,
+      label: w.label,
+      waitingCount: w.waitingCount,
+      lastNotifiedAt: w.lastNotifiedAt,
+    })),
+    weekAhead: weekAhead.map((day) => ({
+      date: day.date,
+      rounds: day.rounds.map((r) => ({
+        roundInstanceId: r.roundInstanceId,
+        label: r.label,
+        startTime: r.startTime,
+        pctFull: r.pctFull,
+        isClosed: r.isClosed,
+      })),
+    })),
+  };
+}
+
+async function getCachedDashboardLive(): Promise<DashboardLiveResponse> {
+  const now = Date.now();
+  if (liveCache && liveCache.expiresAt > now) {
+    return liveCache.data;
+  }
+  const data = await computeDashboardLive();
+  liveCache = { data, expiresAt: now + LIVE_CACHE_TTL_MS };
+  return data;
+}
+
+// Test seam — lets the route-level test suite reset the cache between
+// assertions when it needs to (otherwise a 5s TTL leaks between tests).
+export function _resetDashboardLiveCacheForTests(): void {
+  liveCache = null;
+}
 
 export const adminRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get(
@@ -120,18 +202,20 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
 
   // Live operational view for the rounds-aware admin dashboard. Polled every
   // ~30s by the SPA; serves the data behind §11.1.1 of the rounds super-brief.
-  // Step 1 scaffold returns an empty-but-typed body so the SPA can be built
-  // against the contract while step 2 wires real DB queries.
+  // Real DB queries (step 2b) behind a 5s in-memory cache; alerts deferred
+  // to a later step. Revenue stubbed (0, null) until step 3 ships pricing.
   fastify.get(
     '/admin/dashboard/live',
     { preHandler: requireRoleHook('admin', 'manager') },
-    async (): Promise<DashboardLiveResponse> => ({
-      asOf: new Date().toISOString(),
-      today: { rounds: [], stats: emptyLiveStats },
-      alerts: [],
-      waitlist: [],
-      weekAhead: [],
-    }),
+    async (request): Promise<DashboardLiveResponse> => {
+      const t0 = Date.now();
+      const data = await getCachedDashboardLive();
+      request.log.info(
+        { ms: Date.now() - t0, rounds: data.today.rounds.length },
+        '[admin dashboard live] served',
+      );
+      return data;
+    },
   );
 
   // Re-engagement list: customers who hold a card but have not visited in 30 days.

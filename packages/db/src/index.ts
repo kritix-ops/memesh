@@ -18,3 +18,4 @@ export * from './wc-orders.js';
 export * from './gift-claims.js';
 export * from './gift-template.js';
 export * from './migrations-path.js';
+export * from './rounds-dashboard.js';
