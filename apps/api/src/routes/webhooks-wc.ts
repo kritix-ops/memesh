@@ -11,6 +11,7 @@ import {
   processWcOrderWebhook,
   type ProcessWcOrderWebhookResult,
 } from '../lib/wc-order-processor.js';
+import { processRoundOrderWebhook } from '../lib/wc-round-processor.js';
 import { firePostPurchaseEmail } from '../lib/post-purchase-email.js';
 import { fireWcPostPurchaseSms } from '../lib/wc-post-purchase-sms.js';
 import { envKeyResolver } from '../qr.js';
@@ -112,6 +113,44 @@ export const webhooksWcRoutes: FastifyPluginAsync = async (fastify) => {
       log.error({ deliveryId, err }, '[webhook wc] exception');
       // 500 so WC retries the delivery.
       return reply.code(500).send({ error: 'processing_failed' });
+    }
+
+    // Round side: mint any round bookings on this order, independent of cards.
+    // Skipped on a duplicate delivery (already handled). mintBooking is
+    // idempotent per hold id, so this is safe even if it re-runs. A round-mint
+    // exception is logged, not fatal — the card result already stands and WC
+    // reconciliation/retry covers it. Failures (a seat taken while paying) mean
+    // a paid seat with no booking → refund; that workflow lands with the cancel
+    // PR, logged for an operator until then.
+    if (result.status !== 'duplicate') {
+      try {
+        const roundResult = await processRoundOrderWebhook(db, {
+          topic,
+          payload: request.body,
+          resolver: envKeyResolver,
+        });
+        if (roundResult.status === 'processed') {
+          log.info(
+            {
+              deliveryId,
+              orderId: roundResult.orderId,
+              minted: roundResult.minted.length,
+              failed: roundResult.failed.length,
+            },
+            '[webhook wc rounds] processed',
+          );
+          if (roundResult.failed.length > 0) {
+            log.warn(
+              { deliveryId, orderId: roundResult.orderId, failed: roundResult.failed },
+              '[webhook wc rounds] mint_failed — paid seats without a booking, refund TODO',
+            );
+          }
+          // TODO (booking-notify PR): fire the barcode email/SMS for
+          // roundResult.minted here.
+        }
+      } catch (err) {
+        log.error({ deliveryId, err }, '[webhook wc rounds] exception');
+      }
     }
 
     // Map result → log + 200 response. WC only cares that we returned 2xx.
