@@ -7,6 +7,7 @@ import {
 } from '@memesh/customer-auth';
 import { fmtDate, type PunchCard as ApiPunchCard } from '@memesh/web-shared';
 import {
+  cancelRoundBooking,
   getMyRoundBookings,
   getRoundAvailability,
   swapRoundBooking,
@@ -743,9 +744,31 @@ function RoundBookingCard({
   onSwapped: () => void | Promise<void>;
 }) {
   const [picking, setPicking] = useState(false);
+  const [confirmingCancel, setConfirmingCancel] = useState(false);
   const [alternatives, setAlternatives] = useState<AvailabilityRound[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const secondaryBtn: CSSProperties = {
+    border: '1.5px solid #e9e0d9',
+    background: '#fff',
+    color: MUTED,
+    borderRadius: 9,
+    padding: '8px 16px',
+    fontSize: 13.5,
+    fontWeight: 600,
+    cursor: 'pointer',
+  };
+  const dangerBtn: CSSProperties = {
+    border: '1.5px solid #e2c4c4',
+    background: '#fff',
+    color: '#a23a3a',
+    borderRadius: 9,
+    padding: '8px 16px',
+    fontSize: 13.5,
+    fontWeight: 600,
+    cursor: 'pointer',
+  };
 
   const openPicker = async () => {
     setPicking(true);
@@ -783,6 +806,26 @@ function RoundBookingCard({
     await onSwapped();
   };
 
+  const doCancel = async () => {
+    setBusy(true);
+    setError(null);
+    const res = await cancelRoundBooking(booking.bookingId);
+    setBusy(false);
+    if (!res.ok) {
+      setError(
+        res.error === 'too_late'
+          ? 'כבר מאוחר מדי לבטל (אפשר עד 24 שעות לפני הסבב).'
+          : res.error === 'refund_failed'
+            ? 'הזיכוי לא הושלם. נסו שוב או פנו אלינו.'
+            : 'לא ניתן לבטל כרגע. נסו שוב.',
+      );
+      return;
+    }
+    // The list reload drops the cancelled booking (it's no longer confirmed).
+    setConfirmingCancel(false);
+    await onSwapped();
+  };
+
   return (
     <div
       style={{
@@ -807,22 +850,52 @@ function RoundBookingCard({
         {booking.status === 'used' ? ' · נוצל' : ''}
       </div>
 
-      {booking.status === 'confirmed' && !picking && (
-        <button
-          onClick={() => void openPicker()}
-          style={{
-            border: '1.5px solid #e9e0d9',
-            background: '#fff',
-            color: MUTED,
-            borderRadius: 9,
-            padding: '8px 16px',
-            fontSize: 13.5,
-            fontWeight: 600,
-            cursor: 'pointer',
-          }}
-        >
-          שנה שעה
-        </button>
+      {booking.status === 'confirmed' && !picking && !confirmingCancel && (
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
+          <button onClick={() => void openPicker()} style={secondaryBtn}>
+            שנה שעה
+          </button>
+          <button
+            onClick={() => {
+              setConfirmingCancel(true);
+              setError(null);
+            }}
+            style={dangerBtn}
+          >
+            בטל הזמנה
+          </button>
+        </div>
+      )}
+
+      {confirmingCancel && (
+        <div style={{ width: '100%', borderTop: '1px solid #f3efea', paddingTop: 12 }}>
+          <div style={{ fontSize: 13.5, fontWeight: 600, marginBottom: 4, textAlign: 'center' }}>
+            לבטל את ההזמנה?
+          </div>
+          <div style={{ fontSize: 12.5, color: MUTED, marginBottom: 12, textAlign: 'center' }}>
+            הזיכוי יוחזר אוטומטית לאמצעי התשלום שלכם.
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button disabled={busy} onClick={() => void doCancel()} style={{ ...dangerBtn, flex: 1 }}>
+              {busy ? 'מבטל…' : 'כן, בטלו וזכו אותי'}
+            </button>
+            <button
+              disabled={busy}
+              onClick={() => {
+                setConfirmingCancel(false);
+                setError(null);
+              }}
+              style={{ ...secondaryBtn, flex: 1 }}
+            >
+              חזרה
+            </button>
+          </div>
+          {error && (
+            <div style={{ color: '#a23a3a', fontSize: 13, marginTop: 8, textAlign: 'center' }}>
+              {error}
+            </div>
+          )}
+        </div>
       )}
 
       {picking && (

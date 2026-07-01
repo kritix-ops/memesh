@@ -1,4 +1,5 @@
 import {
+  cancelBooking,
   createHold,
   db,
   listCustomerRoundBookings,
@@ -11,6 +12,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { env } from '../config.js';
 import { requireCustomer } from '../lib/customer-guard.js';
+import { createWcRestClient } from '../lib/wc-rest-client.js';
 import { envKeyResolver } from '../qr.js';
 
 // Customer-facing rounds flow. Availability is PUBLIC — the WordPress round
@@ -32,8 +34,20 @@ const swapSchema = z.object({
   bookingId: z.string().uuid(),
   targetRoundInstanceId: z.string().uuid(),
 });
+const cancelSchema = z.object({ bookingId: z.string().uuid() });
 
 export const roundsBookingRoutes: FastifyPluginAsync = async (fastify) => {
+  // Built once for the cancel refund path. Null when WC isn't configured — a
+  // real paid booking then can't be refunded, so cancel fails closed rather
+  // than releasing a seat with no money returned.
+  const wcClient =
+    env.WC_API_URL && env.WC_API_CONSUMER_KEY && env.WC_API_CONSUMER_SECRET
+      ? createWcRestClient({
+          baseUrl: env.WC_API_URL,
+          consumerKey: env.WC_API_CONSUMER_KEY,
+          consumerSecret: env.WC_API_CONSUMER_SECRET,
+        })
+      : null;
   fastify.get(
     '/rounds/availability',
     { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } },
@@ -151,6 +165,53 @@ export const roundsBookingRoutes: FastifyPluginAsync = async (fastify) => {
     }
     request.log.info({ bookingId: result.bookingId, customerId }, '[rounds swap] done');
     return { bookingId: result.bookingId, barcodeToken: result.barcodeToken };
+  });
+
+  // Cancel a confirmed booking with an auto-refund (super-brief §6.2).
+  // Customer-gated + owner-checked. The DB helper releases the seat only after
+  // the refund is confirmed; if the refund can't be confirmed the booking stays
+  // and we return 502 so the customer keeps their paid seat.
+  fastify.post('/rounds/cancel', { preHandler: requireCustomer }, async (request, reply) => {
+    const customerId = request.customer?.id;
+    if (!customerId) return reply.code(401).send({ error: 'unauthorized' });
+    const parsed = cancelSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'invalid_body', issues: parsed.error.issues });
+    }
+    const refund = async (wcOrderId: string, amountIls: number): Promise<boolean> => {
+      // Dev-pay bookings have no real WC order; treat their refund as a no-op
+      // success outside production so cancel is testable end to end.
+      if (wcOrderId.startsWith('dev-')) return env.NODE_ENV !== 'production';
+      if (!wcClient) {
+        request.log.error({ wcOrderId }, '[rounds cancel] WC not configured — cannot refund');
+        return false;
+      }
+      try {
+        const r = await wcClient.createOrderRefund(wcOrderId, amountIls);
+        request.log.info({ wcOrderId, refundId: r.id, amount: r.amount }, '[rounds cancel] refunded');
+        return true;
+      } catch (err) {
+        request.log.error({ err, wcOrderId }, '[rounds cancel] refund failed');
+        return false;
+      }
+    };
+    const result = await cancelBooking(db, { bookingId: parsed.data.bookingId, customerId }, { refund });
+    if (!result.ok) {
+      const code =
+        result.error === 'not_found'
+          ? 404
+          : result.error === 'forbidden'
+            ? 403
+            : result.error === 'refund_failed'
+              ? 502 // refund provider couldn't confirm — seat kept, nothing changed
+              : 409; // not_confirmed / too_late
+      return reply.code(code).send({ error: result.error });
+    }
+    request.log.info(
+      { bookingId: parsed.data.bookingId, customerId, refunded: result.refunded },
+      '[rounds cancel] done',
+    );
+    return { ok: true, refunded: result.refunded, refundAmountIls: result.refundAmountIls };
   });
 
   // Dev-only "pay now" — simulates a completed WooCommerce payment for a held

@@ -32,6 +32,13 @@ export interface WcOrderSummary {
   }>;
 }
 
+export interface WcRefundResult {
+  /** WC refund id. */
+  id: number;
+  /** Refunded amount as WC returns it (a decimal string). */
+  amount: string;
+}
+
 export interface WcRestClient {
   /**
    * Fetch every completed order updated after the given timestamp. Paginates
@@ -40,6 +47,15 @@ export interface WcRestClient {
    * unauthenticated cron forever.
    */
   listCompletedOrdersSince(since: Date): Promise<WcOrderSummary[]>;
+
+  /**
+   * Create a refund on an order. `api_refund: true` asks WooCommerce to push the
+   * refund to the payment gateway (Meshulam/Grow) — this only actually moves
+   * money if the gateway supports programmatic refunds. Throws on non-2xx so the
+   * caller can treat "refund not confirmed" as a hard stop (never release a
+   * paid seat on an unconfirmed refund).
+   */
+  createOrderRefund(orderId: string, amountIls: number, reason?: string): Promise<WcRefundResult>;
 }
 
 export interface WcRestClientConfig {
@@ -94,6 +110,29 @@ export const createWcRestClient = (config: WcRestClientConfig): WcRestClient => 
         if (body.length < 100) break;
       }
       return all;
+    },
+
+    createOrderRefund: async (orderId, amountIls, reason) => {
+      const url = `${baseUrl}/orders/${encodeURIComponent(orderId)}/refunds`;
+      const res = await fetcher(url, {
+        method: 'POST',
+        headers: {
+          Authorization: authHeader,
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({
+          amount: amountIls.toFixed(2),
+          reason: reason ?? 'Round booking cancelled',
+          api_refund: true,
+        }),
+      });
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw new Error(`[wc-rest] refund failed: ${res.status} ${text.slice(0, 200)}`);
+      }
+      const body = (await res.json()) as { id: number; amount: string };
+      return { id: body.id, amount: body.amount };
     },
   };
 };
