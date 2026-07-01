@@ -177,3 +177,73 @@ test('listCompletedOrdersSince strips a trailing slash from baseUrl', async () =
   assert.match(capturedUrl, /\.co\.il\/wp-json\/wc\/v3\/orders\?/);
   assert.doesNotMatch(capturedUrl, /v3\/\/orders/);
 });
+
+// ---------------------------------------------------------------------------
+// createOrder / getOrder — the companion-upsell checkout
+// ---------------------------------------------------------------------------
+
+test('createOrder POSTs a pending order with fee lines + meta and returns the order key', async () => {
+  let capturedUrl = '';
+  let capturedBody: Record<string, unknown> = {};
+  const fetchImpl = (async (url: string, init: RequestInit) => {
+    capturedUrl = String(url);
+    capturedBody = JSON.parse(String(init.body)) as Record<string, unknown>;
+    return jsonResponse({ id: 901, status: 'pending', order_key: 'wc_order_abc' }, { status: 201 });
+  }) as unknown as typeof fetch;
+
+  const client = createWcRestClient({
+    baseUrl: 'https://memesh.co.il/wp-json/wc/v3',
+    consumerKey: 'ck',
+    consumerSecret: 'cs',
+    fetchImpl,
+  });
+  const order = await client.createOrder({
+    billing: { first_name: 'נועה', phone: '052-000-0001' },
+    fee_lines: [{ name: 'מלווה נוסף', total: '12.00' }],
+    meta_data: [{ key: '_memesh_companion_booking_id', value: 'b-1' }],
+  });
+
+  assert.match(capturedUrl, /\/wp-json\/wc\/v3\/orders$/);
+  assert.equal(capturedBody.status, 'pending');
+  assert.deepEqual(capturedBody.fee_lines, [{ name: 'מלווה נוסף', total: '12.00' }]);
+  assert.deepEqual(capturedBody.meta_data, [{ key: '_memesh_companion_booking_id', value: 'b-1' }]);
+  assert.equal(order.id, 901);
+  assert.equal(order.orderKey, 'wc_order_abc');
+});
+
+test('createOrder throws on a non-2xx response', async () => {
+  const fetchImpl = (async () => jsonResponse({ message: 'nope' }, { status: 401 })) as unknown as typeof fetch;
+  const client = createWcRestClient({
+    baseUrl: 'https://memesh.co.il/wp-json/wc/v3',
+    consumerKey: 'ck',
+    consumerSecret: 'cs',
+    fetchImpl,
+  });
+  await assert.rejects(
+    () =>
+      client.createOrder({
+        billing: { first_name: 'x', phone: '052' },
+        fee_lines: [],
+        meta_data: [],
+      }),
+    /order create failed: 401/,
+  );
+});
+
+test('getOrder fetches status + order key by id', async () => {
+  let capturedUrl = '';
+  const fetchImpl = (async (url: string) => {
+    capturedUrl = String(url);
+    return jsonResponse({ id: 902, status: 'processing', order_key: 'wc_order_xyz' });
+  }) as unknown as typeof fetch;
+  const client = createWcRestClient({
+    baseUrl: 'https://memesh.co.il/wp-json/wc/v3',
+    consumerKey: 'ck',
+    consumerSecret: 'cs',
+    fetchImpl,
+  });
+  const order = await client.getOrder('902');
+  assert.match(capturedUrl, /\/orders\/902$/);
+  assert.equal(order.status, 'processing');
+  assert.equal(order.orderKey, 'wc_order_xyz');
+});

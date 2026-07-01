@@ -14,6 +14,7 @@ import {
   getRoundAvailability,
   joinWaitlist,
   leaveWaitlist,
+  startCompanionCheckout,
   swapRoundBooking,
   type AvailabilityRound,
   type CustomerRoundBooking,
@@ -788,6 +789,11 @@ function PunchRoundBooking({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+  const [addCompanion, setAddCompanion] = useState(false);
+  const [companionPrice, setCompanionPrice] = useState<number | null>(null);
+  // Set when the booking succeeded but the companion payment couldn't start —
+  // the done screen tells the customer to retry from the booking card.
+  const [companionNote, setCompanionNote] = useState<string | null>(null);
 
   const selectedCard = cards.find((c) => c.id === cardId) ?? cards[0];
   const remaining = selectedCard ? selectedCard.totalEntries - selectedCard.usedEntries : 0;
@@ -828,6 +834,7 @@ function PunchRoundBooking({
     }
     setRounds(res.data.rounds.filter((r) => r.available > 0 && !r.isClosed));
     setFullRounds(res.data.rounds.filter((r) => r.available === 0 && !r.isClosed));
+    setCompanionPrice(res.data.companionPriceIls);
   };
 
   const doJoin = async (r: AvailabilityRound) => {
@@ -851,9 +858,13 @@ function PunchRoundBooking({
     if (!chosen || !selectedCard) return;
     setBusy(true);
     setError(null);
+    console.info('[customer companion] booking', {
+      roundInstanceId: chosen.roundInstanceId,
+      addCompanion,
+    });
     const res = await bookRoundWithPunch(selectedCard.id, chosen.roundInstanceId, ticketType);
-    setBusy(false);
     if (!res.ok) {
+      setBusy(false);
       setError(
         res.error === 'round_full'
           ? 'הסבב התמלא. בחרו זמן אחר.'
@@ -865,6 +876,29 @@ function PunchRoundBooking({
       );
       return;
     }
+
+    // Companion upsell: the booking stands either way — payment failure only
+    // means the extra companion waits for a retry from the booking card.
+    if (addCompanion) {
+      const checkout = await startCompanionCheckout(res.data.bookingId);
+      console.info('[customer companion] checkout result', {
+        bookingId: res.data.bookingId,
+        ok: checkout.ok,
+        payUrl: checkout.ok ? checkout.data.payUrl : undefined,
+        error: checkout.ok ? undefined : checkout.error,
+      });
+      if (checkout.ok && checkout.data.payUrl) {
+        // Off to WC to pay — the paid-order webhook confirms the companion.
+        window.location.href = checkout.data.payUrl;
+        return;
+      }
+      if (!checkout.ok || (!checkout.data.confirmed && !checkout.data.alreadyPaid)) {
+        setCompanionNote(
+          'ההזמנה נקלטה, אבל התשלום עבור המלווה הנוסף לא הושלם. אפשר להשלים אותו מכרטיס ההזמנה למטה.',
+        );
+      }
+    }
+    setBusy(false);
     setDone(true);
     await onBooked();
   };
@@ -895,8 +929,13 @@ function PunchRoundBooking({
       </div>
 
       {done ? (
-        <div style={{ textAlign: 'center', color: '#6f8f37', fontSize: 14.5, padding: '8px 0' }}>
-          ההזמנה נקלטה! הברקוד מחכה לך למעלה תחת "הסבבים שלי".
+        <div style={{ textAlign: 'center', fontSize: 14.5, padding: '8px 0' }}>
+          <div style={{ color: '#6f8f37' }}>
+            ההזמנה נקלטה! הברקוד מחכה לך למעלה תחת "הסבבים שלי".
+          </div>
+          {companionNote && (
+            <div style={{ color: '#a8643d', fontSize: 13, marginTop: 8 }}>{companionNote}</div>
+          )}
         </div>
       ) : (
         <>
@@ -1029,9 +1068,47 @@ function PunchRoundBooking({
               <div style={{ fontSize: 13.5, textAlign: 'center' }}>
                 כניסה לסבב {chosen.startTime}–{chosen.endTime}. ינוקב כרטיס אחד מתוך {remaining} שנותרו.
               </div>
+
+              {companionPrice !== null && companionPrice > 0 && (
+                <label
+                  style={{
+                    display: 'flex',
+                    alignItems: 'flex-start',
+                    gap: 10,
+                    padding: '12px 14px',
+                    background: '#fdf8f0',
+                    border: '1.5px solid #ecd9b8',
+                    borderRadius: 10,
+                    cursor: 'pointer',
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={addCompanion}
+                    onChange={(e) => setAddCompanion(e.target.checked)}
+                    style={{ marginTop: 3, width: 17, height: 17, cursor: 'pointer' }}
+                  />
+                  <span style={{ flex: 1 }}>
+                    <span style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                      <strong style={{ fontSize: 14 }}>מלווה נוסף</strong>
+                      <strong style={{ fontSize: 14, color: '#a8643d', whiteSpace: 'nowrap' }}>
+                        +₪{companionPrice}
+                      </strong>
+                    </span>
+                    <span style={{ display: 'block', fontSize: 12.5, color: MUTED, marginTop: 4 }}>
+                      מלווה אחד כלול בכניסה. התשלום מתבצע באתר בסיום ההזמנה.
+                    </span>
+                  </span>
+                </label>
+              )}
+
               <div style={{ display: 'flex', gap: 8 }}>
                 <button disabled={busy} onClick={() => void doBook()} style={{ ...primaryBtn, flex: 1 }}>
-                  {busy ? 'מזמין…' : 'אישור והזמנה'}
+                  {busy
+                    ? 'מזמין…'
+                    : addCompanion && companionPrice
+                      ? `אישור, הזמנה ותשלום ₪${companionPrice}`
+                      : 'אישור והזמנה'}
                 </button>
                 <button disabled={busy} onClick={() => setChosen(null)} style={{ ...ghostBtn, flex: 1 }}>
                   חזרה
@@ -1196,6 +1273,28 @@ function RoundBookingCard({
     await onSwapped();
   };
 
+  const doCompanionPay = async () => {
+    setBusy(true);
+    setError(null);
+    console.info('[customer companion] retry payment', { bookingId: booking.bookingId });
+    const res = await startCompanionCheckout(booking.bookingId);
+    if (res.ok && res.data.payUrl) {
+      window.location.href = res.data.payUrl;
+      return;
+    }
+    setBusy(false);
+    if (res.ok && (res.data.alreadyPaid || res.data.confirmed)) {
+      // Payment actually went through — the webhook confirms momentarily.
+      await onSwapped(); // reloads the bookings list
+      return;
+    }
+    console.warn('[customer companion] retry failed', {
+      bookingId: booking.bookingId,
+      error: res.ok ? 'no_pay_url' : res.error,
+    });
+    setError('לא ניתן לפתוח את התשלום כרגע. נסו שוב.');
+  };
+
   const doCancel = async () => {
     setBusy(true);
     setError(null);
@@ -1240,6 +1339,41 @@ function RoundBookingCard({
         {booking.status === 'used' ? ' · נוצל' : ''}
       </div>
 
+      {booking.companionPending && booking.status === 'confirmed' && (
+        <div
+          style={{
+            width: '100%',
+            padding: '10px 14px',
+            background: '#fdf8f0',
+            border: '1.5px solid #ecd9b8',
+            borderRadius: 10,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 10,
+            flexWrap: 'wrap',
+          }}
+        >
+          <span style={{ fontSize: 13, color: '#a8643d' }}>מלווה נוסף — ממתין לתשלום</span>
+          <button
+            disabled={busy}
+            onClick={() => void doCompanionPay()}
+            style={{
+              border: 'none',
+              background: '#e7a33e',
+              color: '#fff',
+              borderRadius: 8,
+              padding: '7px 14px',
+              fontSize: 13,
+              fontWeight: 600,
+              cursor: busy ? 'default' : 'pointer',
+            }}
+          >
+            {busy ? 'רגע…' : 'השלמת תשלום'}
+          </button>
+        </div>
+      )}
+
       {booking.status === 'confirmed' && !picking && !confirmingCancel && (
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
           <button onClick={() => void openPicker()} style={secondaryBtn}>
@@ -1264,7 +1398,9 @@ function RoundBookingCard({
           </div>
           <div style={{ fontSize: 12.5, color: MUTED, marginBottom: 12, textAlign: 'center' }}>
             {booking.source === 'punchcard'
-              ? 'הכניסה תוחזר לכרטיסייה שלך.'
+              ? booking.additionalCompanions > 0
+                ? 'הכניסה תוחזר לכרטיסייה שלך, והתשלום עבור המלווה הנוסף יוחזר אוטומטית.'
+                : 'הכניסה תוחזר לכרטיסייה שלך.'
               : 'הזיכוי יוחזר אוטומטית לאמצעי התשלום שלכם.'}
           </div>
           <div style={{ display: 'flex', gap: 8 }}>

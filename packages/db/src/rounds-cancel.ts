@@ -86,6 +86,21 @@ export const cancelBooking = async (
       refunded = await deps.refund(b.wcOrderId, refundAmountIls);
       if (!refunded) return { ok: false, error: 'refund_failed' as const };
     } else if (b.source === 'punchcard') {
+      // A paid extra companion rides on the punch booking (wc_order_id +
+      // additional_companions > 0). Its money must come back before the seat
+      // is released — same fail-closed rule as paid bookings. An unpaid
+      // pending companion order (additional_companions still 0) refunds
+      // nothing; the order just dies unpaid in WC.
+      if (b.additionalCompanions > 0 && b.wcOrderId) {
+        const cardSettings = await getCardSettings(tx);
+        refundAmountIls = b.additionalCompanions * cardSettings.roundAdditionalCompanionPriceIls;
+        // A zero amount means the companion was free (price setting 0) — no
+        // money moved, nothing to refund.
+        if (refundAmountIls > 0) {
+          refunded = await deps.refund(b.wcOrderId, refundAmountIls);
+          if (!refunded) return { ok: false, error: 'refund_failed' as const };
+        }
+      }
       // Return the entry we spent: find it by the booking-id link, mark it
       // refunded, restore the card's used count, and reactivate the card if
       // exhaustion had deactivated it. No money moves.

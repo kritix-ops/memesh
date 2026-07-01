@@ -281,6 +281,50 @@ test('POST /rounds/book-punch with a valid body reaches the punch-booking engine
   assert.ok([403, 404, 409, 500].includes(res.statusCode), `got ${res.statusCode}`);
 });
 
+// --- POST /rounds/companion/checkout (customer-gated) ------------------------
+
+test('POST /rounds/companion/checkout without a customer token returns 401', async () => {
+  const res = await app.inject({
+    method: 'POST',
+    url: '/rounds/companion/checkout',
+    payload: { bookingId: '00000000-0000-0000-0000-0000000000b1' },
+  });
+  assert.equal(res.statusCode, 401);
+});
+
+test('POST /rounds/companion/checkout with a bad body returns 400', async () => {
+  const res = await app.inject({
+    method: 'POST',
+    url: '/rounds/companion/checkout',
+    headers: { authorization: `Bearer ${await customerToken()}` },
+    payload: { bookingId: 'not-a-uuid' },
+  });
+  assert.equal(res.statusCode, 400);
+  assert.equal(res.json().error, 'invalid_body');
+});
+
+test('POST /rounds/companion/checkout with a valid body reaches the checkout logic', async () => {
+  const res = await app.inject({
+    method: 'POST',
+    url: '/rounds/companion/checkout',
+    headers: { authorization: `Bearer ${await customerToken()}` },
+    payload: { bookingId: '00000000-0000-0000-0000-0000000000b1' },
+  });
+  // Auth + validation passed. No such booking → 404 on a real DB, 500 on the
+  // DB-less box; either way it reached prepareCompanionCheckout.
+  assert.notEqual(res.statusCode, 401);
+  assert.ok([403, 404, 409, 500, 502, 503].includes(res.statusCode), `got ${res.statusCode}`);
+});
+
+// --- GET /rounds/enabled (public) ---------------------------------------------
+
+test('GET /rounds/enabled is public and returns an enabled boolean', async () => {
+  const res = await app.inject({ method: 'GET', url: '/rounds/enabled' });
+  // 200 with a boolean on a real DB; 500 on the DB-less box. Never an auth gate.
+  assert.notEqual(res.statusCode, 401);
+  if (res.statusCode === 200) assert.equal(typeof res.json().enabled, 'boolean');
+});
+
 // --- waitlist (customer-gated) ----------------------------------------------
 
 test('POST /rounds/waitlist/join without a customer token returns 401', async () => {

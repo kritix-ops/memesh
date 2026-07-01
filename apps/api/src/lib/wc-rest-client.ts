@@ -39,6 +39,27 @@ export interface WcRefundResult {
   amount: string;
 }
 
+export interface WcCreateOrderInput {
+  billing: {
+    first_name: string;
+    last_name?: string;
+    phone: string;
+    email?: string;
+  };
+  /** Fee lines instead of product line items — no WP-side product required. */
+  fee_lines: Array<{ name: string; total: string }>;
+  /** Order-level meta (e.g. the booking id the paid-order webhook resolves). */
+  meta_data: Array<{ key: string; value: string }>;
+}
+
+export interface WcOrderRef {
+  id: number;
+  /** WC status string ('pending', 'processing', 'completed', 'cancelled', …). */
+  status: string;
+  /** The order key needed to build the customer-facing order-pay URL. */
+  orderKey: string;
+}
+
 export interface WcRestClient {
   /**
    * Fetch every completed order updated after the given timestamp. Paginates
@@ -56,6 +77,15 @@ export interface WcRestClient {
    * paid seat on an unconfirmed refund).
    */
   createOrderRefund(orderId: string, amountIls: number, reason?: string): Promise<WcRefundResult>;
+
+  /**
+   * Create a pending order the customer pays on WC's order-pay page (the
+   * punch-booking companion upsell). Throws on non-2xx.
+   */
+  createOrder(input: WcCreateOrderInput): Promise<WcOrderRef>;
+
+  /** Fetch an order's status + key (retry path of the companion checkout). Throws on non-2xx. */
+  getOrder(orderId: string): Promise<WcOrderRef>;
 }
 
 export interface WcRestClientConfig {
@@ -133,6 +163,44 @@ export const createWcRestClient = (config: WcRestClientConfig): WcRestClient => 
       }
       const body = (await res.json()) as { id: number; amount: string };
       return { id: body.id, amount: body.amount };
+    },
+
+    createOrder: async (input) => {
+      const url = `${baseUrl}/orders`;
+      const res = await fetcher(url, {
+        method: 'POST',
+        headers: {
+          Authorization: authHeader,
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({
+          status: 'pending',
+          billing: input.billing,
+          fee_lines: input.fee_lines,
+          meta_data: input.meta_data,
+        }),
+      });
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw new Error(`[wc-rest] order create failed: ${res.status} ${text.slice(0, 200)}`);
+      }
+      const body = (await res.json()) as { id: number; status: string; order_key: string };
+      return { id: body.id, status: body.status, orderKey: body.order_key };
+    },
+
+    getOrder: async (orderId) => {
+      const url = `${baseUrl}/orders/${encodeURIComponent(orderId)}`;
+      const res = await fetcher(url, {
+        method: 'GET',
+        headers: { Authorization: authHeader, Accept: 'application/json' },
+      });
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw new Error(`[wc-rest] order fetch failed: ${res.status} ${text.slice(0, 200)}`);
+      }
+      const body = (await res.json()) as { id: number; status: string; order_key: string };
+      return { id: body.id, status: body.status, orderKey: body.order_key };
     },
   };
 };

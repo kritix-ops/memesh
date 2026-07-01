@@ -11,7 +11,16 @@ import { drizzle } from 'drizzle-orm/pglite';
 import { migrate } from 'drizzle-orm/pglite/migrator';
 import type { KeyResolver } from '@memesh/qr-engine';
 
-const { createCustomer, createHold, createRound, bookings, roundInstances } = await import('@memesh/db');
+const {
+  bookRoundWithPunch,
+  createCustomer,
+  createHold,
+  createPunchCard,
+  createRound,
+  recordCompanionOrder,
+  bookings,
+  roundInstances,
+} = await import('@memesh/db');
 const { processRoundOrderWebhook } = await import('./wc-round-processor.js');
 
 const migrationsFolder = fileURLToPath(new URL('../../../../packages/db/migrations', import.meta.url));
@@ -112,4 +121,100 @@ test('an unparseable payload is rejected', async () => {
   const db = await freshDb();
   const res = await processRoundOrderWebhook(db, { topic: 'order.updated', payload: { nope: true }, resolver });
   assert.equal(res.status, 'invalid_payload');
+});
+
+// ---------------------------------------------------------------------------
+// Companion upsell — order-level `_memesh_companion_booking_id` meta
+// ---------------------------------------------------------------------------
+
+/** A confirmed punch booking with a stamped pending companion order. */
+async function punchBookingWithPendingCompanion(db: Awaited<ReturnType<typeof freshDb>>) {
+  const r = await createRound(
+    db,
+    { label: 'b', displayName: 'סבב ב', startTime: '10:00', endTime: '12:00', daysActive: 127, defaultCapacity: 5 },
+    NOW,
+  );
+  if (!r.ok) throw new Error('round');
+  const inst = (
+    await db.select().from(roundInstances).where(and(eq(roundInstances.roundId, r.round.id), eq(roundInstances.date, TODAY))).limit(1)
+  )[0];
+  if (!inst) throw new Error('instance');
+  const cust = await createCustomer(db, { firstName: 'ג', lastName: 'ד', phone: `05000${(phoneSeq += 1)}` });
+  const card = await createPunchCard(db, resolver, { customerId: cust.id, totalEntries: 12, validityDays: 0, now: NOW });
+  const booked = await bookRoundWithPunch(
+    db,
+    { roundInstanceId: inst.id, customerId: cust.id, punchCardId: card.id, ticketType: 'child_over_walking' },
+    resolver,
+    NOW,
+  );
+  if (!booked.ok) throw new Error('book');
+  await recordCompanionOrder(db, { bookingId: booked.bookingId, wcOrderId: '777' }, NOW);
+  return booked.bookingId;
+}
+
+const companionOrder = (bookingId: string, over: { id?: number; status?: string } = {}) => ({
+  id: over.id ?? 777,
+  status: over.status ?? 'completed',
+  line_items: [],
+  meta_data: [{ key: '_memesh_companion_booking_id', value: bookingId }],
+});
+
+test('companion: a paid tagged order upgrades the punch booking to 1 companion', async () => {
+  const db = await freshDb();
+  const bookingId = await punchBookingWithPendingCompanion(db);
+  const res = await processRoundOrderWebhook(db, {
+    topic: 'order.updated',
+    payload: companionOrder(bookingId),
+    resolver,
+    now: NOW,
+  });
+  assert.equal(res.status, 'processed');
+  if (res.status !== 'processed') return;
+  assert.equal(res.companion?.ok, true);
+  assert.equal(res.companion?.replayed, false);
+  const row = (await db.select().from(bookings).where(eq(bookings.id, bookingId)).limit(1))[0];
+  assert.equal(row!.additionalCompanions, 1);
+  assert.equal(row!.wcOrderId, '777');
+});
+
+test('companion: a re-delivered order replays as a no-op', async () => {
+  const db = await freshDb();
+  const bookingId = await punchBookingWithPendingCompanion(db);
+  const p = companionOrder(bookingId);
+  await processRoundOrderWebhook(db, { topic: 'order.updated', payload: p, resolver, now: NOW });
+  const again = await processRoundOrderWebhook(db, { topic: 'order.updated', payload: p, resolver, now: NOW });
+  assert.equal(again.status, 'processed');
+  if (again.status !== 'processed') return;
+  assert.equal(again.companion?.ok, true);
+  assert.equal(again.companion?.replayed, true);
+  const row = (await db.select().from(bookings).where(eq(bookings.id, bookingId)).limit(1))[0];
+  assert.equal(row!.additionalCompanions, 1); // never double-applied
+});
+
+test('companion: an unpaid tagged order is ignored (status gate)', async () => {
+  const db = await freshDb();
+  const bookingId = await punchBookingWithPendingCompanion(db);
+  const res = await processRoundOrderWebhook(db, {
+    topic: 'order.updated',
+    payload: companionOrder(bookingId, { status: 'pending' }),
+    resolver,
+    now: NOW,
+  });
+  assert.equal(res.status, 'ignored_status');
+  const row = (await db.select().from(bookings).where(eq(bookings.id, bookingId)).limit(1))[0];
+  assert.equal(row!.additionalCompanions, 0);
+});
+
+test('companion: a malformed booking id is reported, not thrown', async () => {
+  const db = await freshDb();
+  const res = await processRoundOrderWebhook(db, {
+    topic: 'order.updated',
+    payload: { id: 778, status: 'completed', line_items: [], meta_data: [{ key: '_memesh_companion_booking_id', value: 'not-a-uuid' }] },
+    resolver,
+    now: NOW,
+  });
+  assert.equal(res.status, 'processed');
+  if (res.status !== 'processed') return;
+  assert.equal(res.companion?.ok, false);
+  assert.equal(res.companion?.error, 'invalid_booking_id');
 });

@@ -240,6 +240,7 @@ export const wcHandoffRoutes: FastifyPluginAsync = async (fastify) => {
                 orderId: roundResult.orderId,
                 minted: roundResult.minted.length,
                 failed: roundResult.failed.length,
+                companion: roundResult.companion,
               },
               '[wc handoff rounds] processed',
             );
@@ -247,6 +248,12 @@ export const wcHandoffRoutes: FastifyPluginAsync = async (fastify) => {
               request.log.warn(
                 { orderId: roundResult.orderId, failed: roundResult.failed },
                 '[wc handoff rounds] mint_failed — paid seats without a booking, refund TODO',
+              );
+            }
+            if (roundResult.companion && !roundResult.companion.ok) {
+              request.log.warn(
+                { orderId: roundResult.orderId, companion: roundResult.companion },
+                '[wc handoff companion] upgrade_failed — paid companion without a booking, operator refund',
               );
             }
           }

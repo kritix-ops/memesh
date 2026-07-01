@@ -17,6 +17,8 @@ export interface CustomerRoundBooking {
   additionalCompanions: number;
   source: 'paid' | 'punchcard' | 'gift' | 'manual';
   barcodeToken: string | null;
+  /** A companion checkout was started but not paid — show "complete payment". */
+  companionPending: boolean;
 }
 
 export interface AvailabilityRound {
@@ -34,7 +36,7 @@ export const getMyRoundBookings = (): Promise<ApiResult<{ bookings: CustomerRoun
 
 export const getRoundAvailability = (
   date: string,
-): Promise<ApiResult<{ date: string; rounds: AvailabilityRound[] }>> =>
+): Promise<ApiResult<{ date: string; companionPriceIls: number; rounds: AvailabilityRound[] }>> =>
   apiRequest(`/rounds/availability?date=${encodeURIComponent(date)}`, { audience: 'customer' });
 
 export const swapRoundBooking = (
@@ -64,6 +66,26 @@ export const bookRoundWithPunch = (
   apiRequest('/rounds/book-punch', {
     method: 'POST',
     body: { punchCardId, roundInstanceId, ticketType },
+    audience: 'customer',
+  });
+
+export interface CompanionCheckoutResult {
+  /** WC order-pay URL to redirect to. Absent when free or already paid. */
+  payUrl?: string;
+  wcOrderId?: number;
+  priceIls?: number;
+  /** Price setting is 0 — companion confirmed without payment. */
+  confirmed?: boolean;
+  /** The pending order turned out to be paid — the webhook confirms it. */
+  alreadyPaid?: boolean;
+}
+
+export const startCompanionCheckout = (
+  bookingId: string,
+): Promise<ApiResult<CompanionCheckoutResult>> =>
+  apiRequest('/rounds/companion/checkout', {
+    method: 'POST',
+    body: { bookingId },
     audience: 'customer',
   });
 
