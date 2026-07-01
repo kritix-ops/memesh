@@ -1,7 +1,11 @@
 import { Logo, Sun } from '@memesh/brand';
 import { StaffLoginForm, StaffSessionProvider, useStaffSession } from '@memesh/staff-auth';
-import type { CSSProperties } from 'react';
+import { type CSSProperties, useState } from 'react';
 import { PosApp } from './pos/PosApp';
+import { RoundsView } from './RoundsView';
+
+const ORANGE = '#ffa983';
+const MUTED = '#636e72';
 
 // Thin shell for the staff station. No tab switcher, no admin nav, no
 // customer surface — by design. Anyone landing here lands on the POS.
@@ -42,7 +46,37 @@ function SurfaceBody() {
   const { state } = useStaffSession();
   if (state.status === 'loading') return <LoadingShell />;
   if (state.status === 'signed-out') return <StaffLoginForm />;
-  return <PosApp />;
+  return <SignedInSurface />;
+}
+
+// Signed-in staff land on the POS (unchanged default). A small toggle lets them
+// flip to a read-only rounds status view — occupancy + what to do about it —
+// without leaving the station.
+function SignedInSurface() {
+  const [view, setView] = useState<'pos' | 'rounds'>('pos');
+  return (
+    <>
+      <nav style={toggleWrapStyle} aria-label="ניווט">
+        <button
+          type="button"
+          onClick={() => setView('pos')}
+          style={toggleBtnStyle(view === 'pos')}
+          aria-current={view === 'pos' ? 'page' : undefined}
+        >
+          קופה
+        </button>
+        <button
+          type="button"
+          onClick={() => setView('rounds')}
+          style={toggleBtnStyle(view === 'rounds')}
+          aria-current={view === 'rounds' ? 'page' : undefined}
+        >
+          סבבים
+        </button>
+      </nav>
+      {view === 'pos' ? <PosApp /> : <RoundsView />}
+    </>
+  );
 }
 
 function LoadingShell() {
@@ -88,3 +122,22 @@ const headerActionStyle: CSSProperties = {
   fontSize: 14,
   cursor: 'pointer',
 };
+
+const toggleWrapStyle: CSSProperties = {
+  display: 'flex',
+  gap: 8,
+  maxWidth: 920,
+  margin: '0 auto',
+  padding: '14px 16px 0',
+};
+
+const toggleBtnStyle = (active: boolean): CSSProperties => ({
+  border: active ? `1.5px solid ${ORANGE}` : '1.5px solid #e9e0d9',
+  background: active ? '#fff4ee' : '#fff',
+  color: active ? '#c97a52' : MUTED,
+  borderRadius: 999,
+  padding: '9px 20px',
+  fontWeight: 600,
+  fontSize: 15,
+  cursor: 'pointer',
+});
