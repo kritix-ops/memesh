@@ -130,7 +130,9 @@ add_action('woocommerce_before_add_to_cart_button', function () {
             fetch(api + '/rounds/availability?date=' + encodeURIComponent(dateEl.value))
                 .then(function (r) { return r.json(); })
                 .then(function (data) {
-                    if (data.roundsRequired === false) {
+                    var open = (data.rounds || []).filter(function (x) { return x.available > 0 && !x.isClosed; });
+                    var optional = data.roundsRequired === false;
+                    if (optional && open.length === 0) {
                         // Rounds are off for this date — free play, nothing to pick.
                         roundEl.innerHTML = '<option value=""></option>';
                         roundEl.required = false;
@@ -139,15 +141,24 @@ add_action('woocommerce_before_add_to_cart_button', function () {
                         msgEl.textContent = 'בתאריך זה הכניסה חופשית — אין צורך בבחירת סבב.';
                         return;
                     }
-                    var open = (data.rounds || []).filter(function (x) { return x.available > 0 && !x.isClosed; });
                     if (open.length === 0) {
                         roundEl.innerHTML = '<option value="">אין סבבים פנויים בתאריך זה</option>';
                         return;
                     }
-                    roundEl.innerHTML = '<option value="">— בחרו סבב —</option>' + open.map(function (x) {
+                    var options = open.map(function (x) {
                         return '<option value="' + x.roundInstanceId + '">' + x.label + ' ' +
                                x.startTime + '–' + x.endTime + ' (' + x.available + ' פנויים)</option>';
                     }).join('');
+                    if (optional) {
+                        // Free-play day with round windows: picking a round is a
+                        // choice, not a requirement.
+                        roundEl.required = false;
+                        roundEl.innerHTML = '<option value="">בלי סבב — כניסה חופשית</option>' + options;
+                        msgEl.style.color = '#5a7a3a';
+                        msgEl.textContent = 'בתאריך זה אפשר להיכנס חופשי או לשריין סבב — לבחירתכם.';
+                        return;
+                    }
+                    roundEl.innerHTML = '<option value="">— בחרו סבב —</option>' + options;
                 })
                 .catch(function () { msgEl.textContent = 'לא ניתן לטעון סבבים כרגע.'; });
         });

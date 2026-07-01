@@ -25,6 +25,7 @@ export * from './rounds-mint.js';
 export * from './rounds-swap.js';
 export * from './rounds-punch.js';
 export * from './rounds-companion.js';
+export * from './rounds-schedule.js';
 export * from './rounds-cancel.js';
 export * from './rounds-waitlist.js';
 export * from './rounds-reminders.js';

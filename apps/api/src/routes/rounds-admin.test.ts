@@ -122,7 +122,7 @@ test('PATCH /admin/rounds/:id rejects an unknown key with 400 invalid_body', asy
   assert.equal(res.json().error, 'invalid_body');
 });
 
-// --- delete / duplicate / off-dates (Yoav 2026-07-02) -------------------------
+// --- delete / duplicate / schedule rules (Yoav 2026-07-02) --------------------
 
 test('DELETE /admin/rounds/:id is admin-only', async () => {
   const noToken = await app.inject({
@@ -164,29 +164,33 @@ test('POST /admin/rounds/:id/duplicate is admin-only and reaches the DB branch',
   assert.ok([404, 500].includes(admin.statusCode), `got ${admin.statusCode}`);
 });
 
-test('off-dates: admin-only gates and body validation', async () => {
-  const noToken = await app.inject({ method: 'GET', url: '/admin/rounds/off-dates' });
+test('schedule-rules: admin-only gates and body validation', async () => {
+  const noToken = await app.inject({ method: 'GET', url: '/admin/rounds/schedule-rules' });
   assert.equal(noToken.statusCode, 401);
 
   const manager = await app.inject({
     method: 'GET',
-    url: '/admin/rounds/off-dates',
+    url: '/admin/rounds/schedule-rules',
     headers: auth(await tokenFor('manager')),
   });
   assert.equal(manager.statusCode, 403);
 
-  const badBody = await app.inject({
+  const badShape = await app.inject({
     method: 'POST',
-    url: '/admin/rounds/off-dates',
+    url: '/admin/rounds/schedule-rules',
     headers: auth(await tokenFor('admin')),
-    payload: { date: 'not-a-date' },
+    payload: { windows: 'nope', outside: 'free_play' },
   });
-  assert.equal(badBody.statusCode, 400);
+  assert.equal(badShape.statusCode, 400);
 
-  const badParam = await app.inject({
-    method: 'DELETE',
-    url: '/admin/rounds/off-dates/not-a-date',
+  // Shape-valid but scopeless — the DB-layer validator rejects before any
+  // DB write, so this is a clean 400 even on the DB-less test box.
+  const scopeless = await app.inject({
+    method: 'POST',
+    url: '/admin/rounds/schedule-rules',
     headers: auth(await tokenFor('admin')),
+    payload: { windows: [], outside: 'free_play' },
   });
-  assert.equal(badParam.statusCode, 400);
+  assert.equal(scopeless.statusCode, 400);
+  assert.equal(scopeless.json().error, 'scope_required');
 });

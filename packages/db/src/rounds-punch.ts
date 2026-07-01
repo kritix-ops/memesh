@@ -12,6 +12,8 @@
 import { and, count, eq, sql } from 'drizzle-orm';
 import type { PgDatabase } from 'drizzle-orm/pg-core';
 import { signBookingToken, type KeyResolver } from '@memesh/qr-engine';
+import { getRoundSettings } from './round-settings';
+import { isInstanceSchedulable } from './rounds-schedule';
 import { markWaitlistClaimed } from './rounds-waitlist';
 import { bookings, punchCardEntries, punchCards, roundInstances } from './schema/index';
 
@@ -45,6 +47,18 @@ export const bookRoundWithPunch = async (
   resolver: KeyResolver,
   now: Date = new Date(),
 ): Promise<BookRoundWithPunchResult> => {
+  // Schedule guards — same rule as createHold: master switch off or a round
+  // filtered out by the date's schedule rule is not bookable, punch included.
+  const settings = await getRoundSettings(db);
+  if (!settings.roundsEnabled) return { ok: false, error: 'round_closed' as const };
+  const schedulable = await isInstanceSchedulable(db, input.roundInstanceId);
+  if (!schedulable.ok) {
+    return {
+      ok: false,
+      error: schedulable.reason === 'not_found' ? ('round_not_found' as const) : ('round_closed' as const),
+    };
+  }
+
   return db.transaction(async (tx) => {
     // 1. Lock the round instance and recount taken — the same oversell guard as
     // createHold. Companions never count toward capacity.

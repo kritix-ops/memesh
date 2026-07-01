@@ -6,6 +6,7 @@
 import { and, count, eq, lte, sql } from 'drizzle-orm';
 import type { PgDatabase } from 'drizzle-orm/pg-core';
 import { getRoundSettings } from './round-settings';
+import { isInstanceSchedulable } from './rounds-schedule';
 import { bookings, roundInstances } from './schema/index';
 
 type AnyPgDatabase = PgDatabase<any, any, any>;
@@ -45,6 +46,16 @@ export const createHold = async (
 ): Promise<CreateHoldResult> => {
   const settings = await getRoundSettings(db);
   const ttlMs = settings.holdTtlMinutes * 60_000;
+
+  // Schedule guards (plan 2026-07-02-round-schedule-rules): with the master
+  // switch off, or the round filtered out by the date's schedule rule, this
+  // seat is not purchasable — even via a direct API call the pickers would
+  // never make. 'closed' matches what the callers already map to 409.
+  if (!settings.roundsEnabled) return { ok: false, error: 'closed' as const };
+  const schedulable = await isInstanceSchedulable(db, input.roundInstanceId);
+  if (!schedulable.ok) {
+    return { ok: false, error: schedulable.reason === 'not_found' ? ('not_found' as const) : ('closed' as const) };
+  }
 
   return db.transaction(async (tx) => {
     const locked = await tx

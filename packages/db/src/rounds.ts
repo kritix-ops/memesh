@@ -9,7 +9,6 @@ import type { PgDatabase } from 'drizzle-orm/pg-core';
 import {
   bookings,
   roundInstances,
-  roundOffDates,
   roundReminderLog,
   rounds,
   waitlistEntries,
@@ -359,35 +358,8 @@ export const anyActiveRounds = async (db: AnyPgDatabase): Promise<boolean> => {
   return rows.length > 0;
 };
 
-// ---------------------------------------------------------------------------
-// Off dates — days on which the rounds system is switched off entirely
-// (Yoav 2026-07-02). Not "closed" (no sales) but "free play": tickets sell
-// without a round and availability reports roundsRequired=false.
-// ---------------------------------------------------------------------------
-
-/** All off dates, soonest first. Past dates are harmless clutter the admin can remove. */
-export const listRoundOffDates = async (db: AnyPgDatabase): Promise<string[]> => {
-  const rows = await db.select({ date: roundOffDates.date }).from(roundOffDates).orderBy(asc(roundOffDates.date));
-  return rows.map((r) => r.date);
-};
-
-/** Idempotent — adding an existing date is a no-op. */
-export const addRoundOffDate = async (db: AnyPgDatabase, dateIso: string): Promise<void> => {
-  await db.insert(roundOffDates).values({ date: dateIso }).onConflictDoNothing();
-};
-
-export const removeRoundOffDate = async (db: AnyPgDatabase, dateIso: string): Promise<void> => {
-  await db.delete(roundOffDates).where(eq(roundOffDates.date, dateIso));
-};
-
-export const isRoundOffDate = async (db: AnyPgDatabase, dateIso: string): Promise<boolean> => {
-  const rows = await db
-    .select({ date: roundOffDates.date })
-    .from(roundOffDates)
-    .where(eq(roundOffDates.date, dateIso))
-    .limit(1);
-  return rows.length > 0;
-};
+// Per-date / recurring schedule rules (windows, free-play vs closed) live in
+// rounds-schedule.ts — they replaced the short-lived off-dates helpers.
 
 // ---------------------------------------------------------------------------
 // Customer personal area — my round bookings (super-brief §11.3)
