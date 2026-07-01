@@ -12,6 +12,11 @@ import { boolean, integer, pgTable, smallint, time, timestamp } from 'drizzle-or
 // the helpers in round-settings.ts.
 export const roundSettings = pgTable('round_settings', {
   id: smallint('id').primaryKey().notNull().default(1),
+  // Master switch for the whole rounds system (Yoav 2026-07-02, dev-phase
+  // control). Off → the WP picker is never mandatory, availability reports
+  // roundsRequired=false, and entry tickets sell as plain products. Round
+  // templates/instances stay intact for when it's flipped back on.
+  roundsEnabled: boolean('rounds_enabled').notNull().default(true),
   // Minutes a seat is held before payment (super-brief §3). Default 15.
   holdTtlMinutes: smallint('hold_ttl_minutes').notNull().default(15),
   // Hours before a round's start that a paid booking may still be cancelled

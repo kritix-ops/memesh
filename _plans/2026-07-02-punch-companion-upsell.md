@@ -133,6 +133,28 @@ rounds for the chosen date, choosing is mandatory."
   checkout's hold call would fail anyway, and it protects rounds integrity.
   Cached 1 minute on error vs 5 on success.
 
+## Added mid-build #2 (Yoav 2026-07-02): master toggle, off dates, delete/duplicate
+
+- `round_settings.rounds_enabled` (migration 0023) — master switch. Off →
+  `/rounds/enabled` false, availability `roundsRequired:false`, tickets sell
+  as plain products, punch modal shows "free play". Templates survive.
+- `round_off_dates` table — whole-day off dates. Availability for an off
+  date: `roundsRequired:false`, no bookable rounds. Admin manages them on
+  the Rounds page (date chips). WP snippet checks per-date server-side
+  (60s transient) in addition to the global check.
+- `deleteRound` — hard delete ONLY when no booking ever touched the round
+  (bookings are the audit trail); otherwise 409 has_bookings → deactivate.
+  Waitlist entries + reminder-log rows go with it.
+- `duplicateRound` — inactive copy with " (עותק)" suffix, straight into the
+  edit form.
+- Snippet now versioned at wordpress/memesh-rounds-snippet.php (secret
+  placeholder — never commit the real one).
+- NOT built yet (needs design alignment): per-date TIME-WINDOW rules and
+  global recurring rules ("rounds only 14:00-16:00 on date X"). Open
+  questions recorded in chat 2026-07-02: what happens outside the windows
+  (free play vs closed), recurrence model, and how windows map to round
+  templates that ARE time slots themselves.
+
 ## Security
 
 - Checkout endpoint is customer-gated + owner-checked in the DB helper; a

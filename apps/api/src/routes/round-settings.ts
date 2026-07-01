@@ -15,6 +15,7 @@ import { requireRoleHook } from '../lib/auth-guards.js';
 // this route just shapes the request and maps the error.
 
 const updateBodySchema = z.object({
+  roundsEnabled: z.boolean().optional(),
   holdTtlMinutes: z.number().int().optional(),
   cancellationWindowHours: z.number().int().optional(),
   claimWindowMinutes: z.number().int().optional(),
@@ -50,6 +51,7 @@ export const roundSettingsRoutes: FastifyPluginAsync = async (fastify) => {
       }
       const d = parsed.data;
       const patch: UpdateRoundSettingsInput = {
+        ...(d.roundsEnabled !== undefined && { roundsEnabled: d.roundsEnabled }),
         ...(d.holdTtlMinutes !== undefined && { holdTtlMinutes: d.holdTtlMinutes }),
         ...(d.cancellationWindowHours !== undefined && {
           cancellationWindowHours: d.cancellationWindowHours,

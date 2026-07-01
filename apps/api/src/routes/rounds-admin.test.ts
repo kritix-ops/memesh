@@ -121,3 +121,72 @@ test('PATCH /admin/rounds/:id rejects an unknown key with 400 invalid_body', asy
   assert.equal(res.statusCode, 400);
   assert.equal(res.json().error, 'invalid_body');
 });
+
+// --- delete / duplicate / off-dates (Yoav 2026-07-02) -------------------------
+
+test('DELETE /admin/rounds/:id is admin-only', async () => {
+  const noToken = await app.inject({
+    method: 'DELETE',
+    url: '/admin/rounds/00000000-0000-0000-0000-000000000000',
+  });
+  assert.equal(noToken.statusCode, 401);
+
+  const manager = await app.inject({
+    method: 'DELETE',
+    url: '/admin/rounds/00000000-0000-0000-0000-000000000000',
+    headers: auth(await tokenFor('manager')),
+  });
+  assert.equal(manager.statusCode, 403);
+});
+
+test('DELETE /admin/rounds/:id as admin reaches the DB branch (404 on unknown id)', async () => {
+  const res = await app.inject({
+    method: 'DELETE',
+    url: '/admin/rounds/00000000-0000-0000-0000-000000000000',
+    headers: auth(await tokenFor('admin')),
+  });
+  assert.ok([404, 409, 500].includes(res.statusCode), `got ${res.statusCode}`);
+});
+
+test('POST /admin/rounds/:id/duplicate is admin-only and reaches the DB branch', async () => {
+  const manager = await app.inject({
+    method: 'POST',
+    url: '/admin/rounds/00000000-0000-0000-0000-000000000000/duplicate',
+    headers: auth(await tokenFor('manager')),
+  });
+  assert.equal(manager.statusCode, 403);
+
+  const admin = await app.inject({
+    method: 'POST',
+    url: '/admin/rounds/00000000-0000-0000-0000-000000000000/duplicate',
+    headers: auth(await tokenFor('admin')),
+  });
+  assert.ok([404, 500].includes(admin.statusCode), `got ${admin.statusCode}`);
+});
+
+test('off-dates: admin-only gates and body validation', async () => {
+  const noToken = await app.inject({ method: 'GET', url: '/admin/rounds/off-dates' });
+  assert.equal(noToken.statusCode, 401);
+
+  const manager = await app.inject({
+    method: 'GET',
+    url: '/admin/rounds/off-dates',
+    headers: auth(await tokenFor('manager')),
+  });
+  assert.equal(manager.statusCode, 403);
+
+  const badBody = await app.inject({
+    method: 'POST',
+    url: '/admin/rounds/off-dates',
+    headers: auth(await tokenFor('admin')),
+    payload: { date: 'not-a-date' },
+  });
+  assert.equal(badBody.statusCode, 400);
+
+  const badParam = await app.inject({
+    method: 'DELETE',
+    url: '/admin/rounds/off-dates/not-a-date',
+    headers: auth(await tokenFor('admin')),
+  });
+  assert.equal(badParam.statusCode, 400);
+});

@@ -10,12 +10,19 @@ import { and, count, eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/pglite';
 import { migrate } from 'drizzle-orm/pglite/migrator';
 import { createCustomer } from './cards';
+import { getRoundSettings, updateRoundSettings } from './round-settings';
 import {
+  addRoundOffDate,
   countUpcomingInstances,
   createRound,
+  deleteRound,
+  duplicateRound,
   ensureUpcomingInstances,
+  isRoundOffDate,
   listCustomerRoundBookings,
+  listRoundOffDates,
   listRounds,
+  removeRoundOffDate,
   roundAvailabilityForDate,
   updateRound,
   validateRoundInput,
@@ -266,4 +273,96 @@ test('countUpcomingInstances buckets by round', async () => {
   const counts = await countUpcomingInstances(db, NOW);
   assert.equal(counts.get(a.round.id), 30);
   assert.equal(counts.get(b.round.id), 30);
+});
+
+// --- delete + duplicate (Yoav 2026-07-02) ------------------------------------
+
+test('deleteRound removes a never-booked template with its instances', async () => {
+  const db = await freshDb();
+  const created = await createRound(db, baseInput, NOW);
+  assert.equal(created.ok, true);
+  if (!created.ok) return;
+  assert.equal(await countInstances(db), 30);
+
+  const res = await deleteRound(db, created.round.id);
+  assert.equal(res.ok, true);
+  assert.equal((await listRounds(db)).length, 0);
+  assert.equal(await countInstances(db), 0);
+});
+
+test('deleteRound refuses once any booking (even cancelled) touched the round', async () => {
+  const db = await freshDb();
+  const created = await createRound(db, baseInput, NOW);
+  assert.equal(created.ok, true);
+  if (!created.ok) return;
+  const inst = (await db.select().from(roundInstances).limit(1))[0];
+  const cust = await createCustomer(db, { firstName: 'א', lastName: 'ב', phone: '052-777-0001' });
+  await db.insert(bookings).values({
+    roundInstanceId: inst!.id,
+    customerId: cust.id,
+    ticketType: 'child_over_walking',
+    source: 'paid',
+    status: 'cancelled',
+  });
+
+  const res = await deleteRound(db, created.round.id);
+  assert.equal(res.ok, false);
+  if (!res.ok) assert.equal(res.error, 'has_bookings');
+  assert.equal((await listRounds(db)).length, 1); // untouched
+});
+
+test('deleteRound reports not_found for an unknown id', async () => {
+  const db = await freshDb();
+  const res = await deleteRound(db, '00000000-0000-0000-0000-000000000000');
+  assert.equal(res.ok, false);
+  if (!res.ok) assert.equal(res.error, 'not_found');
+});
+
+test('duplicateRound copies the template inactive with a copy-suffixed name', async () => {
+  const db = await freshDb();
+  const created = await createRound(db, baseInput, NOW);
+  assert.equal(created.ok, true);
+  if (!created.ok) return;
+
+  const res = await duplicateRound(db, created.round.id);
+  assert.equal(res.ok, true);
+  if (!res.ok) return;
+  assert.equal(res.round.displayName, 'סבב אחר הצהריים (עותק)');
+  assert.equal(res.round.isActive, false);
+  assert.equal(res.round.startTime, created.round.startTime);
+  assert.equal(res.round.defaultCapacity, created.round.defaultCapacity);
+  // Inactive copy materializes nothing — only the original's 30 instances exist.
+  assert.equal(await countInstances(db), 30);
+});
+
+// --- off dates + master toggle ------------------------------------------------
+
+test('off dates: add is idempotent, list is sorted, remove deletes', async () => {
+  const db = await freshDb();
+  await addRoundOffDate(db, '2026-07-20');
+  await addRoundOffDate(db, '2026-07-10');
+  await addRoundOffDate(db, '2026-07-20'); // duplicate — no-op
+  assert.deepEqual(await listRoundOffDates(db), ['2026-07-10', '2026-07-20']);
+  assert.equal(await isRoundOffDate(db, '2026-07-20'), true);
+  assert.equal(await isRoundOffDate(db, '2026-07-21'), false);
+
+  await removeRoundOffDate(db, '2026-07-20');
+  assert.deepEqual(await listRoundOffDates(db), ['2026-07-10']);
+});
+
+test('round settings: roundsEnabled defaults true and toggles', async () => {
+  const db = await freshDb();
+  const initial = await getRoundSettings(db);
+  assert.equal(initial.roundsEnabled, true);
+
+  const off = await updateRoundSettings(db, { roundsEnabled: false });
+  assert.equal(off.ok, true);
+  if (off.ok) {
+    assert.equal(off.row.roundsEnabled, false);
+    assert.deepEqual(off.diff.roundsEnabled, [true, false]);
+  }
+
+  const noop = await updateRoundSettings(db, { roundsEnabled: false });
+  assert.equal(noop.ok, true);
+  if (noop.ok) assert.deepEqual(noop.diff, {});
 });

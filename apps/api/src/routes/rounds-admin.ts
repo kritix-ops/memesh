@@ -1,9 +1,14 @@
 import {
+  addRoundOffDate,
   countUpcomingInstances,
   createRound,
   db,
+  deleteRound,
+  duplicateRound,
   ensureAllActiveInstances,
+  listRoundOffDates,
   listRounds,
+  removeRoundOffDate,
   updateRound,
   type Round,
   type RoundInput,
@@ -33,6 +38,9 @@ const patchSchema = createSchema
   .partial()
   .strict()
   .refine((b) => Object.keys(b).length > 0, { message: 'at least one field is required' });
+
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const offDateSchema = z.object({ date: z.string().regex(DATE_RE) });
 
 // Serialize a stored round for the SPA: Postgres TIME 'HH:MM:SS' → 'HH:MM'.
 function serializeRound(r: Round) {
@@ -121,4 +129,68 @@ export const roundsAdminRoutes: FastifyPluginAsync = async (fastify) => {
     request.log.info({ id: result.round.id }, '[rounds admin update]');
     return { round: serializeRound(result.round) };
   });
+
+  // Off dates — rounds switched off for specific days (free play, tickets sell
+  // without a round). Registered BEFORE the :id routes below matter-of-order-
+  // wise; Fastify prefers static segments over params either way.
+  fastify.get('/admin/rounds/off-dates', { preHandler: requireRoleHook('admin') }, async () => {
+    const dates = await listRoundOffDates(db);
+    return { dates };
+  });
+
+  fastify.post(
+    '/admin/rounds/off-dates',
+    { preHandler: requireRoleHook('admin') },
+    async (request, reply) => {
+      const parsed = offDateSchema.safeParse(request.body);
+      if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
+      await addRoundOffDate(db, parsed.data.date);
+      request.log.info({ date: parsed.data.date }, '[rounds admin off-date] added');
+      return { dates: await listRoundOffDates(db) };
+    },
+  );
+
+  fastify.delete(
+    '/admin/rounds/off-dates/:date',
+    { preHandler: requireRoleHook('admin') },
+    async (request, reply) => {
+      const { date } = request.params as { date: string };
+      if (!DATE_RE.test(date)) return reply.code(400).send({ error: 'invalid_date' });
+      await removeRoundOffDate(db, date);
+      request.log.info({ date }, '[rounds admin off-date] removed');
+      return { dates: await listRoundOffDates(db) };
+    },
+  );
+
+  // Duplicate a template. The copy is created inactive ("(עותק)" suffix) so
+  // the admin renames/reviews before it goes live.
+  fastify.post(
+    '/admin/rounds/:id/duplicate',
+    { preHandler: requireRoleHook('admin') },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const result = await duplicateRound(db, id);
+      if (!result.ok) return reply.code(404).send({ error: 'not_found' });
+      request.log.info({ sourceId: id, newId: result.round.id }, '[rounds admin duplicate]');
+      return { round: serializeRound(result.round) };
+    },
+  );
+
+  // Delete a template. Refused (409) once any booking ever touched it —
+  // bookings are the audit trail; deactivate instead.
+  fastify.delete(
+    '/admin/rounds/:id',
+    { preHandler: requireRoleHook('admin') },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const result = await deleteRound(db, id);
+      if (!result.ok) {
+        const code = result.error === 'not_found' ? 404 : 409;
+        request.log.info({ id, error: result.error }, '[rounds admin delete] rejected');
+        return reply.code(code).send({ error: result.error });
+      }
+      request.log.info({ id }, '[rounds admin delete]');
+      return { ok: true };
+    },
+  );
 };

@@ -36,8 +36,15 @@ export const getMyRoundBookings = (): Promise<ApiResult<{ bookings: CustomerRoun
 
 export const getRoundAvailability = (
   date: string,
-): Promise<ApiResult<{ date: string; companionPriceIls: number; rounds: AvailabilityRound[] }>> =>
-  apiRequest(`/rounds/availability?date=${encodeURIComponent(date)}`, { audience: 'customer' });
+): Promise<
+  ApiResult<{
+    date: string;
+    /** false = rounds switched off for this date (or globally) — free play, nothing to book. */
+    roundsRequired: boolean;
+    companionPriceIls: number;
+    rounds: AvailabilityRound[];
+  }>
+> => apiRequest(`/rounds/availability?date=${encodeURIComponent(date)}`, { audience: 'customer' });
 
 export const swapRoundBooking = (
   bookingId: string,

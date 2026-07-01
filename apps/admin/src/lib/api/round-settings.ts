@@ -4,6 +4,8 @@ import { apiRequest, type ApiResult } from '@memesh/web-shared';
 // Mirrors apps/api/src/routes/round-settings.ts.
 
 export interface RoundSettings {
+  /** Master switch — off means rounds are never mandatory anywhere. */
+  roundsEnabled: boolean;
   holdTtlMinutes: number;
   cancellationWindowHours: number;
   claimWindowMinutes: number;
@@ -21,6 +23,7 @@ export interface RoundSettingsResponse {
 }
 
 export type RoundSettingsPatch = {
+  roundsEnabled?: boolean;
   holdTtlMinutes?: number;
   cancellationWindowHours?: number;
   claimWindowMinutes?: number;
