@@ -126,6 +126,34 @@ test('POST /rounds/hold/release without a customer token returns 401', async () 
   assert.equal(res.statusCode, 401);
 });
 
+// --- POST /rounds/swap (customer-gated) -------------------------------------
+
+test('POST /rounds/swap without a customer token returns 401', async () => {
+  const res = await app.inject({
+    method: 'POST',
+    url: '/rounds/swap',
+    payload: {
+      bookingId: '00000000-0000-0000-0000-0000000000e1',
+      targetRoundInstanceId: '00000000-0000-0000-0000-0000000000e2',
+    },
+  });
+  assert.equal(res.statusCode, 401);
+});
+
+test('POST /rounds/swap with a valid body reaches the swap engine', async () => {
+  const res = await app.inject({
+    method: 'POST',
+    url: '/rounds/swap',
+    headers: { authorization: `Bearer ${await customerToken()}` },
+    payload: {
+      bookingId: '00000000-0000-0000-0000-0000000000e1',
+      targetRoundInstanceId: '00000000-0000-0000-0000-0000000000e2',
+    },
+  });
+  assert.notEqual(res.statusCode, 401);
+  assert.ok([403, 404, 409, 500].includes(res.statusCode), `got ${res.statusCode}`);
+});
+
 // --- POST /rounds/dev-pay (dev-only mint stub) ------------------------------
 
 test('POST /rounds/dev-pay without a customer token returns 401', async () => {
