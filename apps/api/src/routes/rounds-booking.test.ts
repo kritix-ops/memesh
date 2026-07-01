@@ -381,3 +381,17 @@ test('GET /cron/rounds-hold-sweep with the cron secret reaches the sweep', async
   // Auth passed → 200 on a real DB, 500 on the DB-less box.
   assert.ok(res.statusCode === 200 || res.statusCode === 500, `got ${res.statusCode}`);
 });
+
+test('GET /cron/rounds-reminders without the cron secret returns 401', async () => {
+  const res = await app.inject({ method: 'GET', url: '/cron/rounds-reminders' });
+  assert.equal(res.statusCode, 401);
+});
+
+test('GET /cron/rounds-reminders with the cron secret reaches the reminder sweep', async () => {
+  const res = await app.inject({
+    method: 'GET',
+    url: '/cron/rounds-reminders',
+    headers: { authorization: `Bearer ${process.env.CRON_SECRET}` },
+  });
+  assert.ok(res.statusCode === 200 || res.statusCode === 500, `got ${res.statusCode}`);
+});
