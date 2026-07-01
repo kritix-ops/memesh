@@ -9,6 +9,7 @@ process.env.SERVER_SECRET_KEY ??= 'test-server-secret-at-least-32-chars!!';
 process.env.JWT_SECRET ??= 'test-jwt-secret-at-least-32-characters!';
 process.env.QR_KEY_ID ??= '1';
 process.env.CRON_SECRET ??= 'test-cron-secret-at-least-32-chars!!';
+process.env.WP_HANDOFF_SHARED_SECRET ??= 'test-wp-handoff-secret-at-least-32-chars!';
 
 import assert from 'node:assert/strict';
 import { after, test } from 'node:test';
@@ -124,6 +125,54 @@ test('POST /rounds/hold/release without a customer token returns 401', async () 
     payload: { holdId: '00000000-0000-0000-0000-0000000000b1' },
   });
   assert.equal(res.statusCode, 401);
+});
+
+// --- POST /rounds/hold/wc (shared-secret, server-to-server) -----------------
+
+const wcHoldSecret = process.env.WP_HANDOFF_SHARED_SECRET as string;
+const validWcHold = {
+  roundInstanceId: '00000000-0000-0000-0000-0000000000a1',
+  ticketType: 'child_over_walking',
+  customerHint: { phone: '0501234567', firstName: 'טל', lastName: 'כהן' },
+};
+
+test('POST /rounds/hold/wc without the shared secret returns 401', async () => {
+  const res = await app.inject({ method: 'POST', url: '/rounds/hold/wc', payload: validWcHold });
+  assert.equal(res.statusCode, 401);
+});
+
+test('POST /rounds/hold/wc with the wrong shared secret returns 401', async () => {
+  const res = await app.inject({
+    method: 'POST',
+    url: '/rounds/hold/wc',
+    headers: { authorization: 'Bearer wrong-secret-of-the-right-length-padded!' },
+    payload: validWcHold,
+  });
+  assert.equal(res.statusCode, 401);
+});
+
+test('POST /rounds/hold/wc with the secret but a bad body returns 400', async () => {
+  const res = await app.inject({
+    method: 'POST',
+    url: '/rounds/hold/wc',
+    headers: { authorization: `Bearer ${wcHoldSecret}` },
+    payload: { roundInstanceId: 'not-a-uuid', ticketType: 'child_over_walking' },
+  });
+  assert.equal(res.statusCode, 400);
+  assert.equal(res.json().error, 'invalid_body');
+});
+
+test('POST /rounds/hold/wc with the secret and a valid body reaches the hold engine', async () => {
+  const res = await app.inject({
+    method: 'POST',
+    url: '/rounds/hold/wc',
+    headers: { authorization: `Bearer ${wcHoldSecret}` },
+    payload: validWcHold,
+  });
+  // Auth + validation passed. No such instance → 404 on a real DB, 500 on the
+  // DB-less box; either way it got past the shared-secret gate (not 401).
+  assert.notEqual(res.statusCode, 401);
+  assert.ok([404, 409, 500].includes(res.statusCode), `got ${res.statusCode}`);
 });
 
 // --- POST /rounds/swap (customer-gated) -------------------------------------
