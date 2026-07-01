@@ -281,6 +281,65 @@ test('POST /rounds/book-punch with a valid body reaches the punch-booking engine
   assert.ok([403, 404, 409, 500].includes(res.statusCode), `got ${res.statusCode}`);
 });
 
+// --- waitlist (customer-gated) ----------------------------------------------
+
+test('POST /rounds/waitlist/join without a customer token returns 401', async () => {
+  const res = await app.inject({
+    method: 'POST',
+    url: '/rounds/waitlist/join',
+    payload: { roundInstanceId: '00000000-0000-0000-0000-0000000000a1', ticketType: 'child_over_walking' },
+  });
+  assert.equal(res.statusCode, 401);
+});
+
+test('POST /rounds/waitlist/join with a bad body returns 400', async () => {
+  const res = await app.inject({
+    method: 'POST',
+    url: '/rounds/waitlist/join',
+    headers: { authorization: `Bearer ${await customerToken()}` },
+    payload: { roundInstanceId: 'not-a-uuid', ticketType: 'child_over_walking' },
+  });
+  assert.equal(res.statusCode, 400);
+  assert.equal(res.json().error, 'invalid_body');
+});
+
+test('POST /rounds/waitlist/join with a valid body reaches the engine', async () => {
+  const res = await app.inject({
+    method: 'POST',
+    url: '/rounds/waitlist/join',
+    headers: { authorization: `Bearer ${await customerToken()}` },
+    payload: { roundInstanceId: '00000000-0000-0000-0000-0000000000a1', ticketType: 'child_over_walking' },
+  });
+  assert.notEqual(res.statusCode, 401);
+  // No such round → 404 on a real DB, 500 on the DB-less box; 409 if it existed
+  // with room. Either way it passed the customer gate + validation.
+  assert.ok([404, 409, 500].includes(res.statusCode), `got ${res.statusCode}`);
+});
+
+test('POST /rounds/waitlist/leave without a customer token returns 401', async () => {
+  const res = await app.inject({
+    method: 'POST',
+    url: '/rounds/waitlist/leave',
+    payload: { entryId: '00000000-0000-0000-0000-0000000000e9' },
+  });
+  assert.equal(res.statusCode, 401);
+});
+
+test('GET /rounds/waitlist/mine without a customer token returns 401', async () => {
+  const res = await app.inject({ method: 'GET', url: '/rounds/waitlist/mine' });
+  assert.equal(res.statusCode, 401);
+});
+
+test('GET /rounds/waitlist/mine with a customer token reaches the DB', async () => {
+  const res = await app.inject({
+    method: 'GET',
+    url: '/rounds/waitlist/mine',
+    headers: { authorization: `Bearer ${await customerToken()}` },
+  });
+  assert.ok(res.statusCode === 200 || res.statusCode === 500, `got ${res.statusCode}`);
+  if (res.statusCode === 200) assert.ok(Array.isArray(res.json().entries));
+});
+
 // --- POST /rounds/dev-pay (dev-only mint stub) ------------------------------
 
 test('POST /rounds/dev-pay without a customer token returns 401', async () => {

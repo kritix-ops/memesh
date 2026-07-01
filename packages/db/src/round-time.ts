@@ -50,3 +50,18 @@ export function isWithinCancelWindow(
 ): boolean {
   return roundStartWallMs(dateIso, startTimeHhmm) - venueWallMs(now) >= windowHours * 3_600_000;
 }
+
+/** The venue-local hour (0-23) of `now`. */
+export function venueHour(now: Date): number {
+  return new Date(venueWallMs(now)).getUTCHours();
+}
+
+/**
+ * True when `now` (venue local) falls in [startHour, endHour) — the waitlist
+ * active-notification window (super-brief §8.2). Handles an overnight window
+ * (start > end) by treating it as wrapping past midnight.
+ */
+export function isWithinActiveHours(startHour: number, endHour: number, now: Date): boolean {
+  const h = venueHour(now);
+  return startHour <= endHour ? h >= startHour && h < endHour : h >= startHour || h < endHour;
+}

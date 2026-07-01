@@ -19,6 +19,11 @@ export const roundSettings = pgTable('round_settings', {
   // Minutes a waitlisted customer has to claim a freed seat (super-brief §8).
   // Default 60.
   claimWindowMinutes: smallint('claim_window_minutes').notNull().default(60),
+  // Venue-local hours (0-23) within which a waitlist offer may be sent
+  // (super-brief §8.2 "quiet hours"). A seat that frees outside this window
+  // waits for the next active-hours sweep. Default 08:00-22:00.
+  activeHoursStart: smallint('active_hours_start').notNull().default(8),
+  activeHoursEnd: smallint('active_hours_end').notNull().default(22),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 

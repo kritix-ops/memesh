@@ -148,6 +148,13 @@
       "when": 1782912494044,
       "tag": "0020_add_online_punch_method",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1782914222575,
+      "tag": "0021_round_active_hours",
+      "breakpoints": true
     }
   ]
 }

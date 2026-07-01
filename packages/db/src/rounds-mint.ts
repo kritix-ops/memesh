@@ -7,6 +7,7 @@
 import { and, count, eq, sql } from 'drizzle-orm';
 import type { PgDatabase } from 'drizzle-orm/pg-core';
 import { signBookingToken, type KeyResolver } from '@memesh/qr-engine';
+import { markWaitlistClaimed } from './rounds-waitlist';
 import { bookings, roundInstances } from './schema/index';
 
 type AnyPgDatabase = PgDatabase<any, any, any>;
@@ -108,6 +109,9 @@ export const mintBooking = async (
       .returning({ id: bookings.id, barcodeToken: bookings.barcodeToken });
     const b = updated[0];
     if (!b || !b.barcodeToken) throw new Error('[rounds-mint] confirm returned no barcode');
+    // If this customer was on the waitlist for this round, the booking closes
+    // their offer.
+    await markWaitlistClaimed(tx, booking.roundInstanceId, booking.customerId, now);
     return {
       ok: true,
       booking: { bookingId: b.id, barcodeToken: b.barcodeToken, status: 'confirmed' as const },

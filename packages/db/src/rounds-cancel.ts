@@ -29,7 +29,7 @@ export type CancelBookingDeps = {
 };
 
 export type CancelBookingResult =
-  | { ok: true; refunded: boolean; punchReturned: boolean; refundAmountIls: number }
+  | { ok: true; refunded: boolean; punchReturned: boolean; refundAmountIls: number; roundInstanceId: string }
   | { ok: false; error: 'not_found' | 'forbidden' | 'not_confirmed' | 'too_late' | 'refund_failed' };
 
 const hhmm = (t: string): string => t.slice(0, 5);
@@ -45,6 +45,7 @@ export const cancelBooking = async (
       .select({
         id: bookings.id,
         customerId: bookings.customerId,
+        roundInstanceId: bookings.roundInstanceId,
         status: bookings.status,
         source: bookings.source,
         wcOrderId: bookings.wcOrderId,
@@ -118,7 +119,7 @@ export const cancelBooking = async (
     // (gift/manual sources don't exist in the v1 flow; gift refund lands with §7.)
 
     await tx.update(bookings).set({ status: 'cancelled', updatedAt: now }).where(eq(bookings.id, b.id));
-    // Waitlist promotion on the freed seat lands with the waitlist PR.
-    return { ok: true as const, refunded, punchReturned, refundAmountIls };
+    // The route promotes the waitlist for this freed seat after the tx commits.
+    return { ok: true as const, refunded, punchReturned, refundAmountIls, roundInstanceId: b.roundInstanceId };
   });
 };
