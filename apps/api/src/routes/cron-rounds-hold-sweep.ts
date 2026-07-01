@@ -1,13 +1,15 @@
-import { db, expireHolds } from '@memesh/db';
+import { db, expireHolds, expireWaitlistClaims, promoteWaitlist } from '@memesh/db';
 import { timingSafeEqual } from 'node:crypto';
 import type { FastifyPluginAsync } from 'fastify';
 import { env } from '../config.js';
 
 // Vercel Cron hits this to flip expired holds (held → expired) past their TTL
-// (super-brief §3.3). Lazy expiry already keeps availability correct, so this is
-// for DB hygiene and — once the waitlist lands — prompt promotion of the freed
-// seats. Same Bearer-CRON_SECRET auth as the other cron routes so a stray hit
-// on the URL can't trigger sweeps.
+// (super-brief §3.3), then drive the waitlist (§8): every hold that expired
+// freed a seat, so offer it to that round's waitlist; and any claim offer that
+// lapsed gets expired and re-offered to the next in line. Lazy expiry already
+// keeps availability correct, so the sweep is also DB hygiene. Same
+// Bearer-CRON_SECRET auth as the other cron routes so a stray hit on the URL
+// can't trigger sweeps.
 export const cronRoundsHoldSweepRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get('/cron/rounds-hold-sweep', async (request, reply) => {
     const log = request.log;
@@ -37,10 +39,25 @@ export const cronRoundsHoldSweepRoutes: FastifyPluginAsync = async (fastify) => 
     const t0 = Date.now();
     try {
       const freed = await expireHolds(db);
-      // Waitlist promotion for `freed` lands in the waitlist PR; for now the
-      // sweep is pure hygiene (lazy expiry already keeps availability correct).
-      log.info({ expired: freed.length, durationMs: Date.now() - t0 }, '[cron hold-sweep] done');
-      return reply.send({ ok: true, expired: freed.length });
+      // Lapsed claim offers → expired; each returns a round to re-offer.
+      const reoffer = await expireWaitlistClaims(db);
+      // Every round that gained a free seat (a hold expired, or an offer lapsed)
+      // gets its waitlist offered to. Dedupe so a round is promoted once.
+      const roundsToPromote = [...new Set([...freed.map((f) => f.roundInstanceId), ...reoffer])];
+      let promoted = 0;
+      for (const roundInstanceId of roundsToPromote) {
+        try {
+          const res = await promoteWaitlist(db, roundInstanceId);
+          if (res.promoted) promoted += 1;
+        } catch (err) {
+          log.error({ err, roundInstanceId }, '[cron hold-sweep] promote failed (non-fatal)');
+        }
+      }
+      log.info(
+        { expired: freed.length, reoffered: reoffer.length, promoted, durationMs: Date.now() - t0 },
+        '[cron hold-sweep] done',
+      );
+      return reply.send({ ok: true, expired: freed.length, promoted });
     } catch (err) {
       log.error({ err, durationMs: Date.now() - t0 }, '[cron hold-sweep] sweep_failed');
       return reply.code(500).send({ error: 'sweep_failed' });

@@ -4,14 +4,18 @@ import {
   cancelBooking,
   createHold,
   db,
+  joinWaitlist,
+  leaveWaitlist,
   listCustomerRoundBookings,
+  listCustomerWaitlist,
   mintBooking,
+  promoteWaitlist,
   releaseHold,
   resolveOrCreateCustomerFromWc,
   roundAvailabilityForDate,
   swapBooking,
 } from '@memesh/db';
-import type { FastifyPluginAsync } from 'fastify';
+import type { FastifyBaseLogger, FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { env } from '../config.js';
 import { requireCustomer } from '../lib/customer-guard.js';
@@ -44,6 +48,12 @@ const bookPunchSchema = z.object({
   punchCardId: z.string().uuid(),
   ticketType: z.enum(['child_under_walking', 'child_over_walking']),
 });
+const waitlistJoinSchema = z.object({
+  roundInstanceId: z.string().uuid(),
+  ticketType: z.enum(['child_under_walking', 'child_over_walking']),
+  additionalCompanions: z.number().int().min(0).max(1).optional(),
+});
+const waitlistLeaveSchema = z.object({ entryId: z.string().uuid() });
 
 // Server-to-server hold from the WooCommerce checkout (super-brief §4.2). The
 // WP shopper is a guest with no customer session, so identity travels as a
@@ -66,6 +76,28 @@ const wcHoldSchema = z.object({
 const constantTimeEqual = (a: string, b: string): boolean => {
   if (a.length !== b.length) return false;
   return timingSafeEqual(Buffer.from(a), Buffer.from(b));
+};
+
+// Offer a freed seat to the next waitlisted customer (super-brief §8). Runs
+// after the seat is released; never fails the caller's response — a promotion
+// error is logged and the next slot-release (or the hold-sweep cron) retries.
+// Push notification is wired in the follow-up; the offer already shows in the
+// customer's personal area via /rounds/waitlist/mine.
+const promoteFreedSeat = async (
+  roundInstanceId: string,
+  log: FastifyBaseLogger,
+): Promise<void> => {
+  try {
+    const res = await promoteWaitlist(db, roundInstanceId);
+    if (res.promoted) {
+      log.info(
+        { roundInstanceId, entryId: res.promoted.entryId, claimExpiresAt: res.promoted.claimExpiresAt },
+        '[rounds waitlist] promoted',
+      );
+    }
+  } catch (err) {
+    log.error({ err, roundInstanceId }, '[rounds waitlist] promote failed (non-fatal)');
+  }
 };
 
 export const roundsBookingRoutes: FastifyPluginAsync = async (fastify) => {
@@ -254,6 +286,8 @@ export const roundsBookingRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.code(code).send({ error: result.error });
     }
     request.log.info({ bookingId: result.bookingId, customerId }, '[rounds swap] done');
+    // The swap freed a seat in the original round — offer it to its waitlist.
+    await promoteFreedSeat(result.vacatedRoundInstanceId, request.log);
     return { bookingId: result.bookingId, barcodeToken: result.barcodeToken };
   });
 
@@ -346,12 +380,66 @@ export const roundsBookingRoutes: FastifyPluginAsync = async (fastify) => {
       },
       '[rounds cancel] done',
     );
+    // The cancellation freed a seat — offer it to the round's waitlist.
+    await promoteFreedSeat(result.roundInstanceId, request.log);
     return {
       ok: true,
       refunded: result.refunded,
       punchReturned: result.punchReturned,
       refundAmountIls: result.refundAmountIls,
     };
+  });
+
+  // Join the waitlist for a full round (super-brief §8). Customer-gated.
+  fastify.post('/rounds/waitlist/join', { preHandler: requireCustomer }, async (request, reply) => {
+    const customerId = request.customer?.id;
+    if (!customerId) return reply.code(401).send({ error: 'unauthorized' });
+    const parsed = waitlistJoinSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'invalid_body', issues: parsed.error.issues });
+    }
+    const result = await joinWaitlist(db, {
+      roundInstanceId: parsed.data.roundInstanceId,
+      customerId,
+      requestedType: parsed.data.ticketType,
+      ...(parsed.data.additionalCompanions !== undefined
+        ? { requestedCompanions: parsed.data.additionalCompanions }
+        : {}),
+    });
+    if (!result.ok) {
+      // round_not_found → 404; has_availability → 409 (go book instead).
+      const code = result.error === 'round_not_found' ? 404 : 409;
+      return reply.code(code).send({ error: result.error });
+    }
+    request.log.info(
+      { entryId: result.entryId, customerId, position: result.position },
+      '[rounds waitlist] joined',
+    );
+    return { entryId: result.entryId, position: result.position, alreadyOnList: result.alreadyOnList };
+  });
+
+  // Leave the waitlist. Owner-gated in the DB helper.
+  fastify.post('/rounds/waitlist/leave', { preHandler: requireCustomer }, async (request, reply) => {
+    const customerId = request.customer?.id;
+    if (!customerId) return reply.code(401).send({ error: 'unauthorized' });
+    const parsed = waitlistLeaveSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'invalid_body', issues: parsed.error.issues });
+    }
+    const result = await leaveWaitlist(db, parsed.data.entryId, customerId);
+    if (!result.ok) {
+      const code = result.error === 'not_found' ? 404 : result.error === 'forbidden' ? 403 : 409;
+      return reply.code(code).send({ error: result.error });
+    }
+    return { ok: true };
+  });
+
+  // The customer's active waitlist entries (waiting + notified offers).
+  fastify.get('/rounds/waitlist/mine', { preHandler: requireCustomer }, async (request, reply) => {
+    const customerId = request.customer?.id;
+    if (!customerId) return reply.code(401).send({ error: 'unauthorized' });
+    const entries = await listCustomerWaitlist(db, customerId);
+    return { entries };
   });
 
   // Dev-only "pay now" — simulates a completed WooCommerce payment for a held
