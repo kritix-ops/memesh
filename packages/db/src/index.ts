@@ -19,4 +19,5 @@ export * from './gift-claims.js';
 export * from './gift-template.js';
 export * from './migrations-path.js';
 export * from './rounds-dashboard.js';
+export * from './rounds.js';
 export * from './dashboard-settings.js';
