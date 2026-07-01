@@ -256,6 +256,74 @@ export const roundAvailabilityForDate = async (
 };
 
 // ---------------------------------------------------------------------------
+// Customer personal area — my round bookings (super-brief §11.3)
+// ---------------------------------------------------------------------------
+
+export interface CustomerRoundBooking {
+  bookingId: string;
+  label: string;
+  /** YYYY-MM-DD */
+  date: string;
+  /** "HH:MM" */
+  startTime: string;
+  endTime: string;
+  status: 'confirmed' | 'used';
+  ticketType: 'child_under_walking' | 'child_over_walking';
+  additionalCompanions: number;
+  /** The scannable barcode. Always present for confirmed/used bookings. */
+  barcodeToken: string | null;
+}
+
+/**
+ * A customer's active/upcoming round bookings + barcode (super-brief §11.3).
+ * Confirmed or used bookings on today or a future date, chronological. Held /
+ * expired / cancelled are never shown. Owner-scoped by customerId.
+ */
+export const listCustomerRoundBookings = async (
+  db: AnyPgDatabase,
+  customerId: string,
+  now: Date = new Date(),
+): Promise<CustomerRoundBooking[]> => {
+  const todayIso = toIsoDate(now);
+  const rows = await db
+    .select({
+      bookingId: bookings.id,
+      label: rounds.displayName,
+      date: roundInstances.date,
+      startTime: rounds.startTime,
+      endTime: rounds.endTime,
+      status: bookings.status,
+      ticketType: bookings.ticketType,
+      additionalCompanions: bookings.additionalCompanions,
+      barcodeToken: bookings.barcodeToken,
+    })
+    .from(bookings)
+    .innerJoin(roundInstances, eq(roundInstances.id, bookings.roundInstanceId))
+    .innerJoin(rounds, eq(rounds.id, roundInstances.roundId))
+    .where(
+      and(
+        eq(bookings.customerId, customerId),
+        sql`${bookings.status} IN ('confirmed','used')`,
+        gte(roundInstances.date, todayIso),
+      ),
+    );
+
+  return rows
+    .map((r) => ({
+      bookingId: r.bookingId,
+      label: r.label,
+      date: r.date,
+      startTime: hhmm(r.startTime),
+      endTime: hhmm(r.endTime),
+      status: r.status as 'confirmed' | 'used',
+      ticketType: r.ticketType,
+      additionalCompanions: r.additionalCompanions,
+      barcodeToken: r.barcodeToken,
+    }))
+    .sort((a, b) => `${a.date} ${a.startTime}`.localeCompare(`${b.date} ${b.startTime}`));
+};
+
+// ---------------------------------------------------------------------------
 // Instance materialization
 // ---------------------------------------------------------------------------
 

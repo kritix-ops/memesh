@@ -1,4 +1,11 @@
-import { createHold, db, mintBooking, releaseHold, roundAvailabilityForDate } from '@memesh/db';
+import {
+  createHold,
+  db,
+  listCustomerRoundBookings,
+  mintBooking,
+  releaseHold,
+  roundAvailabilityForDate,
+} from '@memesh/db';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { env } from '../config.js';
@@ -48,6 +55,16 @@ export const roundsBookingRoutes: FastifyPluginAsync = async (fastify) => {
       };
     },
   );
+
+  // The signed-in customer's active/upcoming round bookings + barcodes
+  // (super-brief §11.3). Owner-scoped to the session customer.
+  fastify.get('/rounds/my-bookings', { preHandler: requireCustomer }, async (request, reply) => {
+    const customerId = request.customer?.id;
+    if (!customerId) return reply.code(401).send({ error: 'unauthorized' });
+    const rows = await listCustomerRoundBookings(db, customerId);
+    request.log.info({ customerId, bookings: rows.length }, '[rounds my-bookings]');
+    return { bookings: rows };
+  });
 
   // Reserve one child seat before payment (super-brief §3). Customer-gated —
   // the held booking is bound to the session customer. Rate-limited so a

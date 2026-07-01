@@ -66,6 +66,24 @@ test('GET /rounds/availability is public (no auth) and returns the documented sh
   }
 });
 
+// --- GET /rounds/my-bookings (customer-gated) -------------------------------
+
+test('GET /rounds/my-bookings without a customer token returns 401', async () => {
+  const res = await app.inject({ method: 'GET', url: '/rounds/my-bookings' });
+  assert.equal(res.statusCode, 401);
+});
+
+test('GET /rounds/my-bookings with a customer token reaches the DB', async () => {
+  const res = await app.inject({
+    method: 'GET',
+    url: '/rounds/my-bookings',
+    headers: { authorization: `Bearer ${await customerToken()}` },
+  });
+  assert.ok(res.statusCode === 200 || res.statusCode === 500, `got ${res.statusCode}`);
+  if (res.statusCode !== 200) return;
+  assert.ok(Array.isArray(res.json().bookings), 'bookings is an array');
+});
+
 // --- POST /rounds/hold + /release (customer-gated) --------------------------
 
 test('POST /rounds/hold without a customer token returns 401', async () => {

@@ -6,6 +6,7 @@ import {
   type CustomerProfile,
 } from '@memesh/customer-auth';
 import { fmtDate, type PunchCard as ApiPunchCard } from '@memesh/web-shared';
+import { getMyRoundBookings, type CustomerRoundBooking } from '../lib/api/rounds';
 import {
   type CSSProperties,
   type FormEvent,
@@ -599,6 +600,7 @@ function Home({
   const { signOut } = useCustomerSession();
   const [cards, setCards] = useState<ApiPunchCard[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [roundBookings, setRoundBookings] = useState<CustomerRoundBooking[] | null>(null);
 
   // Load /me/cards once on mount. The customer cookie was already proven by
   // the parent provider's /me hydration; this just pulls the card list.
@@ -609,6 +611,20 @@ function Home({
       if (cancelled) return;
       if (res.ok) setCards(res.data.cards);
       else setError(res.error);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Load the customer's active/upcoming round bookings. Independent of cards —
+  // a failure here just hides the section, it doesn't block the card list.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const res = await getMyRoundBookings();
+      if (cancelled) return;
+      if (res.ok) setRoundBookings(res.data.bookings);
     })();
     return () => {
       cancelled = true;
@@ -658,6 +674,37 @@ function Home({
           }}
         >
           הפרטים נשמרו
+        </div>
+      )}
+      {roundBookings && roundBookings.length > 0 && (
+        <div>
+          <div style={{ fontWeight: 600, marginBottom: 10 }}>הסבבים שלי</div>
+          {roundBookings.map((b) => (
+            <div
+              key={b.bookingId}
+              style={{
+                ...card,
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                gap: 14,
+                marginBottom: 12,
+              }}
+            >
+              <div style={{ fontSize: 16, fontWeight: 600 }}>{b.label}</div>
+              <div style={{ fontSize: 13, color: MUTED }}>
+                {fmtDate(b.date)} · {b.startTime}–{b.endTime}
+              </div>
+              {b.barcodeToken && (
+                <MemeshQr value={b.barcodeToken} size={180} title={`ברקוד — ${b.label}`} />
+              )}
+              <div style={{ fontSize: 12.5, color: MUTED }}>
+                {b.ticketType === 'child_under_walking' ? 'תינוק/ת' : 'ילד/ה'}
+                {b.additionalCompanions > 0 ? ' · כולל מלווה נוסף' : ''}
+                {b.status === 'used' ? ' · נוצל' : ''}
+              </div>
+            </div>
+          ))}
         </div>
       )}
       <div>

@@ -14,6 +14,7 @@ import {
   countUpcomingInstances,
   createRound,
   ensureUpcomingInstances,
+  listCustomerRoundBookings,
   listRounds,
   roundAvailabilityForDate,
   updateRound,
@@ -229,6 +230,31 @@ test('roundAvailabilityForDate: excludes inactive rounds and never goes negative
   const avail = await roundAvailabilityForDate(db, TODAY_ISO, NOW);
   assert.equal(avail.length, 1, 'only the active round appears');
   assert.equal(avail[0]!.available, 0, 'clamps at 0, never negative');
+});
+
+test('listCustomerRoundBookings: confirmed upcoming only, owner-scoped', async () => {
+  const db = await freshDb();
+  const created = await createRound(db, baseInput, NOW);
+  assert.equal(created.ok, true);
+  if (!created.ok) return;
+  const instId = await todayInstanceId(db, created.round.id);
+  const mine = await createCustomer(db, { firstName: 'א', lastName: 'ב', phone: '0500000301' });
+  const other = await createCustomer(db, { firstName: 'ג', lastName: 'ד', phone: '0500000302' });
+
+  await db.insert(bookings).values([
+    { roundInstanceId: instId, customerId: mine.id, ticketType: 'child_over_walking', source: 'paid', status: 'confirmed', confirmedAt: NOW, barcodeToken: 'tok-a' },
+    // held → excluded
+    { roundInstanceId: instId, customerId: mine.id, ticketType: 'child_under_walking', source: 'paid', status: 'held', holdExpiresAt: new Date(NOW.getTime() + 600_000) },
+    // another customer → excluded
+    { roundInstanceId: instId, customerId: other.id, ticketType: 'child_over_walking', source: 'paid', status: 'confirmed', confirmedAt: NOW, barcodeToken: 'tok-b' },
+  ]);
+
+  const rows = await listCustomerRoundBookings(db, mine.id, NOW);
+  assert.equal(rows.length, 1, 'only my confirmed upcoming booking');
+  assert.equal(rows[0]!.barcodeToken, 'tok-a');
+  assert.equal(rows[0]!.status, 'confirmed');
+  assert.equal(rows[0]!.date, '2026-07-01');
+  assert.equal(rows[0]!.startTime, '16:00');
 });
 
 test('countUpcomingInstances buckets by round', async () => {
