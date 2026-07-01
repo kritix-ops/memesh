@@ -20,6 +20,7 @@ import { z } from 'zod';
 import { env } from '../config.js';
 import { requireCustomer } from '../lib/customer-guard.js';
 import { phoneSchema } from '../lib/phone-schema.js';
+import { fireWaitlistOffer } from '../lib/waitlist-notify.js';
 import { createWcRestClient } from '../lib/wc-rest-client.js';
 import { envKeyResolver } from '../qr.js';
 
@@ -94,6 +95,7 @@ const promoteFreedSeat = async (
         { roundInstanceId, entryId: res.promoted.entryId, claimExpiresAt: res.promoted.claimExpiresAt },
         '[rounds waitlist] promoted',
       );
+      await fireWaitlistOffer(res.promoted, log);
     }
   } catch (err) {
     log.error({ err, roundInstanceId }, '[rounds waitlist] promote failed (non-fatal)');

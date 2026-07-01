@@ -10,10 +10,14 @@ import {
   bookRoundWithPunch,
   cancelRoundBooking,
   getMyRoundBookings,
+  getMyWaitlist,
   getRoundAvailability,
+  joinWaitlist,
+  leaveWaitlist,
   swapRoundBooking,
   type AvailabilityRound,
   type CustomerRoundBooking,
+  type CustomerWaitlistEntry,
 } from '../lib/api/rounds';
 import {
   type CSSProperties,
@@ -609,6 +613,13 @@ function Home({
   const [cards, setCards] = useState<ApiPunchCard[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [roundBookings, setRoundBookings] = useState<CustomerRoundBooking[] | null>(null);
+  const [waitlist, setWaitlist] = useState<CustomerWaitlistEntry[] | null>(null);
+
+  // The customer's active waitlist entries (waiting + notified offers).
+  const loadWaitlist = async () => {
+    const res = await getMyWaitlist();
+    if (res.ok) setWaitlist(res.data.entries);
+  };
 
   // Load /me/cards. The customer cookie was already proven by the parent
   // provider's /me hydration; this just pulls the card list. Kept callable so a
@@ -632,6 +643,7 @@ function Home({
   };
   useEffect(() => {
     void loadRoundBookings();
+    void loadWaitlist();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -688,12 +700,21 @@ function Home({
           ))}
         </div>
       )}
+      {waitlist && waitlist.length > 0 && (
+        <div>
+          <div style={{ fontWeight: 600, marginBottom: 10 }}>רשימת ההמתנה שלי</div>
+          {waitlist.map((w) => (
+            <WaitlistEntryCard key={w.entryId} entry={w} onChanged={loadWaitlist} />
+          ))}
+        </div>
+      )}
       {cards && cards.some((c) => c.isActive && c.usedEntries < c.totalEntries) && (
         <PunchRoundBooking
           cards={cards.filter((c) => c.isActive && c.usedEntries < c.totalEntries)}
           onBooked={async () => {
-            await Promise.all([loadRoundBookings(), loadCards()]);
+            await Promise.all([loadRoundBookings(), loadCards(), loadWaitlist()]);
           }}
+          onWaitlisted={loadWaitlist}
         />
       )}
       <div>
@@ -748,13 +769,17 @@ function Home({
 function PunchRoundBooking({
   cards,
   onBooked,
+  onWaitlisted,
 }: {
   cards: ApiPunchCard[];
   onBooked: () => void | Promise<void>;
+  onWaitlisted: () => void | Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
   const [date, setDate] = useState('');
   const [rounds, setRounds] = useState<AvailabilityRound[] | null>(null);
+  const [fullRounds, setFullRounds] = useState<AvailabilityRound[]>([]);
+  const [joinMsg, setJoinMsg] = useState<string | null>(null);
   const [cardId, setCardId] = useState(cards[0]?.id ?? '');
   const [ticketType, setTicketType] = useState<'child_over_walking' | 'child_under_walking'>(
     'child_over_walking',
@@ -790,8 +815,10 @@ function PunchRoundBooking({
 
   const loadAvailability = async (d: string) => {
     setRounds(null);
+    setFullRounds([]);
     setChosen(null);
     setError(null);
+    setJoinMsg(null);
     if (!d) return;
     const res = await getRoundAvailability(d);
     if (!res.ok) {
@@ -800,6 +827,24 @@ function PunchRoundBooking({
       return;
     }
     setRounds(res.data.rounds.filter((r) => r.available > 0 && !r.isClosed));
+    setFullRounds(res.data.rounds.filter((r) => r.available === 0 && !r.isClosed));
+  };
+
+  const doJoin = async (r: AvailabilityRound) => {
+    setBusy(true);
+    setError(null);
+    const res = await joinWaitlist(r.roundInstanceId, ticketType);
+    setBusy(false);
+    if (!res.ok) {
+      setError(
+        res.error === 'has_availability'
+          ? 'יש מקום פנוי — אפשר להזמין ישירות.'
+          : 'לא ניתן להצטרף לרשימה כרגע.',
+      );
+      return;
+    }
+    setJoinMsg(`נרשמת לרשימת ההמתנה לסבב ${r.startTime}. נודיע לך אם יתפנה מקום.`);
+    await onWaitlisted();
   };
 
   const doBook = async () => {
@@ -942,6 +987,43 @@ function PunchRoundBooking({
             ))}
           </div>
 
+          {fullRounds.length > 0 && (
+            <div style={{ borderTop: '1px solid #f3efea', paddingTop: 12 }}>
+              <div style={{ fontSize: 12.5, color: MUTED, marginBottom: 8, textAlign: 'center' }}>
+                סבבים מלאים — אפשר להירשם לרשימת המתנה
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {fullRounds.map((r) => (
+                  <button
+                    key={r.roundInstanceId}
+                    disabled={busy}
+                    onClick={() => void doJoin(r)}
+                    style={{
+                      border: '1.5px dashed #e2c4c4',
+                      background: '#fff',
+                      borderRadius: 10,
+                      padding: '10px 14px',
+                      fontSize: 14,
+                      cursor: busy ? 'default' : 'pointer',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      color: MUTED,
+                    }}
+                  >
+                    <span style={{ fontWeight: 600 }}>
+                      {r.label} {r.startTime}–{r.endTime}
+                    </span>
+                    <span style={{ fontSize: 13 }}>רשימת המתנה</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {joinMsg && (
+            <div style={{ color: '#6f8f37', fontSize: 13, textAlign: 'center' }}>{joinMsg}</div>
+          )}
+
           {chosen && (
             <div style={{ borderTop: '1px solid #f3efea', paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
               <div style={{ fontSize: 13.5, textAlign: 'center' }}>
@@ -963,6 +1045,81 @@ function PunchRoundBooking({
           )}
         </>
       )}
+    </div>
+  );
+}
+
+// A waitlist entry: shows whether the customer is still waiting or has an open
+// offer to grab (super-brief §8). Claiming an offer is just booking the round
+// (now that a seat freed), so the card links to that rather than a special
+// action; it also lets the customer leave the list.
+function WaitlistEntryCard({
+  entry,
+  onChanged,
+}: {
+  entry: CustomerWaitlistEntry;
+  onChanged: () => void | Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const doLeave = async () => {
+    setBusy(true);
+    setError(null);
+    const res = await leaveWaitlist(entry.entryId);
+    setBusy(false);
+    if (!res.ok) {
+      setError('לא ניתן לצאת מהרשימה כרגע.');
+      return;
+    }
+    await onChanged();
+  };
+
+  const notified = entry.status === 'notified';
+  const claimTime = entry.claimExpiresAt
+    ? new Date(entry.claimExpiresAt).toLocaleTimeString('he-IL', {
+        hour: '2-digit',
+        minute: '2-digit',
+        timeZone: 'Asia/Jerusalem',
+      })
+    : null;
+
+  return (
+    <div
+      style={{
+        ...card,
+        marginBottom: 12,
+        ...(notified && { border: '1.5px solid #cfe0a8', background: '#f7fbee' }),
+      }}
+    >
+      <div style={{ fontWeight: 600, fontSize: 15 }}>
+        {entry.label} · {entry.startTime}–{entry.endTime}
+      </div>
+      <div style={{ fontSize: 13, color: MUTED, marginTop: 2 }}>{fmtDate(entry.date)}</div>
+      {notified ? (
+        <div style={{ marginTop: 10, color: '#5f7d2e', fontSize: 13.5, fontWeight: 600 }}>
+          התפנה מקום! הזמינו כניסה{claimTime ? ` עד השעה ${claimTime}` : ''} לפני שהמקום יעבור לבא/ה בתור.
+        </div>
+      ) : (
+        <div style={{ marginTop: 10, color: MUTED, fontSize: 13 }}>
+          ממתינ/ה ברשימה. נודיע לך ברגע שיתפנה מקום.
+        </div>
+      )}
+      <button
+        disabled={busy}
+        onClick={() => void doLeave()}
+        style={{
+          marginTop: 12,
+          border: 'none',
+          background: 'transparent',
+          color: MUTED,
+          fontSize: 13,
+          cursor: 'pointer',
+        }}
+      >
+        יציאה מהרשימה
+      </button>
+      {error && <div style={{ color: '#a23a3a', fontSize: 13, marginTop: 6 }}>{error}</div>}
     </div>
   );
 }
