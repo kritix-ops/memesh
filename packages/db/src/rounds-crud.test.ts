@@ -12,17 +12,13 @@ import { migrate } from 'drizzle-orm/pglite/migrator';
 import { createCustomer } from './cards';
 import { getRoundSettings, updateRoundSettings } from './round-settings';
 import {
-  addRoundOffDate,
   countUpcomingInstances,
   createRound,
   deleteRound,
   duplicateRound,
   ensureUpcomingInstances,
-  isRoundOffDate,
   listCustomerRoundBookings,
-  listRoundOffDates,
   listRounds,
-  removeRoundOffDate,
   roundAvailabilityForDate,
   updateRound,
   validateRoundInput,
@@ -335,20 +331,7 @@ test('duplicateRound copies the template inactive with a copy-suffixed name', as
   assert.equal(await countInstances(db), 30);
 });
 
-// --- off dates + master toggle ------------------------------------------------
-
-test('off dates: add is idempotent, list is sorted, remove deletes', async () => {
-  const db = await freshDb();
-  await addRoundOffDate(db, '2026-07-20');
-  await addRoundOffDate(db, '2026-07-10');
-  await addRoundOffDate(db, '2026-07-20'); // duplicate — no-op
-  assert.deepEqual(await listRoundOffDates(db), ['2026-07-10', '2026-07-20']);
-  assert.equal(await isRoundOffDate(db, '2026-07-20'), true);
-  assert.equal(await isRoundOffDate(db, '2026-07-21'), false);
-
-  await removeRoundOffDate(db, '2026-07-20');
-  assert.deepEqual(await listRoundOffDates(db), ['2026-07-10']);
-});
+// --- master toggle ------------------------------------------------------------
 
 test('round settings: roundsEnabled defaults true and toggles', async () => {
   const db = await freshDb();

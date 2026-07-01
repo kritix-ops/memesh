@@ -52,11 +52,42 @@ export const deleteRound = (id: string): Promise<ApiResult<{ ok: true }>> =>
 export const duplicateRound = (id: string): Promise<ApiResult<RoundResponse>> =>
   apiRequest(`/admin/rounds/${id}/duplicate`, { method: 'POST' });
 
-export const listRoundOffDates = (): Promise<ApiResult<{ dates: string[] }>> =>
-  apiRequest('/admin/rounds/off-dates');
+// --- Schedule rules (when the rounds system applies) -------------------------
 
-export const addRoundOffDate = (date: string): Promise<ApiResult<{ dates: string[] }>> =>
-  apiRequest('/admin/rounds/off-dates', { method: 'POST', body: { date } });
+export interface ScheduleWindow {
+  /** "HH:MM" */
+  start: string;
+  end: string;
+}
 
-export const removeRoundOffDate = (date: string): Promise<ApiResult<{ dates: string[] }>> =>
-  apiRequest(`/admin/rounds/off-dates/${date}`, { method: 'DELETE' });
+export interface ScheduleRule {
+  id: string;
+  dateFrom: string | null;
+  dateTo: string | null;
+  /** Bit 0 = Sunday … bit 6 = Saturday; null = every weekday. */
+  weekdayMask: number | null;
+  windows: ScheduleWindow[];
+  /** What the day is outside the windows: tickets without a round, or nothing sold. */
+  outside: 'free_play' | 'closed';
+  note: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ScheduleRuleInput {
+  dateFrom?: string | null;
+  dateTo?: string | null;
+  weekdayMask?: number | null;
+  windows: ScheduleWindow[];
+  outside: 'free_play' | 'closed';
+  note?: string | null;
+}
+
+export const listScheduleRules = (): Promise<ApiResult<{ rules: ScheduleRule[] }>> =>
+  apiRequest('/admin/rounds/schedule-rules');
+
+export const createScheduleRule = (input: ScheduleRuleInput): Promise<ApiResult<{ rule: ScheduleRule }>> =>
+  apiRequest('/admin/rounds/schedule-rules', { method: 'POST', body: input });
+
+export const deleteScheduleRule = (id: string): Promise<ApiResult<{ ok: true }>> =>
+  apiRequest(`/admin/rounds/schedule-rules/${id}`, { method: 'DELETE' });

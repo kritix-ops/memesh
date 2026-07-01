@@ -169,6 +169,20 @@
       "when": 1782944514400,
       "tag": "0023_rounds_toggle_off_dates",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1782948662737,
+      "tag": "0024_drop_round_off_dates",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1782948675915,
+      "tag": "0025_round_schedule_rules",
+      "breakpoints": true
     }
   ]
 }

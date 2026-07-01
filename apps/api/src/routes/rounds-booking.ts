@@ -9,7 +9,6 @@ import {
   getCardSettings,
   getCustomerById,
   getRoundSettings,
-  isRoundOffDate,
   joinWaitlist,
   leaveWaitlist,
   listCustomerRoundBookings,
@@ -20,7 +19,9 @@ import {
   recordCompanionOrder,
   releaseHold,
   resolveOrCreateCustomerFromWc,
+  resolveScheduleForDate,
   roundAvailabilityForDate,
+  roundFitsWindows,
   swapBooking,
 } from '@memesh/db';
 import type { FastifyBaseLogger, FastifyPluginAsync } from 'fastify';
@@ -133,15 +134,23 @@ export const roundsBookingRoutes: FastifyPluginAsync = async (fastify) => {
       }
       const cardSettings = await getCardSettings(db);
       const roundSettings = await getRoundSettings(db);
-      // Rounds are required for this date only when the master switch is on
-      // AND the date isn't flagged off (Yoav 2026-07-02). A not-required date
-      // returns no bookable rounds — free play, nothing to pick.
-      const roundsRequired =
-        roundSettings.roundsEnabled &&
-        (await anyActiveRounds(db)) &&
-        !(await isRoundOffDate(db, date));
-      const rows = roundsRequired ? await roundAvailabilityForDate(db, date) : [];
-      request.log.info({ date, roundsRequired, rounds: rows.length }, '[rounds availability]');
+      // Schedule composition (plan 2026-07-02-round-schedule-rules): the
+      // winning rule for this date filters which rounds are offered (fit
+      // ENTIRELY inside a window) and decides whether picking one is
+      // mandatory. free_play outside → rounds offered but optional;
+      // closed outside → mandatory (and windows [] = nothing purchasable).
+      const systemOn = roundSettings.roundsEnabled && (await anyActiveRounds(db));
+      const schedule = systemOn ? await resolveScheduleForDate(db, date) : null;
+      let rows = systemOn ? await roundAvailabilityForDate(db, date) : [];
+      let roundsRequired = systemOn;
+      if (systemOn && schedule) {
+        rows = rows.filter((r) => roundFitsWindows(r.startTime, r.endTime, schedule.windows));
+        roundsRequired = schedule.outside === 'closed';
+      }
+      request.log.info(
+        { date, roundsRequired, rounds: rows.length, ruleId: schedule?.ruleId ?? null },
+        '[rounds availability]',
+      );
       // Public shape: enough to render the picker, nothing internal (no
       // per-round revenue, no held/booking internals). companionPriceIls is
       // public pricing (it's on the storefront anyway) so pickers show the

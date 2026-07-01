@@ -21,6 +21,7 @@ export * from './round-instances';
 export * from './bookings';
 export * from './waitlist-entries';
 export * from './round-reminder-log';
-export * from './round-off-dates';
+export * from './round-schedule-rules';
+
 export * from './dashboard-settings';
 export * from './round-settings';

@@ -4,17 +4,19 @@ import {
   updateRoundSettings,
 } from '../lib/api/round-settings';
 import {
-  addRoundOffDate,
   createRound,
+  createScheduleRule,
   deleteRound,
+  deleteScheduleRule,
   duplicateRound,
-  listRoundOffDates,
   listRounds,
-  removeRoundOffDate,
+  listScheduleRules,
   updateRound,
   type AdminRound,
   type RoundInput,
   type RoundPatch,
+  type ScheduleRule,
+  type ScheduleWindow,
 } from '../lib/api/rounds';
 import {
   BooleanField,
@@ -220,7 +222,7 @@ export function Rounds() {
         </div>
       )}
 
-      {enabled && <OffDatesManager />}
+      {enabled && <ScheduleRulesManager />}
 
       {rowError && (
         <div style={{ ...cardStyle, color: '#a23a3a', fontSize: 13.5 }}>{rowError}</div>
@@ -334,114 +336,366 @@ export function Rounds() {
   );
 }
 
-// Manage the dates on which rounds are switched off (free play — tickets sell
-// without a round). Whole-day granularity for now; per-time-window rules are
-// the planned next step (Yoav 2026-07-02).
-function OffDatesManager() {
-  const [dates, setDates] = useState<string[] | null>(null);
-  const [newDate, setNewDate] = useState('');
+// ---------------------------------------------------------------------------
+// Schedule rules — when the rounds system applies (plan
+// 2026-07-02-round-schedule-rules). A rule scopes dates (single / range /
+// recurring weekdays / weekdays-in-range) and lists the time windows in which
+// rounds run there; rounds must fit entirely inside a window. Outside the
+// windows the day is either free play (tickets without a round) or closed.
+// v1 is create + delete; editing = delete and recreate.
+// ---------------------------------------------------------------------------
+
+type RuleScopeKind = 'single' | 'range' | 'weekly';
+
+function ruleSummary(r: ScheduleRule): string {
+  const parts: string[] = [];
+  if (r.dateFrom && (r.dateTo === r.dateFrom || (!r.dateTo && r.weekdayMask === null))) {
+    parts.push(fmtIsoDate(r.dateFrom));
+  } else if (r.dateFrom && r.dateTo) {
+    parts.push(`${fmtIsoDate(r.dateFrom)}–${fmtIsoDate(r.dateTo)}`);
+  } else if (r.dateFrom) {
+    parts.push(`מ-${fmtIsoDate(r.dateFrom)}`);
+  }
+  if (r.weekdayMask !== null) parts.push(daysSummary(r.weekdayMask));
+  const scope = parts.join(' · ') || 'כל הימים';
+  const windows =
+    r.windows.length === 0
+      ? 'ללא סבבים כל היום'
+      : `סבבים רק ב-${r.windows.map((w) => `${w.start}–${w.end}`).join(', ')}`;
+  const outside = r.outside === 'closed' ? 'מחוץ לחלונות: סגור' : 'מחוץ לחלונות: כניסה חופשית';
+  return `${scope} · ${windows} · ${outside}`;
+}
+
+function fmtIsoDate(iso: string): string {
+  const [y, m, d] = iso.split('-');
+  return `${d}/${m}/${y}`;
+}
+
+function ScheduleRulesManager() {
+  const [rules, setRules] = useState<ScheduleRule[] | null>(null);
+  const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Form state
+  const [scope, setScope] = useState<RuleScopeKind>('single');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [days, setDays] = useState(127);
+  const [limitDays, setLimitDays] = useState(false);
+  const [windows, setWindows] = useState<ScheduleWindow[]>([]);
+  const [outside, setOutside] = useState<'free_play' | 'closed'>('free_play');
+  const [note, setNote] = useState('');
+
+  const reload = async () => {
+    const res = await listScheduleRules();
+    if (res.ok) setRules(res.data.rules);
+    else console.warn('[web admin rounds] schedule-rules load failed', { error: res.error });
+  };
+
   useEffect(() => {
-    void (async () => {
-      const res = await listRoundOffDates();
-      if (res.ok) setDates(res.data.dates);
-      else console.warn('[web admin rounds] off-dates load failed', { error: res.error });
-    })();
+    void reload();
   }, []);
 
-  const add = async () => {
-    if (!newDate) return;
+  const resetForm = () => {
+    setScope('single');
+    setDateFrom('');
+    setDateTo('');
+    setDays(127);
+    setLimitDays(false);
+    setWindows([]);
+    setOutside('free_play');
+    setNote('');
+  };
+
+  const canSave =
+    scope === 'single'
+      ? dateFrom !== ''
+      : scope === 'range'
+        ? dateFrom !== '' && dateTo !== '' && dateTo >= dateFrom
+        : days >= 1;
+
+  const save = async () => {
+    if (!canSave) return;
     setBusy(true);
     setError(null);
-    console.info('[web admin rounds] off-date add', { date: newDate });
-    const res = await addRoundOffDate(newDate);
+    const input = {
+      dateFrom: scope === 'weekly' ? null : dateFrom,
+      dateTo: scope === 'single' ? dateFrom : scope === 'range' ? dateTo : null,
+      weekdayMask: scope === 'weekly' ? days : scope === 'range' && limitDays ? days : null,
+      windows,
+      outside,
+      note: note.trim() || null,
+    };
+    console.info('[web admin rounds] schedule-rule create', input);
+    const res = await createScheduleRule(input);
     setBusy(false);
     if (!res.ok) {
-      setError('לא ניתן להוסיף את התאריך. נסו שוב.');
+      setError(
+        res.error === 'windows_overlap'
+          ? 'חלונות הזמן חופפים — תקנו את השעות.'
+          : res.error === 'window_end_not_after_start'
+            ? 'שעת הסיום של חלון חייבת להיות אחרי ההתחלה.'
+            : 'לא ניתן לשמור את הכלל. בדקו את הנתונים ונסו שוב.',
+      );
       return;
     }
-    setDates(res.data.dates);
-    setNewDate('');
+    setAdding(false);
+    resetForm();
+    await reload();
   };
 
-  const remove = async (d: string) => {
+  const remove = async (id: string) => {
     setBusy(true);
     setError(null);
-    console.info('[web admin rounds] off-date remove', { date: d });
-    const res = await removeRoundOffDate(d);
+    console.info('[web admin rounds] schedule-rule delete', { id });
+    const res = await deleteScheduleRule(id);
     setBusy(false);
-    if (res.ok) setDates(res.data.dates);
-    else setError('לא ניתן להסיר את התאריך. נסו שוב.');
+    if (res.ok) await reload();
+    else setError('המחיקה נכשלה. נסו שוב.');
   };
 
-  const fmtIso = (iso: string): string => {
-    const [y, m, d] = iso.split('-');
-    return `${d}/${m}/${y}`;
+  const scopeBtn = (kind: RuleScopeKind, label: string) => (
+    <button
+      type="button"
+      onClick={() => setScope(kind)}
+      style={{
+        flex: 1,
+        border: `1.5px solid ${scope === kind ? ORANGE : '#e9e0d9'}`,
+        background: scope === kind ? '#fdf3e3' : '#fff',
+        color: scope === kind ? '#b9772a' : MUTED,
+        borderRadius: 9,
+        padding: '8px',
+        fontSize: 13,
+        fontWeight: 600,
+        cursor: 'pointer',
+      }}
+    >
+      {label}
+    </button>
+  );
+
+  const inputStyle: CSSProperties = {
+    padding: '8px 10px',
+    borderRadius: 9,
+    border: '1.5px solid #e9e0d9',
+    fontSize: 13.5,
   };
 
   return (
     <div style={cardStyle}>
-      <div style={{ fontSize: 14.5, fontWeight: 600, color: INK }}>ימים ללא סבבים</div>
-      <div style={{ fontSize: 12.5, color: MUTED, marginTop: 3, marginBottom: 12 }}>
-        בתאריכים האלה לא נדרשת בחירת סבב — הכניסה נמכרת באתר כרגיל, בלי שריון סבב.
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+        <div>
+          <div style={{ fontSize: 14.5, fontWeight: 600, color: INK }}>מתי הסבבים פועלים</div>
+          <div style={{ fontSize: 12.5, color: MUTED, marginTop: 3 }}>
+            כללים לימים או שעות שבהם הסבבים כבויים או מוגבלים. בלי כללים — הסבבים פועלים תמיד.
+          </div>
+        </div>
+        {!adding && (
+          <button type="button" style={ghostBtn} onClick={() => setAdding(true)}>
+            + כלל חדש
+          </button>
+        )}
       </div>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-        <input
-          type="date"
-          value={newDate}
-          onChange={(e) => setNewDate(e.target.value)}
-          style={{
-            padding: '8px 10px',
-            borderRadius: 9,
-            border: '1.5px solid #e9e0d9',
-            fontSize: 13.5,
-          }}
-        />
-        <button type="button" disabled={busy || !newDate} style={ghostBtn} onClick={() => void add()}>
-          {busy ? 'רגע…' : 'הוספה'}
-        </button>
-      </div>
-      {dates && dates.length > 0 && (
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
-          {dates.map((d) => (
-            <span
-              key={d}
+
+      {rules && rules.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 12 }}>
+          {rules.map((r) => (
+            <div
+              key={r.id}
               style={{
-                display: 'inline-flex',
+                display: 'flex',
+                justifyContent: 'space-between',
                 alignItems: 'center',
-                gap: 6,
-                padding: '5px 10px',
+                gap: 10,
+                padding: '10px 12px',
                 background: '#faf6f1',
                 border: '1px solid #e9e0d9',
-                borderRadius: 999,
-                fontSize: 13,
-                color: INK,
+                borderRadius: 10,
+                flexWrap: 'wrap',
               }}
             >
-              {fmtIso(d)}
+              <div style={{ fontSize: 13, color: INK }}>
+                {r.note && <strong style={{ marginInlineEnd: 6 }}>{r.note}:</strong>}
+                {ruleSummary(r)}
+              </div>
               <button
                 type="button"
                 disabled={busy}
-                onClick={() => void remove(d)}
-                aria-label={`הסרת ${fmtIso(d)}`}
-                style={{
-                  border: 'none',
-                  background: 'transparent',
-                  color: MUTED,
-                  cursor: 'pointer',
-                  fontSize: 14,
-                  lineHeight: 1,
-                  padding: 0,
-                }}
+                onClick={() => void remove(r.id)}
+                style={{ ...ghostBtn, color: '#a23a3a', borderColor: '#eddad3', padding: '5px 12px', fontSize: 12.5 }}
               >
-                ×
+                מחיקה
               </button>
-            </span>
+            </div>
           ))}
         </div>
       )}
+
+      {adding && (
+        <div style={{ marginTop: 14, borderTop: '1px solid #f3efea', paddingTop: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ display: 'flex', gap: 8 }}>
+            {scopeBtn('single', 'תאריך בודד')}
+            {scopeBtn('range', 'טווח תאריכים')}
+            {scopeBtn('weekly', 'ימים קבועים בשבוע')}
+          </div>
+
+          {scope !== 'weekly' && (
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+              <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 13, color: MUTED }}>
+                {scope === 'range' ? 'מתאריך' : 'תאריך'}
+                <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} style={inputStyle} />
+              </label>
+              {scope === 'range' && (
+                <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 13, color: MUTED }}>
+                  עד תאריך
+                  <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} style={inputStyle} />
+                </label>
+              )}
+            </div>
+          )}
+
+          {scope === 'range' && (
+            <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, color: MUTED, cursor: 'pointer' }}>
+              <input type="checkbox" checked={limitDays} onChange={(e) => setLimitDays(e.target.checked)} />
+              רק בימים מסוימים בתוך הטווח
+            </label>
+          )}
+
+          {(scope === 'weekly' || (scope === 'range' && limitDays)) && (
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {WEEKDAYS.map((d) => {
+                const on = (days & (1 << d.bit)) !== 0;
+                return (
+                  <button
+                    key={d.bit}
+                    type="button"
+                    onClick={() => setDays((prev) => prev ^ (1 << d.bit))}
+                    title={d.full}
+                    style={{
+                      border: `1.5px solid ${on ? ORANGE : '#e9e0d9'}`,
+                      background: on ? '#fdf3e3' : '#fff',
+                      color: on ? '#b9772a' : MUTED,
+                      borderRadius: 9,
+                      padding: '7px 12px',
+                      fontSize: 13,
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {d.label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ fontSize: 13, color: MUTED }}>
+              חלונות שבהם הסבבים פועלים (ריק = ללא סבבים בכלל בימים האלה):
+            </div>
+            {windows.map((w, i) => (
+              <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <input
+                  type="time"
+                  value={w.start}
+                  onChange={(e) =>
+                    setWindows((prev) => prev.map((x, j) => (j === i ? { ...x, start: e.target.value } : x)))
+                  }
+                  style={inputStyle}
+                />
+                <span style={{ color: MUTED }}>–</span>
+                <input
+                  type="time"
+                  value={w.end}
+                  onChange={(e) =>
+                    setWindows((prev) => prev.map((x, j) => (j === i ? { ...x, end: e.target.value } : x)))
+                  }
+                  style={inputStyle}
+                />
+                <button
+                  type="button"
+                  onClick={() => setWindows((prev) => prev.filter((_, j) => j !== i))}
+                  style={{ border: 'none', background: 'transparent', color: MUTED, cursor: 'pointer', fontSize: 16 }}
+                  aria-label="הסרת חלון"
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+            {windows.length < 8 && (
+              <button
+                type="button"
+                onClick={() => setWindows((prev) => [...prev, { start: '14:00', end: '16:00' }])}
+                style={{ ...ghostBtn, alignSelf: 'flex-start', padding: '6px 12px', fontSize: 12.5 }}
+              >
+                + חלון זמן
+              </button>
+            )}
+          </div>
+
+          {windows.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <div style={{ fontSize: 13, color: MUTED }}>מחוץ לחלונות האלה:</div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                {(
+                  [
+                    ['free_play', 'כניסה חופשית (בלי סבב)'],
+                    ['closed', 'סגור — אין מכירה'],
+                  ] as const
+                ).map(([val, label]) => (
+                  <button
+                    key={val}
+                    type="button"
+                    onClick={() => setOutside(val)}
+                    style={{
+                      flex: 1,
+                      border: `1.5px solid ${outside === val ? ORANGE : '#e9e0d9'}`,
+                      background: outside === val ? '#fdf3e3' : '#fff',
+                      color: outside === val ? '#b9772a' : MUTED,
+                      borderRadius: 9,
+                      padding: '8px',
+                      fontSize: 13,
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <input
+            type="text"
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder="הערה (לא חובה) — למשל: חנוכה"
+            maxLength={120}
+            style={inputStyle}
+          />
+
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button type="button" disabled={busy || !canSave} onClick={() => void save()} style={{ ...primaryBtn, opacity: canSave ? 1 : 0.5 }}>
+              {busy ? 'שומר…' : 'שמירת הכלל'}
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => {
+                setAdding(false);
+                resetForm();
+                setError(null);
+              }}
+              style={ghostBtn}
+            >
+              ביטול
+            </button>
+          </div>
+        </div>
+      )}
+
       {error && <div style={{ color: '#a23a3a', fontSize: 13, marginTop: 10 }}>{error}</div>}
     </div>
   );

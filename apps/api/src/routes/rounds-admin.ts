@@ -1,18 +1,19 @@
 import {
-  addRoundOffDate,
   countUpcomingInstances,
   createRound,
+  createScheduleRule,
   db,
   deleteRound,
+  deleteScheduleRule,
   duplicateRound,
   ensureAllActiveInstances,
-  listRoundOffDates,
   listRounds,
-  removeRoundOffDate,
+  listScheduleRules,
   updateRound,
   type Round,
   type RoundInput,
   type RoundPatch,
+  type ScheduleRuleInput,
 } from '@memesh/db';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
@@ -40,7 +41,14 @@ const patchSchema = createSchema
   .refine((b) => Object.keys(b).length > 0, { message: 'at least one field is required' });
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-const offDateSchema = z.object({ date: z.string().regex(DATE_RE) });
+const scheduleRuleSchema = z.object({
+  dateFrom: z.string().regex(DATE_RE).nullable().optional(),
+  dateTo: z.string().regex(DATE_RE).nullable().optional(),
+  weekdayMask: z.number().int().nullable().optional(),
+  windows: z.array(z.object({ start: z.string(), end: z.string() })),
+  outside: z.enum(['free_play', 'closed']),
+  note: z.string().nullable().optional(),
+});
 
 // Serialize a stored round for the SPA: Postgres TIME 'HH:MM:SS' → 'HH:MM'.
 function serializeRound(r: Round) {
@@ -130,35 +138,58 @@ export const roundsAdminRoutes: FastifyPluginAsync = async (fastify) => {
     return { round: serializeRound(result.round) };
   });
 
-  // Off dates — rounds switched off for specific days (free play, tickets sell
-  // without a round). Registered BEFORE the :id routes below matter-of-order-
-  // wise; Fastify prefers static segments over params either way.
-  fastify.get('/admin/rounds/off-dates', { preHandler: requireRoleHook('admin') }, async () => {
-    const dates = await listRoundOffDates(db);
-    return { dates };
+  // Schedule rules — when the rounds system applies (windows per date/range/
+  // weekday, free-play vs closed outside them). Static segment, so no clash
+  // with the :id routes below.
+  fastify.get('/admin/rounds/schedule-rules', { preHandler: requireRoleHook('admin') }, async () => {
+    const rules = await listScheduleRules(db);
+    return { rules };
   });
 
   fastify.post(
-    '/admin/rounds/off-dates',
+    '/admin/rounds/schedule-rules',
     { preHandler: requireRoleHook('admin') },
     async (request, reply) => {
-      const parsed = offDateSchema.safeParse(request.body);
+      const parsed = scheduleRuleSchema.safeParse(request.body);
       if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
-      await addRoundOffDate(db, parsed.data.date);
-      request.log.info({ date: parsed.data.date }, '[rounds admin off-date] added');
-      return { dates: await listRoundOffDates(db) };
+      const d = parsed.data;
+      const input: ScheduleRuleInput = {
+        dateFrom: d.dateFrom ?? null,
+        dateTo: d.dateTo ?? null,
+        weekdayMask: d.weekdayMask ?? null,
+        windows: d.windows,
+        outside: d.outside,
+        note: d.note ?? null,
+      };
+      const result = await createScheduleRule(db, input);
+      if (!result.ok) {
+        request.log.info({ error: result.error }, '[rounds schedule] create rejected');
+        return reply.code(400).send({ error: result.error.code });
+      }
+      request.log.info(
+        {
+          ruleId: result.rule.id,
+          dateFrom: result.rule.dateFrom,
+          dateTo: result.rule.dateTo,
+          weekdayMask: result.rule.weekdayMask,
+          windows: result.rule.windows,
+          outside: result.rule.outside,
+        },
+        '[rounds schedule] rule created',
+      );
+      return { rule: result.rule };
     },
   );
 
   fastify.delete(
-    '/admin/rounds/off-dates/:date',
+    '/admin/rounds/schedule-rules/:id',
     { preHandler: requireRoleHook('admin') },
     async (request, reply) => {
-      const { date } = request.params as { date: string };
-      if (!DATE_RE.test(date)) return reply.code(400).send({ error: 'invalid_date' });
-      await removeRoundOffDate(db, date);
-      request.log.info({ date }, '[rounds admin off-date] removed');
-      return { dates: await listRoundOffDates(db) };
+      const { id } = request.params as { id: string };
+      const result = await deleteScheduleRule(db, id);
+      if (!result.ok) return reply.code(404).send({ error: 'not_found' });
+      request.log.info({ ruleId: id }, '[rounds schedule] rule deleted');
+      return { ok: true };
     },
   );
 
