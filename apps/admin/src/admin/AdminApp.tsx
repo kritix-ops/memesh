@@ -61,6 +61,7 @@ import {
 import { useViewport } from '../useViewport';
 import { CreateCardForAdminModal, type AdminCreateInput } from './CreateCardForAdminModal';
 import { EditCardModal, type EditCardSubmit } from './EditCardModal';
+import { LiveRoundsDashboard } from './LiveRoundsDashboard';
 import { ReassignCardModal } from './ReassignCardModal';
 import { Reports } from './reports/Reports';
 import { Settings } from './settings/Settings';
@@ -286,6 +287,11 @@ function Dashboard() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+      {/* Live operational view (rounds, numbers, alerts, waitlist, week-ahead).
+          Self-contained: fetches + polls /admin/dashboard/live on its own. Sits
+          above the retrospective stat grid + recent-actions widgets below. */}
+      <LiveRoundsDashboard />
+
       {stats && stats.expiringIn30d > 0 && (
         <div
           style={{
