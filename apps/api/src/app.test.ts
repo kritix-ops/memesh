@@ -266,6 +266,41 @@ test('POST /webhooks/woocommerce/order accepts a body with a non-JSON Content-Ty
   assert.equal(res.statusCode, 503);
 });
 
+test('POST /webhooks/woocommerce/order acknowledges the unsigned WC activation ping with 200', async () => {
+  // Clicking Save on a WC webhook fires an unsigned ping (`webhook_id=NN`,
+  // form-encoded, no X-WC-Webhook-* headers). WC marks the webhook broken
+  // unless it gets a 2xx back, so the route must acknowledge this exact
+  // shape before the header/HMAC gates — including when WC_WEBHOOK_SECRET
+  // is unset (as in this test env).
+  const res = await app.inject({
+    method: 'POST',
+    url: '/webhooks/woocommerce/order',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    payload: 'webhook_id=12',
+  });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.json().ping, true);
+});
+
+test('POST /webhooks/woocommerce/order does NOT treat a signed delivery as a ping', async () => {
+  // A request carrying a signature header must go through the HMAC gate even
+  // if its body happens to look like a ping (defense against smuggling a
+  // ping-shaped body past verification). 503 here because WC_WEBHOOK_SECRET
+  // is unset in tests — the point is it is NOT the ping's 200.
+  const res = await app.inject({
+    method: 'POST',
+    url: '/webhooks/woocommerce/order',
+    headers: {
+      'content-type': 'application/x-www-form-urlencoded',
+      'x-wc-webhook-signature': 'sig',
+      'x-wc-webhook-topic': 'order.updated',
+      'x-wc-webhook-delivery-id': 'd1',
+    },
+    payload: 'webhook_id=12',
+  });
+  assert.equal(res.statusCode, 503);
+});
+
 // ---------------------------------------------------------------------------
 // /cron/wc-reconcile — structural HTTP gates only. The reconciliation
 // pipeline itself is covered in src/lib/wc-reconciliation.test.ts.

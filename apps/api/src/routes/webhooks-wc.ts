@@ -66,6 +66,26 @@ export const webhooksWcRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.post('/webhooks/woocommerce/order', async (request, reply) => {
     const log = request.log;
 
+    const signature = request.headers['x-wc-webhook-signature'];
+    const topic = request.headers['x-wc-webhook-topic'];
+    const deliveryId = request.headers['x-wc-webhook-delivery-id'];
+
+    // WC's activation ping: clicking Save in WC admin POSTs `webhook_id=NN`
+    // (form-encoded) with NO signature/topic/delivery headers — WooCommerce
+    // never signs pings, only real deliveries. Acknowledge it with 200 so WC
+    // marks the webhook active; anything else and the admin shows a delivery
+    // error and eventually disables the webhook. Nothing is processed here,
+    // so skipping the HMAC gate for this exact shape exposes nothing.
+    const pingBody = (request as unknown as { rawBody?: Buffer }).rawBody;
+    if (
+      typeof signature !== 'string' &&
+      pingBody !== undefined &&
+      /^webhook_id=\d+$/.test(pingBody.toString('utf8'))
+    ) {
+      log.info({ ping: pingBody.toString('utf8') }, '[webhook wc] activation ping acknowledged');
+      return { ok: true, ping: true };
+    }
+
     // Production guard: if no secret is configured, the route refuses to
     // process anything (would let unsigned traffic through). 503 so WC
     // retries instead of marking the webhook permanently disabled.
@@ -73,10 +93,6 @@ export const webhooksWcRoutes: FastifyPluginAsync = async (fastify) => {
       log.error('[webhook wc] missing WC_WEBHOOK_SECRET — refusing to process');
       return reply.code(503).send({ error: 'webhook_secret_not_configured' });
     }
-
-    const signature = request.headers['x-wc-webhook-signature'];
-    const topic = request.headers['x-wc-webhook-topic'];
-    const deliveryId = request.headers['x-wc-webhook-delivery-id'];
 
     if (
       typeof signature !== 'string' ||
