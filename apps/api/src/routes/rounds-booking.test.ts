@@ -154,6 +154,41 @@ test('POST /rounds/swap with a valid body reaches the swap engine', async () => 
   assert.ok([403, 404, 409, 500].includes(res.statusCode), `got ${res.statusCode}`);
 });
 
+// --- POST /rounds/cancel (customer-gated) -----------------------------------
+
+test('POST /rounds/cancel without a customer token returns 401', async () => {
+  const res = await app.inject({
+    method: 'POST',
+    url: '/rounds/cancel',
+    payload: { bookingId: '00000000-0000-0000-0000-0000000000f1' },
+  });
+  assert.equal(res.statusCode, 401);
+});
+
+test('POST /rounds/cancel with a bad body returns 400', async () => {
+  const res = await app.inject({
+    method: 'POST',
+    url: '/rounds/cancel',
+    headers: { authorization: `Bearer ${await customerToken()}` },
+    payload: { bookingId: 'not-a-uuid' },
+  });
+  assert.equal(res.statusCode, 400);
+  assert.equal(res.json().error, 'invalid_body');
+});
+
+test('POST /rounds/cancel with a valid body reaches the cancel engine', async () => {
+  const res = await app.inject({
+    method: 'POST',
+    url: '/rounds/cancel',
+    headers: { authorization: `Bearer ${await customerToken()}` },
+    payload: { bookingId: '00000000-0000-0000-0000-0000000000f1' },
+  });
+  // Auth + validation passed. No such booking → 404 on a real DB, 500 on the
+  // DB-less box; either way it reached cancelBooking past the customer gate.
+  assert.notEqual(res.statusCode, 401);
+  assert.ok([403, 404, 409, 500, 502].includes(res.statusCode), `got ${res.statusCode}`);
+});
+
 // --- POST /rounds/dev-pay (dev-only mint stub) ------------------------------
 
 test('POST /rounds/dev-pay without a customer token returns 401', async () => {

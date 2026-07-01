@@ -81,6 +81,9 @@ function fakeOrder(over: {
 function fakeClient(orders: WcOrderSummary[]): WcRestClient {
   return {
     listCompletedOrdersSince: async () => orders,
+    createOrderRefund: async () => {
+      throw new Error('refunds are not exercised by reconciliation');
+    },
   };
 }
 
@@ -242,6 +245,9 @@ test('reconcileWcOrders uses the lookbackHours to compute the WC `since` cutoff'
       capturedSince = since;
       return [];
     },
+    createOrderRefund: async () => {
+      throw new Error('refunds are not exercised by reconciliation');
+    },
   };
 
   const now = new Date('2026-06-20T12:00:00.000Z');
@@ -273,6 +279,9 @@ test('reconcileWcOrders propagates errors from the WC client (so the cron route 
   const client: WcRestClient = {
     listCompletedOrdersSince: async () => {
       throw new Error('[wc-rest] orders fetch failed: 401 Sorry');
+    },
+    createOrderRefund: async () => {
+      throw new Error('refunds are not exercised by reconciliation');
     },
   };
   await assert.rejects(
