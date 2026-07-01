@@ -66,3 +66,36 @@ export const bookRoundWithPunch = (
     body: { punchCardId, roundInstanceId, ticketType },
     audience: 'customer',
   });
+
+export interface CustomerWaitlistEntry {
+  entryId: string;
+  roundInstanceId: string;
+  label: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  status: 'waiting' | 'notified';
+  requestedType: 'child_under_walking' | 'child_over_walking';
+  /** Set only when notified — when the offer lapses. */
+  claimExpiresAt: string | null;
+}
+
+export const getMyWaitlist = (): Promise<ApiResult<{ entries: CustomerWaitlistEntry[] }>> =>
+  apiRequest('/rounds/waitlist/mine', { audience: 'customer' });
+
+export const joinWaitlist = (
+  roundInstanceId: string,
+  ticketType: 'child_under_walking' | 'child_over_walking',
+): Promise<ApiResult<{ entryId: string; position: number; alreadyOnList: boolean }>> =>
+  apiRequest('/rounds/waitlist/join', {
+    method: 'POST',
+    body: { roundInstanceId, ticketType },
+    audience: 'customer',
+  });
+
+export const leaveWaitlist = (entryId: string): Promise<ApiResult<{ ok: true }>> =>
+  apiRequest('/rounds/waitlist/leave', {
+    method: 'POST',
+    body: { entryId },
+    audience: 'customer',
+  });
