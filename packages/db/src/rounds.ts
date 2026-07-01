@@ -4,9 +4,9 @@
 // upcoming instances exist. Pattern mirrors card-settings/dashboard-settings:
 // pure validation, then persist; helpers return a discriminated result.
 
-import { and, asc, eq, gte, lte } from 'drizzle-orm';
+import { and, asc, count, eq, gte, lte, sql } from 'drizzle-orm';
 import type { PgDatabase } from 'drizzle-orm/pg-core';
-import { roundInstances, rounds, type NewRoundInstance, type Round } from './schema/index';
+import { bookings, roundInstances, rounds, type NewRoundInstance, type Round } from './schema/index';
 
 type AnyPgDatabase = PgDatabase<any, any, any>;
 
@@ -173,6 +173,86 @@ export const updateRound = async (
 /** All round templates, ordered for the admin list (sort_order, then start). */
 export const listRounds = async (db: AnyPgDatabase): Promise<Round[]> => {
   return db.select().from(rounds).orderBy(asc(rounds.sortOrder), asc(rounds.startTime));
+};
+
+// ---------------------------------------------------------------------------
+// Customer-facing availability (Super Brief §1.3 + Appendix A)
+// ---------------------------------------------------------------------------
+
+export interface RoundAvailabilityRow {
+  roundInstanceId: string;
+  roundId: string;
+  /** Customer-facing round name. */
+  label: string;
+  /** "HH:MM" */
+  startTime: string;
+  /** "HH:MM" */
+  endTime: string;
+  capacity: number;
+  /** confirmed + used + active holds (child bookings; companions never count). */
+  taken: number;
+  /** max(0, capacity − taken). */
+  available: number;
+  isClosed: boolean;
+}
+
+/**
+ * Live availability for every ACTIVE round on a given date. Pure read — the
+ * count follows super-brief §1.3: capacity minus confirmed + used + active
+ * holds, counting child bookings only (companions are a booking column, never a
+ * separate row, so counting bookings counts children). Expired holds are
+ * ignored (lazy expiry). Sorted by start time.
+ *
+ * Reads whatever round_instances already exist for the date; materialization is
+ * the admin write-path's job (a date past the rolling window returns nothing
+ * until it's topped up).
+ */
+export const roundAvailabilityForDate = async (
+  db: AnyPgDatabase,
+  dateIso: string,
+  now: Date = new Date(),
+): Promise<RoundAvailabilityRow[]> => {
+  const instances = await db
+    .select({
+      id: roundInstances.id,
+      roundId: roundInstances.roundId,
+      capacity: roundInstances.capacity,
+      isClosed: roundInstances.isClosed,
+      label: rounds.displayName,
+      startTime: rounds.startTime,
+      endTime: rounds.endTime,
+    })
+    .from(roundInstances)
+    .innerJoin(rounds, eq(rounds.id, roundInstances.roundId))
+    .where(and(eq(roundInstances.date, dateIso), eq(rounds.isActive, true)));
+
+  const result: RoundAvailabilityRow[] = [];
+  for (const inst of instances) {
+    const takenRows = await db
+      .select({ n: count() })
+      .from(bookings)
+      .where(
+        and(
+          eq(bookings.roundInstanceId, inst.id),
+          sql`(${bookings.status} IN ('confirmed','used') OR (${bookings.status} = 'held' AND ${bookings.holdExpiresAt} > ${now}))`,
+        ),
+      );
+    const taken = Number(takenRows[0]?.n ?? 0);
+    result.push({
+      roundInstanceId: inst.id,
+      roundId: inst.roundId,
+      label: inst.label,
+      startTime: hhmm(inst.startTime),
+      endTime: hhmm(inst.endTime),
+      capacity: inst.capacity,
+      taken,
+      available: Math.max(0, inst.capacity - taken),
+      isClosed: inst.isClosed,
+    });
+  }
+
+  result.sort((a, b) => a.startTime.localeCompare(b.startTime));
+  return result;
 };
 
 // ---------------------------------------------------------------------------

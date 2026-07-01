@@ -6,19 +6,21 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { PGlite } from '@electric-sql/pglite';
-import { count } from 'drizzle-orm';
+import { and, count, eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/pglite';
 import { migrate } from 'drizzle-orm/pglite/migrator';
+import { createCustomer } from './cards';
 import {
   countUpcomingInstances,
   createRound,
   ensureUpcomingInstances,
   listRounds,
+  roundAvailabilityForDate,
   updateRound,
   validateRoundInput,
   type RoundInput,
 } from './rounds';
-import { roundInstances } from './schema';
+import { bookings, roundInstances } from './schema';
 
 async function freshDb() {
   const client = new PGlite();
@@ -166,6 +168,67 @@ test('updateRound cross-checks end>start against current times', async () => {
   assert.equal(res.ok, false);
   if (res.ok) return;
   assert.equal('error' in res && res.error.code, 'end_not_after_start');
+});
+
+// --- roundAvailabilityForDate ----------------------------------------------
+
+const TODAY_ISO = '2026-07-01'; // matches NOW
+
+async function todayInstanceId(
+  db: Awaited<ReturnType<typeof freshDb>>,
+  roundId: string,
+): Promise<string> {
+  const rows = await db
+    .select()
+    .from(roundInstances)
+    .where(and(eq(roundInstances.roundId, roundId), eq(roundInstances.date, TODAY_ISO)))
+    .limit(1);
+  const inst = rows[0];
+  if (!inst) throw new Error('expected today instance');
+  return inst.id;
+}
+
+test('roundAvailabilityForDate: capacity minus confirmed + active holds, expired holds ignored', async () => {
+  const db = await freshDb();
+  const created = await createRound(db, { ...baseInput, defaultCapacity: 10 }, NOW);
+  assert.equal(created.ok, true);
+  if (!created.ok) return;
+  const instId = await todayInstanceId(db, created.round.id);
+  const cust = await createCustomer(db, { firstName: 'א', lastName: 'ב', phone: '0500000001' });
+
+  await db.insert(bookings).values([
+    { roundInstanceId: instId, customerId: cust.id, ticketType: 'child_over_walking', source: 'paid', status: 'confirmed', confirmedAt: NOW },
+    { roundInstanceId: instId, customerId: cust.id, ticketType: 'child_under_walking', source: 'paid', status: 'held', holdExpiresAt: new Date(NOW.getTime() + 10 * 60_000) },
+    { roundInstanceId: instId, customerId: cust.id, ticketType: 'child_over_walking', source: 'paid', status: 'held', holdExpiresAt: new Date(NOW.getTime() - 60_000) },
+  ]);
+
+  const avail = await roundAvailabilityForDate(db, TODAY_ISO, NOW);
+  const row = avail.find((r) => r.roundInstanceId === instId);
+  assert.ok(row, 'round appears in availability');
+  assert.equal(row.capacity, 10);
+  assert.equal(row.taken, 2, 'confirmed + active held; expired hold not counted');
+  assert.equal(row.available, 8);
+});
+
+test('roundAvailabilityForDate: excludes inactive rounds and never goes negative', async () => {
+  const db = await freshDb();
+  const active = await createRound(db, { ...baseInput, defaultCapacity: 2 }, NOW);
+  const inactive = await createRound(db, { ...baseInput, label: 'evening', startTime: '18:00', endTime: '20:00', isActive: false }, NOW);
+  assert.equal(active.ok && inactive.ok, true);
+  if (!active.ok || !inactive.ok) return;
+
+  const instId = await todayInstanceId(db, active.round.id);
+  const cust = await createCustomer(db, { firstName: 'א', lastName: 'ב', phone: '0500000002' });
+  // Oversell by one to prove available clamps at 0.
+  await db.insert(bookings).values([
+    { roundInstanceId: instId, customerId: cust.id, ticketType: 'child_over_walking', source: 'paid', status: 'confirmed', confirmedAt: NOW },
+    { roundInstanceId: instId, customerId: cust.id, ticketType: 'child_over_walking', source: 'paid', status: 'confirmed', confirmedAt: NOW },
+    { roundInstanceId: instId, customerId: cust.id, ticketType: 'child_over_walking', source: 'paid', status: 'confirmed', confirmedAt: NOW },
+  ]);
+
+  const avail = await roundAvailabilityForDate(db, TODAY_ISO, NOW);
+  assert.equal(avail.length, 1, 'only the active round appears');
+  assert.equal(avail[0]!.available, 0, 'clamps at 0, never negative');
 });
 
 test('countUpcomingInstances buckets by round', async () => {
