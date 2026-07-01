@@ -19,6 +19,7 @@ import { cronGiftExpireRoutes } from './routes/cron-gift-expire.js';
 import { cronWcReconcileRoutes } from './routes/cron-wc-reconcile.js';
 import { reportsRoutes } from './routes/reports.js';
 import { rolePermissionsRoutes } from './routes/role-permissions.js';
+import { roundsAdminRoutes } from './routes/rounds-admin.js';
 import { staffRoutes } from './routes/staff.js';
 import { staffPinRoutes } from './routes/staff-pin.js';
 import { staffRoundsRoutes } from './routes/staff-rounds.js';
@@ -98,6 +99,7 @@ export const buildApp = async (): Promise<FastifyInstance> => {
   await fastify.register(staffPinRoutes);
   await fastify.register(staffRoundsRoutes);
   await fastify.register(rolePermissionsRoutes);
+  await fastify.register(roundsAdminRoutes);
   await fastify.register(adminRoutes);
   await fastify.register(reportsRoutes);
   await fastify.register(webhooksWcRoutes);
