@@ -28,6 +28,8 @@ export interface DashboardLiveSettings {
   showWeekAhead: boolean;
   capacityWarningPct: number;
   capacityDangerPct: number;
+  /** Ordered visible zones; a key omitted here hides that zone on the dashboard. */
+  widgetsOrder: string[];
 }
 
 export interface DashboardLiveStats {
@@ -148,11 +150,47 @@ export interface ActionsResponse {
   actions: StaffActionRow[];
 }
 
+// ---------------------------------------------------------------------------
+// Editable dashboard settings — the full singleton row behind the "דשבורד"
+// section of the Settings tab. Mirrors dashboard_settings; unlike the live
+// endpoint's settings block, this exposes showRevenue and widgetsOrder because
+// this is the admin-only edit surface.
+// ---------------------------------------------------------------------------
+
+export interface DashboardSettings {
+  refreshIntervalSeconds: number;
+  showRevenue: boolean;
+  showWeekAhead: boolean;
+  capacityWarningPct: number;
+  capacityDangerPct: number;
+  widgetsOrder: string[];
+  updatedAt: string;
+}
+
+export interface DashboardSettingsResponse {
+  settings: DashboardSettings;
+}
+
+export type DashboardSettingsPatch = Partial<Omit<DashboardSettings, 'updatedAt'>>;
+
+export interface DashboardSettingsUpdateResponse {
+  settings: DashboardSettings;
+  diff: Record<string, [unknown, unknown]>;
+}
+
 export const getDashboardStats = (): Promise<ApiResult<DashboardResponse>> =>
   apiRequest('/admin/dashboard');
 
 export const getDashboardLive = (): Promise<ApiResult<DashboardLiveResponse>> =>
   apiRequest('/admin/dashboard/live');
+
+export const getDashboardSettings = (): Promise<ApiResult<DashboardSettingsResponse>> =>
+  apiRequest('/admin/dashboard/settings');
+
+export const updateDashboardSettings = (
+  patch: DashboardSettingsPatch,
+): Promise<ApiResult<DashboardSettingsUpdateResponse>> =>
+  apiRequest('/admin/dashboard/settings', { method: 'PATCH', body: patch });
 
 export const getDormantCustomers = (): Promise<ApiResult<DormantResponse>> =>
   apiRequest('/admin/reports/dormant');

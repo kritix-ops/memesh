@@ -43,6 +43,12 @@ const TRACK = '#f3efea';
 
 const HE_WEEKDAYS = ['א', 'ב', 'ג', 'ד', 'ה', 'ו', 'ש'];
 
+// Fallback zone order if the API response predates the widgetsOrder field
+// (admin and API deploy as separate projects, so a brief version skew is
+// possible right after a merge). An explicit empty array from a current API
+// still means "operator hid everything" and is left as-is.
+const DEFAULT_ZONE_ORDER = ['rounds_today', 'stats_today', 'alerts', 'waitlist', 'week_ahead'];
+
 const zoneTitle: CSSProperties = { fontSize: 15, fontWeight: 600, color: INK };
 
 /** Parse a "YYYY-MM-DD" date in the local timezone (avoids the UTC-midnight
@@ -140,78 +146,84 @@ export function LiveRoundsDashboard() {
   const { settings, today, alerts, waitlist, weekAhead } = data;
   const rounds = sortRoundsByStart(today.rounds);
   const s = today.stats;
+  const zoneOrder = Array.isArray(settings.widgetsOrder)
+    ? settings.widgetsOrder
+    : DEFAULT_ZONE_ORDER;
+
+  // Zones render in the operator-configured order; a key absent from
+  // widgetsOrder is hidden entirely. Each zone still self-hides when it has no
+  // data (alerts/waitlist empty, week grid off or empty).
+  const renderZone = (key: string) => {
+    switch (key) {
+      case 'rounds_today':
+        return (
+          <div key={key}>
+            <div style={{ ...zoneTitle, marginBottom: 10 }}>סבבי היום</div>
+            {rounds.length === 0 ? (
+              <div style={{ ...card, color: MUTED, textAlign: 'center' }}>אין סבבים פעילים היום.</div>
+            ) : (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+                {rounds.map((r) => (
+                  <RoundTile
+                    key={r.roundInstanceId}
+                    round={r}
+                    warnPct={settings.capacityWarningPct}
+                    dangerPct={settings.capacityDangerPct}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      case 'stats_today':
+        return (
+          <div key={key}>
+            <div style={{ ...zoneTitle, marginBottom: 10 }}>היום במספרים</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+              {s.revenueIls !== undefined && (
+                <LiveStatTile
+                  label="הכנסה היום"
+                  value={formatIls(s.revenueIls)}
+                  delta={s.revenueDeltaPct ?? null}
+                  kind="pct"
+                />
+              )}
+              <LiveStatTile label="הזמנות היום" value={s.bookingsCount} delta={s.bookingsDelta} kind="count" />
+              <LiveStatTile label="holds פעילים" value={s.activeHoldsCount} delta={null} kind="count" />
+              <LiveStatTile
+                label="כרטיסיות שנמכרו"
+                value={s.punchCardsSold}
+                delta={s.punchCardsDelta}
+                kind="count"
+              />
+            </div>
+          </div>
+        );
+      case 'alerts':
+        return alerts.length > 0 ? <AlertsZone key={key} alerts={alerts} /> : null;
+      case 'waitlist':
+        return waitlist.length > 0 ? <WaitlistZone key={key} rows={waitlist} /> : null;
+      case 'week_ahead':
+        return settings.showWeekAhead && weekAhead.some((d) => d.rounds.length > 0) ? (
+          <WeekAheadGrid
+            key={key}
+            days={weekAhead}
+            warnPct={settings.capacityWarningPct}
+            dangerPct={settings.capacityDangerPct}
+            isMobile={isMobile}
+          />
+        ) : null;
+      default:
+        return null;
+    }
+  };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
-      {/* Zone 1 — rounds today */}
-      <div>
-        <div
-          style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            gap: 12,
-            marginBottom: 10,
-            flexWrap: 'wrap',
-          }}
-        >
-          <div style={zoneTitle}>סבבי היום</div>
-          <RefreshIndicator seconds={refreshSeconds} paused={paused} asOf={data.asOf} />
-        </div>
-        {rounds.length === 0 ? (
-          <div style={{ ...card, color: MUTED, textAlign: 'center' }}>אין סבבים פעילים היום.</div>
-        ) : (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
-            {rounds.map((r) => (
-              <RoundTile
-                key={r.roundInstanceId}
-                round={r}
-                warnPct={settings.capacityWarningPct}
-                dangerPct={settings.capacityDangerPct}
-              />
-            ))}
-          </div>
-        )}
+      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+        <RefreshIndicator seconds={refreshSeconds} paused={paused} asOf={data.asOf} />
       </div>
-
-      {/* Zone 2 — today in numbers */}
-      <div>
-        <div style={{ ...zoneTitle, marginBottom: 10 }}>היום במספרים</div>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
-          {s.revenueIls !== undefined && (
-            <LiveStatTile
-              label="הכנסה היום"
-              value={formatIls(s.revenueIls)}
-              delta={s.revenueDeltaPct ?? null}
-              kind="pct"
-            />
-          )}
-          <LiveStatTile label="הזמנות היום" value={s.bookingsCount} delta={s.bookingsDelta} kind="count" />
-          <LiveStatTile label="holds פעילים" value={s.activeHoldsCount} delta={null} kind="count" />
-          <LiveStatTile
-            label="כרטיסיות שנמכרו"
-            value={s.punchCardsSold}
-            delta={s.punchCardsDelta}
-            kind="count"
-          />
-        </div>
-      </div>
-
-      {/* Zone 3 — alerts (hidden when none) */}
-      {alerts.length > 0 && <AlertsZone alerts={alerts} />}
-
-      {/* Zone 4 — waitlist (hidden when none) */}
-      {waitlist.length > 0 && <WaitlistZone rows={waitlist} />}
-
-      {/* Zone 5 — 7 days ahead (hidden by setting or when there are no rounds) */}
-      {settings.showWeekAhead && weekAhead.some((d) => d.rounds.length > 0) && (
-        <WeekAheadGrid
-          days={weekAhead}
-          warnPct={settings.capacityWarningPct}
-          dangerPct={settings.capacityDangerPct}
-          isMobile={isMobile}
-        />
-      )}
+      {zoneOrder.map((key) => renderZone(key))}
     </div>
   );
 }

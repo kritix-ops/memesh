@@ -11,8 +11,11 @@ import {
   listStaffActions,
   logStaffAction,
   reMintAllPunchCardTokens,
+  updateDashboardSettings,
+  type UpdateDashboardSettingsInput,
 } from '@memesh/db';
 import type { FastifyPluginAsync } from 'fastify';
+import { z } from 'zod';
 import { requireRoleHook } from '../lib/auth-guards.js';
 import { envKeyResolver } from '../qr.js';
 
@@ -111,6 +114,8 @@ export type DashboardLiveSettings = {
   capacityWarningPct: number;
   /** Occupancy percentage at which a round tile turns red. */
   capacityDangerPct: number;
+  /** Ordered list of visible dashboard zones; a key omitted here hides that zone. */
+  widgetsOrder: string[];
 };
 
 export type DashboardLiveResponse = {
@@ -175,6 +180,7 @@ async function computeDashboardLive(): Promise<Omit<CachedDashboard, 'expiresAt'
         showWeekAhead: settings.showWeekAhead,
         capacityWarningPct: settings.capacityWarningPct,
         capacityDangerPct: settings.capacityDangerPct,
+        widgetsOrder: settings.widgetsOrder as string[],
       },
       today: {
         rounds: rounds.map((r) => ({
@@ -271,6 +277,22 @@ export function _resetDashboardLiveCacheForTests(): void {
   liveCache = null;
 }
 
+// PATCH body for /admin/dashboard/settings. Shape + primitive types only —
+// range and cross-field rules (warning <= danger, known widget keys, refresh
+// bounds) live in the DB helper's validateDashboardSettingsPatch and surface
+// as 400s. `.strict()` rejects unknown keys so a typo fails loudly.
+const dashboardSettingsUpdateSchema = z
+  .object({
+    refreshIntervalSeconds: z.number().int(),
+    showRevenue: z.boolean(),
+    showWeekAhead: z.boolean(),
+    capacityWarningPct: z.number().int(),
+    capacityDangerPct: z.number().int(),
+    widgetsOrder: z.array(z.string()),
+  })
+  .partial()
+  .strict();
+
 export const adminRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get(
     '/admin/dashboard',
@@ -300,6 +322,56 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
         '[admin dashboard live] served',
       );
       return response;
+    },
+  );
+
+  // Full dashboard settings — the admin-only edit surface behind the "דשבורד"
+  // section of the Settings tab. Returns every field, including showRevenue and
+  // widgetsOrder that the live endpoint deliberately does not expose.
+  fastify.get(
+    '/admin/dashboard/settings',
+    { preHandler: requireRoleHook('admin') },
+    async (request) => {
+      const settings = await getDashboardSettings(db);
+      request.log.info('[dashboard-settings get]');
+      return { settings };
+    },
+  );
+
+  // Update dashboard settings. Admin-only, partial body. Range + cross-field
+  // validation lives in the DB helper; every rejection is a 400. On success we
+  // drop the live cache so the change shows on the next dashboard poll rather
+  // than waiting out the 5s TTL.
+  fastify.patch(
+    '/admin/dashboard/settings',
+    { preHandler: requireRoleHook('admin') },
+    async (request, reply) => {
+      const parsed = dashboardSettingsUpdateSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.code(400).send({ error: 'invalid_body', issues: parsed.error.issues });
+      }
+      // Build the patch with only the fields actually present. Copying
+      // parsed.data wholesale would carry `| undefined` on every key, which
+      // exactOptionalPropertyTypes rejects against the exact-optional input.
+      const p = parsed.data;
+      const patch: UpdateDashboardSettingsInput = {};
+      if (p.refreshIntervalSeconds !== undefined) patch.refreshIntervalSeconds = p.refreshIntervalSeconds;
+      if (p.showRevenue !== undefined) patch.showRevenue = p.showRevenue;
+      if (p.showWeekAhead !== undefined) patch.showWeekAhead = p.showWeekAhead;
+      if (p.capacityWarningPct !== undefined) patch.capacityWarningPct = p.capacityWarningPct;
+      if (p.capacityDangerPct !== undefined) patch.capacityDangerPct = p.capacityDangerPct;
+      if (p.widgetsOrder !== undefined) patch.widgetsOrder = p.widgetsOrder;
+      const result = await updateDashboardSettings(db, patch);
+      if (!result.ok) {
+        request.log.info({ error: result.error }, '[dashboard-settings update] rejected');
+        return reply.code(400).send({ error: result.error.code });
+      }
+      liveCache = null;
+      request.log.info(
+        { diff: result.diff, staffId: request.user?.id },
+        '[dashboard-settings update]',
+      );
+      return { settings: result.row, diff: result.diff };
     },
   );
 
