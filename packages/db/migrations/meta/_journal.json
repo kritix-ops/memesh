@@ -120,6 +120,13 @@
       "when": 1783123200000,
       "tag": "0016_dashboard_settings",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1783209600000,
+      "tag": "0017_card_settings_round_pricing",
+      "breakpoints": true
     }
   ]
 }

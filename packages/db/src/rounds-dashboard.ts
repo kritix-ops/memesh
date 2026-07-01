@@ -17,6 +17,7 @@
 
 import { and, count, desc, eq, gte, isNotNull, lt, sql } from 'drizzle-orm';
 import type { PgDatabase } from 'drizzle-orm/pg-core';
+import { getCardSettings } from './card-settings';
 import {
   bookings,
   punchCards,
@@ -168,8 +169,10 @@ export interface DashboardLiveStatsResult {
  * and failed paths). Day-over-day delta compares against the same hour
  * yesterday, so 11am today vs 11am yesterday — fair comparison through the day.
  *
- * Revenue is stubbed (0, null) until step 3 ships pricing settings; bookings
- * + holds + cards are real data from the existing tables.
+ * Revenue (step 3b): computed from booking counts × current settings prices +
+ * punch card counts × card price. Same honest caveat as revenueReport — real
+ * price-at-sale isn't stored, so historical bookings that predate a price
+ * change get multiplied by the current price. Displayed value is an estimate.
  */
 export const dashboardLiveStats = async (
   db: AnyPgDatabase,
@@ -177,6 +180,15 @@ export const dashboardLiveStats = async (
 ): Promise<DashboardLiveStatsResult> => {
   const todayStart = startOfDay(now);
   const yesterdayStart = addDays(todayStart, -1);
+
+  // Read pricing once — used for both today's revenue and yesterday's baseline.
+  const settings = await getCardSettings(db);
+  const prices = {
+    baby: settings.roundChildBabyPriceIls,
+    over: settings.roundChildOverWalkingPriceIls,
+    companion: settings.roundAdditionalCompanionPriceIls,
+    punchCard: settings.priceShekels,
+  };
 
   // Bookings confirmed today vs same hour yesterday.
   const bookingsToday = await countConfirmedBookingsInRange(db, todayStart, now);
@@ -204,9 +216,24 @@ export const dashboardLiveStats = async (
   );
   const punchCardsDelta = cardsYesterdayAtHour === 0 ? null : cardsToday - cardsYesterdayAtHour;
 
+  // Revenue = paid/gift bookings today × their prices + punch cards × price.
+  // Bookings with source='punchcard' don't count (they were pre-paid) and
+  // source='manual' doesn't count (comped).
+  const revenueToday = await computeRevenueForRange(db, todayStart, now, prices);
+  const revenueYesterdayAtHour = await computeRevenueForRange(
+    db,
+    yesterdayStart,
+    addDays(now, -1),
+    prices,
+  );
+  const revenueDeltaPct =
+    revenueYesterdayAtHour === 0
+      ? null
+      : Math.round(((revenueToday - revenueYesterdayAtHour) / revenueYesterdayAtHour) * 100);
+
   return {
-    revenueIls: 0, // step 3
-    revenueDeltaPct: null,
+    revenueIls: revenueToday,
+    revenueDeltaPct,
     bookingsCount: bookingsToday,
     bookingsDelta,
     activeHoldsCount,
@@ -214,6 +241,53 @@ export const dashboardLiveStats = async (
     punchCardsDelta,
   };
 };
+
+type RoundPrices = {
+  baby: number;
+  over: number;
+  companion: number;
+  punchCard: number;
+};
+
+/**
+ * Sum revenue for [start, end): (paid + gift) bookings × ticket-type price +
+ * additional_companions × companion price + uncancelled punch cards × card
+ * price. Source-filter matches revenueReport's honesty convention.
+ */
+async function computeRevenueForRange(
+  db: AnyPgDatabase,
+  start: Date,
+  end: Date,
+  prices: RoundPrices,
+): Promise<number> {
+  // Bookings: sum by ticket_type + additional_companions.
+  const bookingRows = await db
+    .select({
+      ticketType: bookings.ticketType,
+      additionalCompanions: bookings.additionalCompanions,
+    })
+    .from(bookings)
+    .where(
+      and(
+        sql`${bookings.status} IN ('confirmed','used')`,
+        sql`${bookings.source} IN ('paid','gift')`,
+        gte(bookings.confirmedAt, start),
+        lt(bookings.confirmedAt, end),
+      ),
+    );
+
+  let bookingsRevenue = 0;
+  for (const row of bookingRows) {
+    const ticketPrice = row.ticketType === 'child_under_walking' ? prices.baby : prices.over;
+    bookingsRevenue += ticketPrice + row.additionalCompanions * prices.companion;
+  }
+
+  // Punch cards: count × card price.
+  const punchCardCount = await countPunchCardsInRange(db, start, end);
+  const punchCardRevenue = punchCardCount * prices.punchCard;
+
+  return bookingsRevenue + punchCardRevenue;
+}
 
 /** Bookings with status IN (confirmed, used) and confirmed_at in [start, end). */
 async function countConfirmedBookingsInRange(

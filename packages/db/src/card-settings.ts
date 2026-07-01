@@ -61,6 +61,12 @@ export const CARD_SETTINGS_LIMITS = {
   giftBuyerClaimEmailHeadline: { minLength: 1, maxLength: 200 },
   giftBuyerClaimEmailIntro: { minLength: 1, maxLength: 500 },
   giftBuyerClaimEmailFooterNote: { minLength: 1, maxLength: 500 },
+  // Round entry pricing (2026-07-02, step 3b). 0..1000 covers the entire
+  // realistic price range for a play-area single entry; the DB CHECK
+  // enforces >= 0 as a floor.
+  roundChildBabyPriceIls: { min: 0, max: 1000 },
+  roundChildOverWalkingPriceIls: { min: 0, max: 1000 },
+  roundAdditionalCompanionPriceIls: { min: 0, max: 1000 },
 } as const;
 
 export type CardSettingsValidationError =
@@ -120,6 +126,9 @@ export type CardSettingsValidationError =
   | 'gift_buyer_claim_email_intro_length'
   | 'gift_buyer_claim_email_intro_unknown_placeholder'
   | 'gift_buyer_claim_email_footer_note_length'
+  | 'round_child_baby_price_out_of_range'
+  | 'round_child_over_walking_price_out_of_range'
+  | 'round_additional_companion_price_out_of_range'
   | 'no_changes';
 
 /**
@@ -205,6 +214,11 @@ export interface UpdateCardSettingsInput {
   giftBuyerClaimEmailHeadline?: string | undefined;
   giftBuyerClaimEmailIntro?: string | undefined;
   giftBuyerClaimEmailFooterNote?: string | undefined;
+  // Round entry pricing (2026-07-02, step 3b). Used by dashboardLiveStats
+  // to compute today's revenue from booking counts.
+  roundChildBabyPriceIls?: number | undefined;
+  roundChildOverWalkingPriceIls?: number | undefined;
+  roundAdditionalCompanionPriceIls?: number | undefined;
 
   /** Staff member making the change; recorded on the row and in the action log. */
   staffId?: string | undefined;
@@ -493,6 +507,17 @@ export const updateCardSettings = async (
     }
   }
 
+  // --- Round entry pricing (2026-07-02, step 3b) ---
+  if (input.roundChildBabyPriceIls !== undefined && !within(input.roundChildBabyPriceIls, L.roundChildBabyPriceIls.min, L.roundChildBabyPriceIls.max)) {
+    return { ok: false, error: 'round_child_baby_price_out_of_range' };
+  }
+  if (input.roundChildOverWalkingPriceIls !== undefined && !within(input.roundChildOverWalkingPriceIls, L.roundChildOverWalkingPriceIls.min, L.roundChildOverWalkingPriceIls.max)) {
+    return { ok: false, error: 'round_child_over_walking_price_out_of_range' };
+  }
+  if (input.roundAdditionalCompanionPriceIls !== undefined && !within(input.roundAdditionalCompanionPriceIls, L.roundAdditionalCompanionPriceIls.min, L.roundAdditionalCompanionPriceIls.max)) {
+    return { ok: false, error: 'round_additional_companion_price_out_of_range' };
+  }
+
   const now = input.now ?? new Date();
   const current = await getCardSettings(db);
 
@@ -592,6 +617,10 @@ export const updateCardSettings = async (
   assignString('giftBuyerClaimEmailHeadline', input.giftBuyerClaimEmailHeadline);
   assignStringRaw('giftBuyerClaimEmailIntro', input.giftBuyerClaimEmailIntro);
   assignStringRaw('giftBuyerClaimEmailFooterNote', input.giftBuyerClaimEmailFooterNote);
+  // Round entry pricing (2026-07-02, step 3b).
+  assignNumber('roundChildBabyPriceIls', input.roundChildBabyPriceIls);
+  assignNumber('roundChildOverWalkingPriceIls', input.roundChildOverWalkingPriceIls);
+  assignNumber('roundAdditionalCompanionPriceIls', input.roundAdditionalCompanionPriceIls);
 
   if (Object.keys(diff).length === 0) return { ok: false, error: 'no_changes' };
 
@@ -673,6 +702,10 @@ const FIELD_LABELS: Record<string, string> = {
   giftBuyerClaimEmailHeadline: 'כותרת מייל פתיחת מתנה',
   giftBuyerClaimEmailIntro: 'גוף מייל פתיחת מתנה',
   giftBuyerClaimEmailFooterNote: 'הערת רגל מייל פתיחה',
+  // Round entry pricing (2026-07-02, step 3b).
+  roundChildBabyPriceIls: 'מחיר כרטיס תינוק/ת (₪)',
+  roundChildOverWalkingPriceIls: 'מחיר כרטיס ילד/ה (₪)',
+  roundAdditionalCompanionPriceIls: 'מחיר מלווה נוסף (₪)',
 };
 
 const summarizeDiff = (diff: Record<string, [unknown, unknown]>): string => {
