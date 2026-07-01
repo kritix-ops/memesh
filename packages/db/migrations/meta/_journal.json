@@ -127,6 +127,13 @@
       "when": 1783209600000,
       "tag": "0017_card_settings_round_pricing",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1782904699547,
+      "tag": "0018_parched_tusk",
+      "breakpoints": true
     }
   ]
 }

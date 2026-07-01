@@ -20,4 +20,6 @@ export * from './gift-template.js';
 export * from './migrations-path.js';
 export * from './rounds-dashboard.js';
 export * from './rounds.js';
+export * from './rounds-hold.js';
 export * from './dashboard-settings.js';
+export * from './round-settings.js';
