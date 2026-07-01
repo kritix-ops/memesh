@@ -6,12 +6,13 @@ import { and, eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/pglite';
 import { migrate } from 'drizzle-orm/pglite/migrator';
 import { getCardSettings } from './card-settings';
-import { createCustomer } from './cards';
+import { createCustomer, createPunchCard } from './cards';
 import { cancelBooking } from './rounds-cancel';
 import { createHold } from './rounds-hold';
 import { mintBooking } from './rounds-mint';
+import { bookRoundWithPunch } from './rounds-punch';
 import { createRound } from './rounds';
-import { bookings, roundInstances } from './schema';
+import { bookings, punchCardEntries, punchCards, roundInstances } from './schema';
 
 async function freshDb() {
   const db = drizzle({ client: new PGlite() });
@@ -112,6 +113,37 @@ test('cancelBooking rejects a cancel inside the window without refunding', async
   assert.equal(res.ok, false);
   if (!res.ok) assert.equal(res.error, 'too_late');
   assert.equal(called, false);
+});
+
+test('cancelBooking returns the punch (not money) for a punch-card booking', async () => {
+  const db = await freshDb();
+  const r = await createRound(db, { label: 'a', displayName: 'A', startTime: '16:00', endTime: '18:00', daysActive: 127, defaultCapacity: 5 }, NOW);
+  if (!r.ok) throw new Error('round');
+  const inst = (await db.select().from(roundInstances).where(and(eq(roundInstances.roundId, r.round.id), eq(roundInstances.date, FUTURE))).limit(1))[0];
+  const cust = await createCustomer(db, { firstName: 'ז', lastName: 'ח', phone: phone() });
+  const cardRow = await createPunchCard(db, resolver, { customerId: cust.id, totalEntries: 12, validityDays: 0, now: NOW });
+  const booked = await bookRoundWithPunch(db, { roundInstanceId: inst!.id, customerId: cust.id, punchCardId: cardRow.id, ticketType: 'child_over_walking' }, resolver, NOW);
+  assert.equal(booked.ok, true);
+  if (!booked.ok) return;
+
+  let refundCalled = false;
+  const refund = async () => {
+    refundCalled = true;
+    return true;
+  };
+  const res = await cancelBooking(db, { bookingId: booked.bookingId, customerId: cust.id }, { refund }, NOW);
+  assert.equal(res.ok, true);
+  if (!res.ok) return;
+  assert.equal(res.punchReturned, true);
+  assert.equal(res.refunded, false);
+  assert.equal(refundCalled, false); // no money path for a punch booking
+
+  const after = (await db.select().from(punchCards).where(eq(punchCards.id, cardRow.id)).limit(1))[0];
+  assert.equal(after!.usedEntries, 0); // the entry was returned
+  const entry = (await db.select().from(punchCardEntries).where(eq(punchCardEntries.idempotencyKey, booked.bookingId)).limit(1))[0];
+  assert.ok(entry!.refundedAt !== null);
+  const booking = (await db.select().from(bookings).where(eq(bookings.id, booked.bookingId)).limit(1))[0];
+  assert.equal(booking!.status, 'cancelled');
 });
 
 test('cancelBooking is not repeatable — a second cancel does not refund again', async () => {

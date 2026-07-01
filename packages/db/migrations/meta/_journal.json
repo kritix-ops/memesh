@@ -141,6 +141,13 @@
       "when": 1782905958662,
       "tag": "0019_spotty_mole_man",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1782912494044,
+      "tag": "0020_add_online_punch_method",
+      "breakpoints": true
     }
   ]
 }

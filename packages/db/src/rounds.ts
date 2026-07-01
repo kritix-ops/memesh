@@ -272,6 +272,8 @@ export interface CustomerRoundBooking {
   status: 'confirmed' | 'used';
   ticketType: 'child_under_walking' | 'child_over_walking';
   additionalCompanions: number;
+  /** How it was paid for — drives the cancel copy (money refund vs punch return). */
+  source: 'paid' | 'punchcard' | 'gift' | 'manual';
   /** The scannable barcode. Always present for confirmed/used bookings. */
   barcodeToken: string | null;
 }
@@ -298,6 +300,7 @@ export const listCustomerRoundBookings = async (
       status: bookings.status,
       ticketType: bookings.ticketType,
       additionalCompanions: bookings.additionalCompanions,
+      source: bookings.source,
       barcodeToken: bookings.barcodeToken,
     })
     .from(bookings)
@@ -322,6 +325,7 @@ export const listCustomerRoundBookings = async (
       status: r.status as 'confirmed' | 'used',
       ticketType: r.ticketType,
       additionalCompanions: r.additionalCompanions,
+      source: r.source,
       barcodeToken: r.barcodeToken,
     }))
     .sort((a, b) => `${a.date} ${a.startTime}`.localeCompare(`${b.date} ${b.startTime}`));

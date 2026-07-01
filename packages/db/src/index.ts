@@ -23,6 +23,7 @@ export * from './rounds.js';
 export * from './rounds-hold.js';
 export * from './rounds-mint.js';
 export * from './rounds-swap.js';
+export * from './rounds-punch.js';
 export * from './rounds-cancel.js';
 export * from './round-time.js';
 export * from './dashboard-settings.js';
