@@ -1,3 +1,4 @@
+import { timingSafeEqual } from 'node:crypto';
 import {
   cancelBooking,
   createHold,
@@ -5,6 +6,7 @@ import {
   listCustomerRoundBookings,
   mintBooking,
   releaseHold,
+  resolveOrCreateCustomerFromWc,
   roundAvailabilityForDate,
   swapBooking,
 } from '@memesh/db';
@@ -12,6 +14,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { env } from '../config.js';
 import { requireCustomer } from '../lib/customer-guard.js';
+import { phoneSchema } from '../lib/phone-schema.js';
 import { createWcRestClient } from '../lib/wc-rest-client.js';
 import { envKeyResolver } from '../qr.js';
 
@@ -35,6 +38,29 @@ const swapSchema = z.object({
   targetRoundInstanceId: z.string().uuid(),
 });
 const cancelSchema = z.object({ bookingId: z.string().uuid() });
+
+// Server-to-server hold from the WooCommerce checkout (super-brief §4.2). The
+// WP shopper is a guest with no customer session, so identity travels as a
+// hint (phone is the primary key, matching the existing WC order flow) and the
+// call is authenticated by the shared secret WP already holds.
+const wcHoldSchema = z.object({
+  roundInstanceId: z.string().uuid(),
+  ticketType: z.enum(['child_under_walking', 'child_over_walking']),
+  additionalCompanions: z.number().int().min(0).max(1).optional(),
+  customerHint: z.object({
+    phone: phoneSchema,
+    firstName: z.string().min(1).max(80),
+    lastName: z.string().min(1).max(80),
+    email: z.string().email().max(255).optional(),
+    wpUserId: z.number().int().nonnegative().optional(),
+    marketingConsent: z.boolean().optional(),
+  }),
+});
+
+const constantTimeEqual = (a: string, b: string): boolean => {
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(Buffer.from(a), Buffer.from(b));
+};
 
 export const roundsBookingRoutes: FastifyPluginAsync = async (fastify) => {
   // Built once for the cancel refund path. Null when WC isn't configured — a
@@ -113,6 +139,64 @@ export const roundsBookingRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(code).send({ error: result.error });
       }
       request.log.info({ holdId: result.holdId, customerId }, '[rounds hold] created');
+      return { holdId: result.holdId, expiresAt: result.expiresAt };
+    },
+  );
+
+  // The WooCommerce checkout's version of the hold (super-brief §4.2). Same
+  // seat-reservation engine, different front door: authenticated by the shared
+  // secret WP already uses (not a customer session), and it resolves the
+  // customer from the checkout's phone/name so the seat is reserved the moment
+  // the round is chosen — before payment. Feature-gated off until the secret is
+  // set. Rate-limited as defense in depth (the secret is the real gate).
+  fastify.post(
+    '/rounds/hold/wc',
+    { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } },
+    async (request, reply) => {
+      if (!env.WP_HANDOFF_SHARED_SECRET) {
+        request.log.error('[rounds hold wc] WP_HANDOFF_SHARED_SECRET not configured');
+        return reply.code(503).send({ error: 'not_configured' });
+      }
+      const auth = request.headers['authorization'];
+      if (typeof auth !== 'string' || !auth.startsWith('Bearer ')) {
+        return reply.code(401).send({ error: 'unauthorized' });
+      }
+      if (!constantTimeEqual(auth.slice('Bearer '.length), env.WP_HANDOFF_SHARED_SECRET)) {
+        request.log.info('[rounds hold wc] wrong shared secret');
+        return reply.code(401).send({ error: 'unauthorized' });
+      }
+      const parsed = wcHoldSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.code(400).send({ error: 'invalid_body', issues: parsed.error.issues });
+      }
+      const hint = parsed.data.customerHint;
+      // Phone-primary resolve/create, the same identity bridge the WC order
+      // webhook uses — so the hold's customer is the one who'll pay.
+      const { customer } = await resolveOrCreateCustomerFromWc(db, {
+        phone: hint.phone,
+        firstName: hint.firstName,
+        lastName: hint.lastName,
+        email: hint.email ?? null,
+        wpUserId: hint.wpUserId ?? null,
+        marketingConsent: hint.marketingConsent ?? false,
+      });
+      const result = await createHold(db, {
+        roundInstanceId: parsed.data.roundInstanceId,
+        customerId: customer.id,
+        ticketType: parsed.data.ticketType,
+        source: 'paid',
+        ...(parsed.data.additionalCompanions !== undefined
+          ? { additionalCompanions: parsed.data.additionalCompanions }
+          : {}),
+      });
+      if (!result.ok) {
+        const code = result.error === 'not_found' ? 404 : 409;
+        return reply.code(code).send({ error: result.error });
+      }
+      request.log.info(
+        { holdId: result.holdId, customerId: customer.id, roundInstanceId: parsed.data.roundInstanceId },
+        '[rounds hold wc] created',
+      );
       return { holdId: result.holdId, expiresAt: result.expiresAt };
     },
   );
