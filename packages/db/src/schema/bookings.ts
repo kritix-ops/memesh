@@ -63,6 +63,10 @@ export const bookings = pgTable(
     // resolves to exactly one booking at the scanner. Null for
     // held/expired/cancelled rows.
     barcodeToken: varchar('barcode_token', { length: 128 }).unique(),
+    // Monotonic barcode version, signed into the token. A swap bumps this and
+    // re-mints, so an old screenshotted QR from before the swap fails at the
+    // door (the scanner checks the current version). Starts at 1.
+    barcodeVersion: smallint('barcode_version').notNull().default(1),
     // Set only when status = 'held'. NULL once the booking transitions out.
     // Cleanup job runs every minute over the partial index covering this
     // column where status = 'held'.

@@ -134,6 +134,13 @@
       "when": 1782904699547,
       "tag": "0018_parched_tusk",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1782905958662,
+      "tag": "0019_spotty_mole_man",
+      "breakpoints": true
     }
   ]
 }
