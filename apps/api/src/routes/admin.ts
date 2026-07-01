@@ -97,9 +97,27 @@ export type DashboardLiveWeekAheadDay = {
   rounds: DashboardLiveWeekAheadRound[];
 };
 
+// Display config the SPA needs to render the dashboard the way the operator
+// configured it (Super Brief §15.3). The client must not hardcode these
+// thresholds or the refresh cadence. `showRevenue` is deliberately absent:
+// revenue visibility is enforced server-side by stripping the revenue fields,
+// and the client infers "hidden" from `revenueIls === undefined`.
+export type DashboardLiveSettings = {
+  /** Client auto-refresh cadence, in seconds. */
+  refreshIntervalSeconds: number;
+  /** Whether the 7-day forward grid renders at all. */
+  showWeekAhead: boolean;
+  /** Occupancy percentage at which a round tile turns amber. */
+  capacityWarningPct: number;
+  /** Occupancy percentage at which a round tile turns red. */
+  capacityDangerPct: number;
+};
+
 export type DashboardLiveResponse = {
   /** ISO timestamp — for "data is N seconds stale" display if needed. */
   asOf: string;
+  /** Display config from dashboard_settings — thresholds, cadence, week-grid visibility. */
+  settings: DashboardLiveSettings;
   today: {
     rounds: DashboardLiveRound[];
     stats: DashboardLiveStats;
@@ -152,6 +170,12 @@ async function computeDashboardLive(): Promise<Omit<CachedDashboard, 'expiresAt'
   return {
     data: {
       asOf: now.toISOString(),
+      settings: {
+        refreshIntervalSeconds: settings.refreshIntervalSeconds,
+        showWeekAhead: settings.showWeekAhead,
+        capacityWarningPct: settings.capacityWarningPct,
+        capacityDangerPct: settings.capacityDangerPct,
+      },
       today: {
         rounds: rounds.map((r) => ({
           roundInstanceId: r.roundInstanceId,

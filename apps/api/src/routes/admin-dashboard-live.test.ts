@@ -116,6 +116,18 @@ test('GET /admin/dashboard/live returns the documented shape (empty DB)', async 
   assert.ok(Array.isArray(body.waitlist), 'waitlist is an array');
   assert.ok(Array.isArray(body.weekAhead), 'weekAhead is an array');
 
+  // Display settings block — the SPA reads thresholds + cadence + week-grid
+  // visibility from here rather than hardcoding them. Values are the seeded
+  // dashboard_settings defaults on a fresh DB.
+  assert.ok(body.settings && typeof body.settings === 'object', 'settings is an object');
+  assert.equal(body.settings.refreshIntervalSeconds, 30, 'default refresh cadence');
+  assert.equal(body.settings.showWeekAhead, true, 'week grid shown by default');
+  assert.equal(body.settings.capacityWarningPct, 70, 'default amber threshold');
+  assert.equal(body.settings.capacityDangerPct, 90, 'default red threshold');
+  // showRevenue is NOT exposed here — revenue visibility is enforced by
+  // stripping the revenue fields, inferred client-side from their absence.
+  assert.equal(body.settings.showRevenue, undefined, 'showRevenue not leaked into settings');
+
   // today.rounds + today.stats — empty DB has no round_instances today.
   assert.ok(Array.isArray(body.today.rounds), 'today.rounds is an array');
   assert.deepEqual(body.today.rounds, [], 'today.rounds is empty (no instances)');
