@@ -209,6 +209,21 @@ export const cardSettings = pgTable('card_settings', {
     .notNull()
     .default('הודעה זו נשלחה לאחר רכישה ב-Memesh. אין צורך להשיב אליה.'),
 
+  // --- Round entry pricing (added 2026-07-02, step 3b) ---
+  // Prices per booking/companion for round-based entries. Match the real
+  // WC product prices as of PR #23:
+  //   - product 1002 "כרטיס כניסה לתינוק/ת + מבוגר/ת מלווה" — ₪45
+  //   - product 1001 "כרטיס כניסה לילד/ה יחיד/ה + מבוגר/ת מלווה" — ₪55
+  //   - product 1003 "כרטיס כניסה למלווה שני/ה" — ₪12
+  //
+  // Used by dashboardLiveStats to compute today's revenue. "Estimated" in
+  // the same sense as revenueReport — real price-at-sale isn't stored on
+  // bookings; we multiply booking counts by CURRENT settings. Same honest
+  // caveat applies for historical bookings across price changes.
+  roundChildBabyPriceIls: integer('round_child_baby_price_ils').notNull().default(45),
+  roundChildOverWalkingPriceIls: integer('round_child_over_walking_price_ils').notNull().default(55),
+  roundAdditionalCompanionPriceIls: integer('round_additional_companion_price_ils').notNull().default(12),
+
   updatedBy: uuid('updated_by').references(() => staff.id),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });

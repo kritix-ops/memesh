@@ -202,7 +202,7 @@ test('rounds-today: multiple rounds sorted by startTime ASC', async () => {
 test('stats: empty DB returns zero counts and null deltas', async () => {
   const db = await freshDb();
   const res = await dashboardLiveStats(db);
-  assert.equal(res.revenueIls, 0, 'revenue stubbed until step 3');
+  assert.equal(res.revenueIls, 0, 'no bookings, no revenue');
   assert.equal(res.revenueDeltaPct, null);
   assert.equal(res.bookingsCount, 0);
   assert.equal(res.bookingsDelta, null, 'null delta when yesterday was 0');
@@ -342,6 +342,263 @@ test('stats: counts punch cards sold today; cancelled cards excluded', async () 
   assert.equal(res.punchCardsSold, 1);
   // Yesterday at hour 14:00: 1 card sold by then → delta = 1 - 1 = 0
   assert.equal(res.punchCardsDelta, 0);
+});
+
+// ---------------------------------------------------------------------------
+// stats: revenue math (step 3b) — uses default card_settings prices:
+//   round_child_baby_price_ils        = 45   (child_under_walking)
+//   round_child_over_walking_price_ils = 55  (child_over_walking)
+//   round_additional_companion_price_ils = 12
+//   priceShekels (punch card)         = 320  (existing default)
+// ---------------------------------------------------------------------------
+
+async function seedRoundAndInstance(
+  db: Awaited<ReturnType<typeof freshDb>>,
+  dateIso: string,
+) {
+  const [round] = await db
+    .insert(rounds)
+    .values({
+      label: 'afternoon',
+      displayName: 'סבב',
+      startTime: '16:00:00',
+      endTime: '18:00:00',
+      defaultCapacity: 50,
+    })
+    .returning();
+  const [instance] = await db
+    .insert(roundInstances)
+    .values({ roundId: round!.id, date: dateIso, capacity: 50 })
+    .returning();
+  return { round: round!, instance: instance! };
+}
+
+test('revenue: paid child_over_walking booking today = ₪55', async () => {
+  const db = await freshDb();
+  const now = new Date('2026-07-15T14:00:00Z');
+  const { instance } = await seedRoundAndInstance(db, isoDate(now));
+  const c = await freshCustomer(db);
+  await db.insert(bookings).values({
+    roundInstanceId: instance.id,
+    customerId: c.id,
+    ticketType: 'child_over_walking',
+    source: 'paid',
+    status: 'confirmed',
+    confirmedAt: new Date('2026-07-15T10:00:00Z'),
+  });
+  const res = await dashboardLiveStats(db, now);
+  assert.equal(res.revenueIls, 55);
+});
+
+test('revenue: paid child_under_walking booking today = ₪45', async () => {
+  const db = await freshDb();
+  const now = new Date('2026-07-15T14:00:00Z');
+  const { instance } = await seedRoundAndInstance(db, isoDate(now));
+  const c = await freshCustomer(db);
+  await db.insert(bookings).values({
+    roundInstanceId: instance.id,
+    customerId: c.id,
+    ticketType: 'child_under_walking',
+    source: 'paid',
+    status: 'confirmed',
+    confirmedAt: new Date('2026-07-15T10:00:00Z'),
+  });
+  const res = await dashboardLiveStats(db, now);
+  assert.equal(res.revenueIls, 45);
+});
+
+test('revenue: booking + one additional companion = ticket + ₪12', async () => {
+  const db = await freshDb();
+  const now = new Date('2026-07-15T14:00:00Z');
+  const { instance } = await seedRoundAndInstance(db, isoDate(now));
+  const c = await freshCustomer(db);
+  await db.insert(bookings).values({
+    roundInstanceId: instance.id,
+    customerId: c.id,
+    ticketType: 'child_over_walking',
+    additionalCompanions: 1,
+    source: 'paid',
+    status: 'confirmed',
+    confirmedAt: new Date('2026-07-15T10:00:00Z'),
+  });
+  const res = await dashboardLiveStats(db, now);
+  assert.equal(res.revenueIls, 55 + 12, 'child + one companion');
+});
+
+test('revenue: punchcard-source booking does NOT count (pre-paid)', async () => {
+  const db = await freshDb();
+  const now = new Date('2026-07-15T14:00:00Z');
+  const { instance } = await seedRoundAndInstance(db, isoDate(now));
+  const c = await freshCustomer(db);
+  await db.insert(bookings).values({
+    roundInstanceId: instance.id,
+    customerId: c.id,
+    ticketType: 'child_over_walking',
+    source: 'punchcard',
+    status: 'confirmed',
+    confirmedAt: new Date('2026-07-15T10:00:00Z'),
+  });
+  const res = await dashboardLiveStats(db, now);
+  assert.equal(res.revenueIls, 0, 'punch card use is not new revenue');
+});
+
+test('revenue: manual-source booking does NOT count (comped)', async () => {
+  const db = await freshDb();
+  const now = new Date('2026-07-15T14:00:00Z');
+  const { instance } = await seedRoundAndInstance(db, isoDate(now));
+  const c = await freshCustomer(db);
+  await db.insert(bookings).values({
+    roundInstanceId: instance.id,
+    customerId: c.id,
+    ticketType: 'child_over_walking',
+    source: 'manual',
+    status: 'confirmed',
+    confirmedAt: new Date('2026-07-15T10:00:00Z'),
+  });
+  const res = await dashboardLiveStats(db, now);
+  assert.equal(res.revenueIls, 0, 'manual entries are comped');
+});
+
+test('revenue: gift-source booking counts (buyer paid at gift order time)', async () => {
+  const db = await freshDb();
+  const now = new Date('2026-07-15T14:00:00Z');
+  const { instance } = await seedRoundAndInstance(db, isoDate(now));
+  const c = await freshCustomer(db);
+  await db.insert(bookings).values({
+    roundInstanceId: instance.id,
+    customerId: c.id,
+    ticketType: 'child_over_walking',
+    source: 'gift',
+    status: 'confirmed',
+    confirmedAt: new Date('2026-07-15T10:00:00Z'),
+  });
+  const res = await dashboardLiveStats(db, now);
+  assert.equal(res.revenueIls, 55, 'gift bookings represent revenue');
+});
+
+test('revenue: uncancelled punch card sold today = ₪320 (default priceShekels)', async () => {
+  const db = await freshDb();
+  const now = new Date('2026-07-15T14:00:00Z');
+  const c = await freshCustomer(db);
+  await db.insert(punchCards).values({
+    customerId: c.id,
+    serialNumber: 'M-20260715-0001',
+    qrToken: 'tok-1',
+    keyId: 'test-key',
+    totalEntries: 12,
+    source: 'pos',
+    createdAt: new Date('2026-07-15T10:00:00Z'),
+  });
+  const res = await dashboardLiveStats(db, now);
+  assert.equal(res.revenueIls, 320, 'punch card revenue at default price');
+});
+
+test('revenue: mixed cart totals correctly', async () => {
+  const db = await freshDb();
+  const now = new Date('2026-07-15T14:00:00Z');
+  const { instance } = await seedRoundAndInstance(db, isoDate(now));
+  const c1 = await freshCustomer(db);
+  const c2 = await freshCustomer(db);
+  const c3 = await freshCustomer(db);
+
+  // 55 (child) + 12 (companion) = 67
+  await db.insert(bookings).values({
+    roundInstanceId: instance.id,
+    customerId: c1.id,
+    ticketType: 'child_over_walking',
+    additionalCompanions: 1,
+    source: 'paid',
+    status: 'confirmed',
+    confirmedAt: new Date('2026-07-15T10:00:00Z'),
+  });
+  // 45 (baby) = 45
+  await db.insert(bookings).values({
+    roundInstanceId: instance.id,
+    customerId: c2.id,
+    ticketType: 'child_under_walking',
+    source: 'gift',
+    status: 'used', // used still counts (was confirmed at some point)
+    confirmedAt: new Date('2026-07-15T09:00:00Z'),
+  });
+  // Punch card: 320
+  await db.insert(punchCards).values({
+    customerId: c3.id,
+    serialNumber: 'M-20260715-0001',
+    qrToken: 'tok-1',
+    keyId: 'test-key',
+    totalEntries: 12,
+    source: 'pos',
+    createdAt: new Date('2026-07-15T11:00:00Z'),
+  });
+
+  const res = await dashboardLiveStats(db, now);
+  assert.equal(res.revenueIls, 67 + 45 + 320);
+});
+
+test('revenue: day-over-day delta returns percentage change', async () => {
+  const db = await freshDb();
+  const now = new Date('2026-07-15T14:00:00Z');
+  const { instance: todayInst } = await seedRoundAndInstance(db, '2026-07-15');
+  // Note: seeded round is same for both days; date-specific behavior is
+  // tracked on round_instance, not on rounds. Second instance for yesterday.
+  const [round] = await db.select().from(rounds).limit(1);
+  const [yesterdayInst] = await db
+    .insert(roundInstances)
+    .values({ roundId: round!.id, date: '2026-07-14', capacity: 50 })
+    .returning();
+
+  const c1 = await freshCustomer(db);
+  const c2 = await freshCustomer(db);
+  const c3 = await freshCustomer(db);
+
+  // Yesterday at 10:00: 1 paid child = 55
+  await db.insert(bookings).values({
+    roundInstanceId: yesterdayInst!.id,
+    customerId: c1.id,
+    ticketType: 'child_over_walking',
+    source: 'paid',
+    status: 'confirmed',
+    confirmedAt: new Date('2026-07-14T10:00:00Z'),
+  });
+  // Today at 10:00: 2 paid children = 110
+  await db.insert(bookings).values({
+    roundInstanceId: todayInst.id,
+    customerId: c2.id,
+    ticketType: 'child_over_walking',
+    source: 'paid',
+    status: 'confirmed',
+    confirmedAt: new Date('2026-07-15T10:00:00Z'),
+  });
+  await db.insert(bookings).values({
+    roundInstanceId: todayInst.id,
+    customerId: c3.id,
+    ticketType: 'child_over_walking',
+    source: 'paid',
+    status: 'confirmed',
+    confirmedAt: new Date('2026-07-15T11:00:00Z'),
+  });
+
+  const res = await dashboardLiveStats(db, now);
+  assert.equal(res.revenueIls, 110);
+  // Delta = (110 - 55) / 55 = +100%
+  assert.equal(res.revenueDeltaPct, 100);
+});
+
+test('revenue: cancelled booking excluded from today', async () => {
+  const db = await freshDb();
+  const now = new Date('2026-07-15T14:00:00Z');
+  const { instance } = await seedRoundAndInstance(db, isoDate(now));
+  const c = await freshCustomer(db);
+  await db.insert(bookings).values({
+    roundInstanceId: instance.id,
+    customerId: c.id,
+    ticketType: 'child_over_walking',
+    source: 'paid',
+    status: 'cancelled',
+    confirmedAt: new Date('2026-07-15T10:00:00Z'),
+  });
+  const res = await dashboardLiveStats(db, now);
+  assert.equal(res.revenueIls, 0, 'cancelled bookings do not count');
 });
 
 // ---------------------------------------------------------------------------
