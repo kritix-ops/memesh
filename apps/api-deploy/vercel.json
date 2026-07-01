@@ -13,6 +13,7 @@
   "crons": [
     { "path": "/cron/wc-reconcile", "schedule": "0 * * * *" },
     { "path": "/cron/gift-claims-expire", "schedule": "0 3 * * *" },
-    { "path": "/cron/rounds-hold-sweep", "schedule": "* * * * *" }
+    { "path": "/cron/rounds-hold-sweep", "schedule": "* * * * *" },
+    { "path": "/cron/rounds-reminders", "schedule": "* * * * *" }
   ]
 }
