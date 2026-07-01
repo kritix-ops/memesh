@@ -6,7 +6,13 @@ import {
   type CustomerProfile,
 } from '@memesh/customer-auth';
 import { fmtDate, type PunchCard as ApiPunchCard } from '@memesh/web-shared';
-import { getMyRoundBookings, type CustomerRoundBooking } from '../lib/api/rounds';
+import {
+  getMyRoundBookings,
+  getRoundAvailability,
+  swapRoundBooking,
+  type AvailabilityRound,
+  type CustomerRoundBooking,
+} from '../lib/api/rounds';
 import {
   type CSSProperties,
   type FormEvent,
@@ -619,16 +625,14 @@ function Home({
 
   // Load the customer's active/upcoming round bookings. Independent of cards —
   // a failure here just hides the section, it doesn't block the card list.
+  // Kept as a callable so a swap can refresh the list.
+  const loadRoundBookings = async () => {
+    const res = await getMyRoundBookings();
+    if (res.ok) setRoundBookings(res.data.bookings);
+  };
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const res = await getMyRoundBookings();
-      if (cancelled) return;
-      if (res.ok) setRoundBookings(res.data.bookings);
-    })();
-    return () => {
-      cancelled = true;
-    };
+    void loadRoundBookings();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Per-card diagnostic when the QR actually has a token to render. We log
@@ -680,30 +684,7 @@ function Home({
         <div>
           <div style={{ fontWeight: 600, marginBottom: 10 }}>הסבבים שלי</div>
           {roundBookings.map((b) => (
-            <div
-              key={b.bookingId}
-              style={{
-                ...card,
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                gap: 14,
-                marginBottom: 12,
-              }}
-            >
-              <div style={{ fontSize: 16, fontWeight: 600 }}>{b.label}</div>
-              <div style={{ fontSize: 13, color: MUTED }}>
-                {fmtDate(b.date)} · {b.startTime}–{b.endTime}
-              </div>
-              {b.barcodeToken && (
-                <MemeshQr value={b.barcodeToken} size={180} title={`ברקוד — ${b.label}`} />
-              )}
-              <div style={{ fontSize: 12.5, color: MUTED }}>
-                {b.ticketType === 'child_under_walking' ? 'תינוק/ת' : 'ילד/ה'}
-                {b.additionalCompanions > 0 ? ' · כולל מלווה נוסף' : ''}
-                {b.status === 'used' ? ' · נוצל' : ''}
-              </div>
-            </div>
+            <RoundBookingCard key={b.bookingId} booking={b} onSwapped={loadRoundBookings} />
           ))}
         </div>
       )}
@@ -748,6 +729,164 @@ function Home({
       <button style={primaryBtn} onClick={onEdit}>
         עריכת פרטים
       </button>
+    </div>
+  );
+}
+
+// A single round booking with its barcode + a "change time" flow: pick another
+// available round on the same day and swap into it (super-brief §6.1).
+function RoundBookingCard({
+  booking,
+  onSwapped,
+}: {
+  booking: CustomerRoundBooking;
+  onSwapped: () => void | Promise<void>;
+}) {
+  const [picking, setPicking] = useState(false);
+  const [alternatives, setAlternatives] = useState<AvailabilityRound[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const openPicker = async () => {
+    setPicking(true);
+    setError(null);
+    setAlternatives(null);
+    const res = await getRoundAvailability(booking.date);
+    if (!res.ok) {
+      setError('לא ניתן לטעון זמנים פנויים כרגע.');
+      setAlternatives([]);
+      return;
+    }
+    setAlternatives(
+      res.data.rounds.filter(
+        (r) => r.roundInstanceId !== booking.roundInstanceId && r.available > 0 && !r.isClosed,
+      ),
+    );
+  };
+
+  const doSwap = async (targetRoundInstanceId: string) => {
+    setBusy(true);
+    setError(null);
+    const res = await swapRoundBooking(booking.bookingId, targetRoundInstanceId);
+    setBusy(false);
+    if (!res.ok) {
+      setError(
+        res.error === 'target_full'
+          ? 'הסבב התמלא. בחרו זמן אחר.'
+          : res.error === 'too_late'
+            ? 'כבר מאוחר מדי לשנות את הזמן.'
+            : 'לא ניתן לשנות כרגע. נסו שוב.',
+      );
+      return;
+    }
+    setPicking(false);
+    await onSwapped();
+  };
+
+  return (
+    <div
+      style={{
+        ...card,
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        gap: 14,
+        marginBottom: 12,
+      }}
+    >
+      <div style={{ fontSize: 16, fontWeight: 600 }}>{booking.label}</div>
+      <div style={{ fontSize: 13, color: MUTED }}>
+        {fmtDate(booking.date)} · {booking.startTime}–{booking.endTime}
+      </div>
+      {booking.barcodeToken && (
+        <MemeshQr value={booking.barcodeToken} size={180} title={`ברקוד — ${booking.label}`} />
+      )}
+      <div style={{ fontSize: 12.5, color: MUTED }}>
+        {booking.ticketType === 'child_under_walking' ? 'תינוק/ת' : 'ילד/ה'}
+        {booking.additionalCompanions > 0 ? ' · כולל מלווה נוסף' : ''}
+        {booking.status === 'used' ? ' · נוצל' : ''}
+      </div>
+
+      {booking.status === 'confirmed' && !picking && (
+        <button
+          onClick={() => void openPicker()}
+          style={{
+            border: '1.5px solid #e9e0d9',
+            background: '#fff',
+            color: MUTED,
+            borderRadius: 9,
+            padding: '8px 16px',
+            fontSize: 13.5,
+            fontWeight: 600,
+            cursor: 'pointer',
+          }}
+        >
+          שנה שעה
+        </button>
+      )}
+
+      {picking && (
+        <div style={{ width: '100%', borderTop: '1px solid #f3efea', paddingTop: 12 }}>
+          <div style={{ fontSize: 13.5, fontWeight: 600, marginBottom: 8, textAlign: 'center' }}>
+            בחרו זמן אחר לאותו יום
+          </div>
+          {alternatives === null && (
+            <div style={{ textAlign: 'center', color: MUTED, fontSize: 13 }}>טוען…</div>
+          )}
+          {alternatives && alternatives.length === 0 && (
+            <div style={{ textAlign: 'center', color: MUTED, fontSize: 13 }}>
+              אין זמנים פנויים אחרים היום.
+            </div>
+          )}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {alternatives?.map((r) => (
+              <button
+                key={r.roundInstanceId}
+                disabled={busy}
+                onClick={() => void doSwap(r.roundInstanceId)}
+                style={{
+                  border: '1.5px solid #e9e0d9',
+                  background: '#fff',
+                  borderRadius: 10,
+                  padding: '10px 14px',
+                  fontSize: 14,
+                  cursor: busy ? 'default' : 'pointer',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                }}
+              >
+                <span style={{ fontWeight: 600 }}>
+                  {r.label} {r.startTime}–{r.endTime}
+                </span>
+                <span style={{ color: MUTED, fontSize: 13 }}>{r.available} פנויים</span>
+              </button>
+            ))}
+          </div>
+          {error && (
+            <div style={{ color: '#a23a3a', fontSize: 13, marginTop: 8, textAlign: 'center' }}>
+              {error}
+            </div>
+          )}
+          <button
+            onClick={() => {
+              setPicking(false);
+              setError(null);
+            }}
+            disabled={busy}
+            style={{
+              marginTop: 10,
+              border: 'none',
+              background: 'transparent',
+              color: MUTED,
+              fontSize: 13,
+              cursor: 'pointer',
+              width: '100%',
+            }}
+          >
+            ביטול
+          </button>
+        </div>
+      )}
     </div>
   );
 }
