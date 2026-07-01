@@ -45,12 +45,21 @@ export function RevenueReport() {
     let cancelled = false;
     setLoading(true);
     setError(null);
+    console.info('[web admin reports] revenue fetch', { filters });
     (async () => {
       const res = await fetchRevenueReport(filters);
       if (cancelled) return;
       setLoading(false);
-      if (res.ok) setResult(res.data);
-      else setError(res.error);
+      if (res.ok) {
+        console.info('[web admin reports] revenue fetch ok', {
+          buckets: res.data.rows.length,
+          totalCards: res.data.totalCardsSold,
+        });
+        setResult(res.data);
+      } else {
+        console.warn('[web admin reports] revenue fetch failed', { error: res.error });
+        setError(res.error);
+      }
     })();
     return () => {
       cancelled = true;

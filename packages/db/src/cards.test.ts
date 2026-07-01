@@ -249,6 +249,28 @@ test('listCards filters by status (active / cancelled / expired)', async () => {
   assert.equal(expired[0]?.id, toExhaust.id);
 });
 
+test('listCards buckets a date-expired card as expired even though is_active stayed true', async () => {
+  const db = await freshDb();
+  const cust = await makeCustomer(db);
+  // Sold 10 days ago with 1-day validity → expired 9 days ago. Nothing flips
+  // is_active on date-expiry (only exhaustion and cancellation do), so the
+  // bucket must derive it from expires_at.
+  const tenDaysAgo = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000);
+  const dateExpired = await createPunchCard(db, resolver, {
+    customerId: cust.id,
+    validityDays: 1,
+    now: tenDaysAgo,
+  });
+  const fresh = await createPunchCard(db, resolver, { customerId: cust.id });
+
+  const active = await listCards(db, { status: 'active' });
+  assert.deepEqual(active.map((c) => c.id), [fresh.id]);
+
+  const expired = await listCards(db, { status: 'expired' });
+  assert.deepEqual(expired.map((c) => c.id), [dateExpired.id]);
+  assert.equal(expired[0]?.isActive, true); // row flag untouched — bucket derived from expires_at
+});
+
 test('listCards without a status returns all rows joined with customer info', async () => {
   const db = await freshDb();
   const cust = await makeCustomer(db);

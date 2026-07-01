@@ -5,6 +5,7 @@ import {
   type CardsReportRow,
 } from '../../lib/api/reports';
 import { downloadCsv, presetRange, printReport, toCsv } from '../../lib/export';
+import { parseIntFilter } from './report-filter-logic';
 import {
   DateRangeField,
   EmptyState,
@@ -54,12 +55,12 @@ export function CardsReport() {
     if (source) f.source = source;
     if (sold.range.from) f.soldFrom = sold.range.from.toISOString();
     if (sold.range.to) f.soldTo = sold.range.to.toISOString();
-    const e = Number(expiringWithinDays);
-    if (Number.isInteger(e) && e > 0) f.expiringWithinDays = e;
-    const lo = Number(usageMin);
-    const hi = Number(usageMax);
-    if (Number.isInteger(lo) && lo >= 0 && lo <= 100) f.usageMinPct = lo;
-    if (Number.isInteger(hi) && hi >= 0 && hi <= 100) f.usageMaxPct = hi;
+    const e = parseIntFilter(expiringWithinDays, 1, 3650);
+    if (e !== undefined) f.expiringWithinDays = e;
+    const lo = parseIntFilter(usageMin, 0, 100);
+    const hi = parseIntFilter(usageMax, 0, 100);
+    if (lo !== undefined) f.usageMinPct = lo;
+    if (hi !== undefined) f.usageMaxPct = hi;
     return f;
   }, [q, status, source, sold, expiringWithinDays, usageMin, usageMax, sort, sortDir]);
 
@@ -67,12 +68,18 @@ export function CardsReport() {
     let cancelled = false;
     setLoading(true);
     setError(null);
+    console.info('[web admin reports] cards fetch', { filters });
     (async () => {
       const res = await fetchCardsReport(filters);
       if (cancelled) return;
       setLoading(false);
-      if (res.ok) setRows(res.data.rows);
-      else setError(res.error);
+      if (res.ok) {
+        console.info('[web admin reports] cards fetch ok', { rows: res.data.rows.length });
+        setRows(res.data.rows);
+      } else {
+        console.warn('[web admin reports] cards fetch failed', { error: res.error });
+        setError(res.error);
+      }
     })();
     return () => {
       cancelled = true;
@@ -99,7 +106,9 @@ export function CardsReport() {
 
   const statusLabel = (r: CardsReportRow): string => {
     if (r.cancelledAt) return 'בוטלה';
-    if (!r.isActive) return 'לא פעילה';
+    // Date-expiry never flips isActive in the row — derive it here.
+    const dateExpired = r.expiresAt !== null && new Date(r.expiresAt) <= new Date();
+    if (!r.isActive || dateExpired) return 'לא פעילה';
     return 'פעילה';
   };
 

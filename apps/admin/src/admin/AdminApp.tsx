@@ -789,8 +789,8 @@ function Cards() {
 
   const showActions = status === 'active';
   const head = showActions
-    ? ['מספר סידורי', 'לקוח', 'ניצול', 'תוקף', 'סטטוס', '']
-    : ['מספר סידורי', 'לקוח', 'ניצול', 'תוקף', 'סטטוס'];
+    ? ['מספר סידורי', 'לקוח', 'ניצול', 'נמכרה', 'תוקף', 'סטטוס', '']
+    : ['מספר סידורי', 'לקוח', 'ניצול', 'נמכרה', 'תוקף', 'סטטוס'];
 
   const submitEdit = async (input: EditCardSubmit) => {
     if (!detail) return;
@@ -988,6 +988,7 @@ function Cards() {
                 <Td muted>
                   {c.usedEntries} / {c.totalEntries}
                 </Td>
+                <Td muted>{fmtDate(c.createdAt.slice(0, 10))}</Td>
                 <Td muted>{c.expiresAt === null ? 'ללא תפוגה' : fmtDate(c.expiresAt.slice(0, 10))}</Td>
                 <Td>
                   <Badge text={badge.text} bg={badge.bg} color={badge.color} />
@@ -1323,7 +1324,9 @@ function CancelCardModal({
 
 function cardStatusBadge(c: AdminCardRow): { text: string; bg: string; color: string } {
   if (c.cancelledAt) return { text: 'בוטלה', bg: '#fbecec', color: '#c25a5a' };
-  if (!c.isActive) return { text: 'לא פעילה', bg: '#ececec', color: '#9aa3a6' };
+  // Date-expiry never flips isActive in the row — derive it here.
+  const dateExpired = c.expiresAt !== null && new Date(c.expiresAt) <= new Date();
+  if (!c.isActive || dateExpired) return { text: 'לא פעילה', bg: '#ececec', color: '#9aa3a6' };
   return { text: 'פעילה', bg: '#f0f5e3', color: '#6f8f37' };
 }
 
@@ -1457,6 +1460,7 @@ function CardDetailBody({
   const badge = cardStatusBadge({
     cancelledAt: card.cancelledAt,
     isActive: card.isActive,
+    expiresAt: card.expiresAt,
   } as AdminCardRow);
   return (
     <>
