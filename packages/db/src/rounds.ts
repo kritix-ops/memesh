@@ -261,6 +261,8 @@ export const roundAvailabilityForDate = async (
 
 export interface CustomerRoundBooking {
   bookingId: string;
+  /** The round_instance this booking currently sits on (for the swap picker). */
+  roundInstanceId: string;
   label: string;
   /** YYYY-MM-DD */
   date: string;
@@ -288,6 +290,7 @@ export const listCustomerRoundBookings = async (
   const rows = await db
     .select({
       bookingId: bookings.id,
+      roundInstanceId: bookings.roundInstanceId,
       label: rounds.displayName,
       date: roundInstances.date,
       startTime: rounds.startTime,
@@ -311,6 +314,7 @@ export const listCustomerRoundBookings = async (
   return rows
     .map((r) => ({
       bookingId: r.bookingId,
+      roundInstanceId: r.roundInstanceId,
       label: r.label,
       date: r.date,
       startTime: hhmm(r.startTime),

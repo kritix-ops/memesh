@@ -22,5 +22,7 @@ export * from './rounds-dashboard.js';
 export * from './rounds.js';
 export * from './rounds-hold.js';
 export * from './rounds-mint.js';
+export * from './rounds-swap.js';
+export * from './round-time.js';
 export * from './dashboard-settings.js';
 export * from './round-settings.js';
