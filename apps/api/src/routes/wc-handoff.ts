@@ -22,6 +22,7 @@ import {
 } from '../lib/gift-email.js';
 import { firePostPurchaseEmail } from '../lib/post-purchase-email.js';
 import { processWcOrderWebhook } from '../lib/wc-order-processor.js';
+import { processRoundOrderWebhook } from '../lib/wc-round-processor.js';
 import { fireWcPostPurchaseSms } from '../lib/wc-post-purchase-sms.js';
 import { envKeyResolver } from '../qr.js';
 
@@ -217,6 +218,40 @@ export const wcHandoffRoutes: FastifyPluginAsync = async (fastify) => {
             orderId: result.orderId,
             log: request.log,
           });
+        }
+      }
+
+      // Rounds: the handoff (thank-you page) is the PRIMARY mint path per §4.2,
+      // so a round booking's barcode is ready the moment the customer lands in
+      // their personal area — not seconds later when the async webhook catches
+      // up. mintBooking is idempotent per hold id, so the webhook re-running
+      // this is a harmless no-op. A round-mint exception is logged, not fatal:
+      // the card handoff already stands and the webhook is the safety net.
+      if (parsed.data.order !== undefined) {
+        try {
+          const roundResult = await processRoundOrderWebhook(db, {
+            topic: 'order.updated',
+            payload: parsed.data.order,
+            resolver: envKeyResolver,
+          });
+          if (roundResult.status === 'processed') {
+            request.log.info(
+              {
+                orderId: roundResult.orderId,
+                minted: roundResult.minted.length,
+                failed: roundResult.failed.length,
+              },
+              '[wc handoff rounds] processed',
+            );
+            if (roundResult.failed.length > 0) {
+              request.log.warn(
+                { orderId: roundResult.orderId, failed: roundResult.failed },
+                '[wc handoff rounds] mint_failed — paid seats without a booking, refund TODO',
+              );
+            }
+          }
+        } catch (err) {
+          request.log.error({ err }, '[wc handoff rounds] processor threw (non-fatal)');
         }
       }
 
