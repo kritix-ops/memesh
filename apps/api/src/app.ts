@@ -16,6 +16,7 @@ import { giftClaimRoutes } from './routes/gift-claim.js';
 import { meRoutes } from './routes/me.js';
 import { punchRoutes } from './routes/punch.js';
 import { cronGiftExpireRoutes } from './routes/cron-gift-expire.js';
+import { cronRoundsHoldSweepRoutes } from './routes/cron-rounds-hold-sweep.js';
 import { cronWcReconcileRoutes } from './routes/cron-wc-reconcile.js';
 import { reportsRoutes } from './routes/reports.js';
 import { rolePermissionsRoutes } from './routes/role-permissions.js';
@@ -107,6 +108,7 @@ export const buildApp = async (): Promise<FastifyInstance> => {
   await fastify.register(webhooksWcRoutes);
   await fastify.register(cronWcReconcileRoutes);
   await fastify.register(cronGiftExpireRoutes);
+  await fastify.register(cronRoundsHoldSweepRoutes);
 
   fastify.get('/health', async () => ({
     status: 'ok',
