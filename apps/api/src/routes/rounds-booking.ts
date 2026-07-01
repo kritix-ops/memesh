@@ -1,5 +1,6 @@
 import { timingSafeEqual } from 'node:crypto';
 import {
+  bookRoundWithPunch,
   cancelBooking,
   createHold,
   db,
@@ -38,6 +39,11 @@ const swapSchema = z.object({
   targetRoundInstanceId: z.string().uuid(),
 });
 const cancelSchema = z.object({ bookingId: z.string().uuid() });
+const bookPunchSchema = z.object({
+  roundInstanceId: z.string().uuid(),
+  punchCardId: z.string().uuid(),
+  ticketType: z.enum(['child_under_walking', 'child_over_walking']),
+});
 
 // Server-to-server hold from the WooCommerce checkout (super-brief §4.2). The
 // WP shopper is a guest with no customer session, so identity travels as a
@@ -251,6 +257,46 @@ export const roundsBookingRoutes: FastifyPluginAsync = async (fastify) => {
     return { bookingId: result.bookingId, barcodeToken: result.barcodeToken };
   });
 
+  // Book a round seat by spending one punch-card entry (super-brief §3.4). No
+  // WooCommerce — the customer already paid for the card. Customer-gated;
+  // ownership of the card is enforced in the DB helper.
+  fastify.post('/rounds/book-punch', { preHandler: requireCustomer }, async (request, reply) => {
+    const customerId = request.customer?.id;
+    if (!customerId) return reply.code(401).send({ error: 'unauthorized' });
+    const parsed = bookPunchSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'invalid_body', issues: parsed.error.issues });
+    }
+    const result = await bookRoundWithPunch(
+      db,
+      {
+        roundInstanceId: parsed.data.roundInstanceId,
+        customerId,
+        punchCardId: parsed.data.punchCardId,
+        ticketType: parsed.data.ticketType,
+      },
+      envKeyResolver,
+    );
+    if (!result.ok) {
+      const code =
+        result.error === 'round_not_found' || result.error === 'card_not_found'
+          ? 404
+          : result.error === 'card_forbidden'
+            ? 403
+            : 409; // round_closed / round_full / card_inactive / card_expired / card_exhausted
+      return reply.code(code).send({ error: result.error });
+    }
+    request.log.info(
+      { bookingId: result.bookingId, customerId, punchCardId: parsed.data.punchCardId },
+      '[rounds book-punch] done',
+    );
+    return {
+      bookingId: result.bookingId,
+      barcodeToken: result.barcodeToken,
+      remaining: result.remaining,
+    };
+  });
+
   // Cancel a confirmed booking with an auto-refund (super-brief §6.2).
   // Customer-gated + owner-checked. The DB helper releases the seat only after
   // the refund is confirmed; if the refund can't be confirmed the booking stays
@@ -292,10 +338,20 @@ export const roundsBookingRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.code(code).send({ error: result.error });
     }
     request.log.info(
-      { bookingId: parsed.data.bookingId, customerId, refunded: result.refunded },
+      {
+        bookingId: parsed.data.bookingId,
+        customerId,
+        refunded: result.refunded,
+        punchReturned: result.punchReturned,
+      },
       '[rounds cancel] done',
     );
-    return { ok: true, refunded: result.refunded, refundAmountIls: result.refundAmountIls };
+    return {
+      ok: true,
+      refunded: result.refunded,
+      punchReturned: result.punchReturned,
+      refundAmountIls: result.refundAmountIls,
+    };
   });
 
   // Dev-only "pay now" — simulates a completed WooCommerce payment for a held

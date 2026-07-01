@@ -238,6 +238,49 @@ test('POST /rounds/cancel with a valid body reaches the cancel engine', async ()
   assert.ok([403, 404, 409, 500, 502].includes(res.statusCode), `got ${res.statusCode}`);
 });
 
+// --- POST /rounds/book-punch (customer-gated) -------------------------------
+
+test('POST /rounds/book-punch without a customer token returns 401', async () => {
+  const res = await app.inject({
+    method: 'POST',
+    url: '/rounds/book-punch',
+    payload: {
+      roundInstanceId: '00000000-0000-0000-0000-0000000000a1',
+      punchCardId: '00000000-0000-0000-0000-0000000000c9',
+      ticketType: 'child_over_walking',
+    },
+  });
+  assert.equal(res.statusCode, 401);
+});
+
+test('POST /rounds/book-punch with a bad body returns 400', async () => {
+  const res = await app.inject({
+    method: 'POST',
+    url: '/rounds/book-punch',
+    headers: { authorization: `Bearer ${await customerToken()}` },
+    payload: { roundInstanceId: 'not-a-uuid', ticketType: 'child_over_walking' },
+  });
+  assert.equal(res.statusCode, 400);
+  assert.equal(res.json().error, 'invalid_body');
+});
+
+test('POST /rounds/book-punch with a valid body reaches the punch-booking engine', async () => {
+  const res = await app.inject({
+    method: 'POST',
+    url: '/rounds/book-punch',
+    headers: { authorization: `Bearer ${await customerToken()}` },
+    payload: {
+      roundInstanceId: '00000000-0000-0000-0000-0000000000a1',
+      punchCardId: '00000000-0000-0000-0000-0000000000c9',
+      ticketType: 'child_over_walking',
+    },
+  });
+  // Auth + validation passed. No such round/card → 404 on a real DB, 500 on the
+  // DB-less box; either way it reached the engine past the customer gate.
+  assert.notEqual(res.statusCode, 401);
+  assert.ok([403, 404, 409, 500].includes(res.statusCode), `got ${res.statusCode}`);
+});
+
 // --- POST /rounds/dev-pay (dev-only mint stub) ------------------------------
 
 test('POST /rounds/dev-pay without a customer token returns 401', async () => {
