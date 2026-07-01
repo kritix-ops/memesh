@@ -18,6 +18,7 @@ import { alias, type PgDatabase } from 'drizzle-orm/pg-core';
 import { getCustomerById } from './accounts';
 import { getCardSettings } from './card-settings';
 import {
+  bookings,
   cardSettings,
   customers,
   punchCardEntries,
@@ -587,6 +588,8 @@ export interface RevenueReportFilters {
 export interface RevenueReportRow {
   period: string;
   cardsSold: number;
+  /** Paid additional companions on bookings confirmed in this period (Yanay 2026-07-01). */
+  companionsSold: number;
   estimatedRevenueShekels: number;
 }
 
@@ -594,6 +597,7 @@ export interface RevenueReportResult {
   rows: RevenueReportRow[];
   estimatedFromPriceShekels: number;
   totalCardsSold: number;
+  totalCompanionsSold: number;
   totalEstimatedRevenueShekels: number;
 }
 
@@ -602,6 +606,13 @@ export interface RevenueReportResult {
  * CURRENT settings.priceShekels to estimate revenue. Honest caveat: real
  * price-at-sale isn't stored. Returns the assumed price so the UI can show
  * the user what's being multiplied.
+ *
+ * Also buckets paid additional companions (bookings.additional_companions,
+ * source paid/gift, status confirmed/used, by confirmed_at) into the same
+ * periods so the admin can see companion sales next to card sales. The
+ * revenue estimate stays cards-only — companion revenue already shows on the
+ * live dashboard, and mixing two estimated price bases in one column would
+ * muddy the "estimated from price X" caveat.
  */
 export const revenueReport = async (
   db: AnyPgDatabase,
@@ -635,24 +646,68 @@ export const revenueReport = async (
     .groupBy(bucketSql)
     .orderBy(bucketSql);
 
+  // Companions bucketed by booking confirmed_at with the same period shape.
+  const companionBucketSql =
+    groupBy === 'day'
+      ? sql<string>`to_char(${bookings.confirmedAt}, 'YYYY-MM-DD')`
+      : groupBy === 'week'
+        ? sql<string>`to_char(date_trunc('week', ${bookings.confirmedAt}), 'IYYY-"W"IW')`
+        : sql<string>`to_char(${bookings.confirmedAt}, 'YYYY-MM')`;
+
+  const companionConds = [
+    sql`${bookings.status} IN ('confirmed','used')`,
+    sql`${bookings.source} IN ('paid','gift')`,
+    isNotNull(bookings.confirmedAt),
+    sql`${bookings.additionalCompanions} > 0`,
+  ];
+  if (filters.from) companionConds.push(gte(bookings.confirmedAt, filters.from));
+  if (filters.to) companionConds.push(lte(bookings.confirmedAt, filters.to));
+
+  const companionRowsRaw = await db
+    .select({
+      period: companionBucketSql,
+      companionsSold: sql<string>`COALESCE(SUM(${bookings.additionalCompanions}), 0)`,
+    })
+    .from(bookings)
+    .where(and(...companionConds))
+    .groupBy(companionBucketSql)
+    .orderBy(companionBucketSql);
+
   // Pull current price from settings for the estimate.
   const settingsRows = await db.select().from(cardSettings).limit(1);
   const fallbackPrice = (await getCardSettings(db)).priceShekels;
   const estimatedFromPriceShekels = settingsRows[0]?.priceShekels ?? fallbackPrice;
 
-  const rows: RevenueReportRow[] = rowsRaw.map((r) => ({
-    period: r.period,
-    cardsSold: Number(r.cardsSold),
-    estimatedRevenueShekels: Number(r.cardsSold) * estimatedFromPriceShekels,
-  }));
+  // Merge the two bucket sets — a period can have cards without companions
+  // and vice versa, so the row list is the sorted union.
+  const byPeriod = new Map<string, { cardsSold: number; companionsSold: number }>();
+  for (const r of rowsRaw) {
+    byPeriod.set(r.period, { cardsSold: Number(r.cardsSold), companionsSold: 0 });
+  }
+  for (const r of companionRowsRaw) {
+    const existing = byPeriod.get(r.period) ?? { cardsSold: 0, companionsSold: 0 };
+    existing.companionsSold = Number(r.companionsSold);
+    byPeriod.set(r.period, existing);
+  }
+
+  const rows: RevenueReportRow[] = [...byPeriod.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([period, counts]) => ({
+      period,
+      cardsSold: counts.cardsSold,
+      companionsSold: counts.companionsSold,
+      estimatedRevenueShekels: counts.cardsSold * estimatedFromPriceShekels,
+    }));
 
   const totalCardsSold = rows.reduce((acc, r) => acc + r.cardsSold, 0);
+  const totalCompanionsSold = rows.reduce((acc, r) => acc + r.companionsSold, 0);
   const totalEstimatedRevenueShekels = totalCardsSold * estimatedFromPriceShekels;
 
   return {
     rows,
     estimatedFromPriceShekels,
     totalCardsSold,
+    totalCompanionsSold,
     totalEstimatedRevenueShekels,
   };
 };

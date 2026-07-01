@@ -144,6 +144,8 @@ test('GET /admin/dashboard/live returns the documented shape (empty DB)', async 
   assert.equal(stats.activeHoldsCount, 0);
   assert.equal(stats.punchCardsSold, 0);
   assert.equal(stats.punchCardsDelta, null);
+  assert.equal(stats.companionsCount, 0);
+  assert.equal(stats.companionsDelta, null);
 
   // Alerts intentionally hardcoded empty until later step; UI hides zone.
   assert.equal(body.alerts.length, 0, 'alerts deferred to a later step');

@@ -143,6 +143,8 @@ export const fetchEntriesReport = (
 export interface RevenueReportRow {
   period: string;
   cardsSold: number;
+  /** Paid additional companions on bookings confirmed in this period. */
+  companionsSold: number;
   estimatedRevenueShekels: number;
 }
 
@@ -150,6 +152,7 @@ export interface RevenueReportResult {
   rows: RevenueReportRow[];
   estimatedFromPriceShekels: number;
   totalCardsSold: number;
+  totalCompanionsSold: number;
   totalEstimatedRevenueShekels: number;
 }
 

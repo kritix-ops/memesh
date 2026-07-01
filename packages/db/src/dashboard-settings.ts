@@ -206,6 +206,8 @@ export type DashboardLiveStatsWithOptionalRevenue = {
   activeHoldsCount: number;
   punchCardsSold: number;
   punchCardsDelta: number | null;
+  companionsCount: number;
+  companionsDelta: number | null;
 };
 
 export type DashboardLiveStatsAllFields = {
@@ -216,6 +218,8 @@ export type DashboardLiveStatsAllFields = {
   activeHoldsCount: number;
   punchCardsSold: number;
   punchCardsDelta: number | null;
+  companionsCount: number;
+  companionsDelta: number | null;
 };
 
 /**

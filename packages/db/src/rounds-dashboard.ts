@@ -162,6 +162,9 @@ export interface DashboardLiveStatsResult {
   activeHoldsCount: number;
   punchCardsSold: number;
   punchCardsDelta: number | null;
+  /** Paid additional companions on today's confirmed bookings (Yanay 2026-07-01). */
+  companionsCount: number;
+  companionsDelta: number | null;
 }
 
 /**
@@ -216,6 +219,16 @@ export const dashboardLiveStats = async (
   );
   const punchCardsDelta = cardsYesterdayAtHour === 0 ? null : cardsToday - cardsYesterdayAtHour;
 
+  // Paid additional companions today vs same hour yesterday.
+  const companionsToday = await sumCompanionsInRange(db, todayStart, now);
+  const companionsYesterdayAtHour = await sumCompanionsInRange(
+    db,
+    yesterdayStart,
+    addDays(now, -1),
+  );
+  const companionsDelta =
+    companionsYesterdayAtHour === 0 ? null : companionsToday - companionsYesterdayAtHour;
+
   // Revenue = paid/gift bookings today × their prices + punch cards × price.
   // Bookings with source='punchcard' don't count (they were pre-paid) and
   // source='manual' doesn't count (comped).
@@ -239,6 +252,8 @@ export const dashboardLiveStats = async (
     activeHoldsCount,
     punchCardsSold: cardsToday,
     punchCardsDelta,
+    companionsCount: companionsToday,
+    companionsDelta,
   };
 };
 
@@ -301,6 +316,31 @@ async function countConfirmedBookingsInRange(
     .where(
       and(
         sql`${bookings.status} IN ('confirmed','used')`,
+        gte(bookings.confirmedAt, start),
+        lt(bookings.confirmedAt, end),
+      ),
+    );
+  return Number(rows[0]?.n ?? 0);
+}
+
+/**
+ * Sum of additional_companions over bookings with status IN (confirmed, used),
+ * source IN (paid, gift), and confirmed_at in [start, end). Source filter
+ * matches computeRevenueForRange — these are the companions that were sold,
+ * not comped ones.
+ */
+async function sumCompanionsInRange(
+  db: AnyPgDatabase,
+  start: Date,
+  end: Date,
+): Promise<number> {
+  const rows = await db
+    .select({ n: sql<string>`COALESCE(SUM(${bookings.additionalCompanions}), 0)` })
+    .from(bookings)
+    .where(
+      and(
+        sql`${bookings.status} IN ('confirmed','used')`,
+        sql`${bookings.source} IN ('paid','gift')`,
         gte(bookings.confirmedAt, start),
         lt(bookings.confirmedAt, end),
       ),

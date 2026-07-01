@@ -209,6 +209,8 @@ test('stats: empty DB returns zero counts and null deltas', async () => {
   assert.equal(res.activeHoldsCount, 0);
   assert.equal(res.punchCardsSold, 0);
   assert.equal(res.punchCardsDelta, null);
+  assert.equal(res.companionsCount, 0);
+  assert.equal(res.companionsDelta, null);
 });
 
 test('stats: counts confirmed bookings from today, ignores yesterday + cancelled', async () => {
@@ -342,6 +344,86 @@ test('stats: counts punch cards sold today; cancelled cards excluded', async () 
   assert.equal(res.punchCardsSold, 1);
   // Yesterday at hour 14:00: 1 card sold by then → delta = 1 - 1 = 0
   assert.equal(res.punchCardsDelta, 0);
+});
+
+test('stats: sums paid additional companions from today; comped and cancelled excluded', async () => {
+  const db = await freshDb();
+  const now = new Date('2026-07-15T14:00:00Z');
+  const [round] = await db
+    .insert(rounds)
+    .values({
+      label: 'afternoon',
+      displayName: 'סבב',
+      startTime: '16:00:00',
+      endTime: '18:00:00',
+      defaultCapacity: 50,
+    })
+    .returning();
+  const [instance] = await db
+    .insert(roundInstances)
+    .values({ roundId: round!.id, date: isoDate(now), capacity: 50 })
+    .returning();
+
+  // 2 paid bookings with a companion each, confirmed today → count 2
+  for (let i = 0; i < 2; i += 1) {
+    const c = await freshCustomer(db);
+    await db.insert(bookings).values({
+      roundInstanceId: instance!.id,
+      customerId: c.id,
+      ticketType: 'child_over_walking',
+      additionalCompanions: 1,
+      source: 'paid',
+      status: 'confirmed',
+      confirmedAt: new Date('2026-07-15T10:00:00Z'),
+    });
+  }
+  // paid booking today WITHOUT a companion → adds 0
+  const noComp = await freshCustomer(db);
+  await db.insert(bookings).values({
+    roundInstanceId: instance!.id,
+    customerId: noComp.id,
+    ticketType: 'child_over_walking',
+    source: 'paid',
+    status: 'confirmed',
+    confirmedAt: new Date('2026-07-15T10:00:00Z'),
+  });
+  // comped (manual) booking with a companion → must NOT count (not sold)
+  const comped = await freshCustomer(db);
+  await db.insert(bookings).values({
+    roundInstanceId: instance!.id,
+    customerId: comped.id,
+    ticketType: 'child_over_walking',
+    additionalCompanions: 1,
+    source: 'manual',
+    status: 'confirmed',
+    confirmedAt: new Date('2026-07-15T10:00:00Z'),
+  });
+  // cancelled paid booking with a companion → must NOT count
+  const cancelled = await freshCustomer(db);
+  await db.insert(bookings).values({
+    roundInstanceId: instance!.id,
+    customerId: cancelled.id,
+    ticketType: 'child_over_walking',
+    additionalCompanions: 1,
+    source: 'paid',
+    status: 'cancelled',
+    confirmedAt: new Date('2026-07-15T10:00:00Z'),
+  });
+  // paid companion yesterday at 10:00 → baseline 1 → delta = 2 - 1 = +1
+  const yesterday = await freshCustomer(db);
+  await db.insert(bookings).values({
+    roundInstanceId: instance!.id,
+    customerId: yesterday.id,
+    ticketType: 'child_over_walking',
+    additionalCompanions: 1,
+    source: 'paid',
+    status: 'confirmed',
+    confirmedAt: new Date('2026-07-14T10:00:00Z'),
+  });
+
+  const res = await dashboardLiveStats(db, now);
+  assert.equal(res.companionsCount, 2);
+  assert.equal(res.companionsDelta, 1);
 });
 
 // ---------------------------------------------------------------------------

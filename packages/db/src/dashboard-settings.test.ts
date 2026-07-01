@@ -195,6 +195,8 @@ const baseStats = {
   activeHoldsCount: 5,
   punchCardsSold: 2,
   punchCardsDelta: -1,
+  companionsCount: 4,
+  companionsDelta: 2,
 };
 
 test('privacy gate: admin + showRevenue=true → revenue passes through', () => {

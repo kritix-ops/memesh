@@ -196,6 +196,12 @@ export function LiveRoundsDashboard() {
                 delta={s.punchCardsDelta}
                 kind="count"
               />
+              <LiveStatTile
+                label="מלווים נוספים"
+                value={s.companionsCount}
+                delta={s.companionsDelta}
+                kind="count"
+              />
             </div>
           </div>
         );
