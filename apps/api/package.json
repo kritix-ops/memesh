@@ -12,7 +12,7 @@
     "dev": "tsx watch src/server.ts",
     "start": "tsx src/server.ts",
     "typecheck": "tsc --noEmit",
-    "test": "node --test --import tsx src/app.test.ts src/app-cors.test.ts src/app-cookie-domain.test.ts src/config.test.ts src/lib/cookie-scope.test.ts src/lib/post-sale-sms.test.ts src/lib/wc-post-purchase-sms.test.ts src/lib/post-purchase-email.test.ts src/lib/gift-email.test.ts src/lib/wp-sync.test.ts src/lib/wc-order-processor.test.ts src/lib/wc-rest-client.test.ts src/lib/wc-reconciliation.test.ts src/routes/wc-handoff.test.ts src/routes/role-permissions.test.ts src/routes/admin-dashboard-live.test.ts scripts/seed-admin.test.ts",
+    "test": "node --test --import tsx src/app.test.ts src/app-cors.test.ts src/app-cookie-domain.test.ts src/config.test.ts src/lib/cookie-scope.test.ts src/lib/post-sale-sms.test.ts src/lib/wc-post-purchase-sms.test.ts src/lib/post-purchase-email.test.ts src/lib/gift-email.test.ts src/lib/wp-sync.test.ts src/lib/wc-order-processor.test.ts src/lib/wc-rest-client.test.ts src/lib/wc-reconciliation.test.ts src/routes/wc-handoff.test.ts src/routes/role-permissions.test.ts src/routes/admin-dashboard-live.test.ts src/routes/staff-rounds.test.ts scripts/seed-admin.test.ts",
     "seed:admin": "tsx --env-file-if-exists=../../.env --env-file-if-exists=../../packages/db/.env.local scripts/seed-admin.ts",
     "seed:normalize-phones": "tsx --env-file-if-exists=../../.env --env-file-if-exists=../../packages/db/.env.local scripts/normalize-phones.ts"
   },
