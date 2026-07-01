@@ -1,0 +1,1 @@
+ALTER TYPE "public"."punch_method" ADD VALUE 'online';

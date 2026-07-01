@@ -468,7 +468,7 @@ export interface EntriesReportFilters {
   to?: Date;
   customerId?: string;
   cardSerial?: string;
-  method?: 'qr_scan' | 'serial' | 'phone' | 'manual';
+  method?: 'qr_scan' | 'serial' | 'phone' | 'manual' | 'online';
   /** undefined = either, true = only refunded, false = only non-refunded. */
   refunded?: boolean;
   punchedBy?: string;

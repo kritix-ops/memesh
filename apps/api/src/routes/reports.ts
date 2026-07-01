@@ -54,7 +54,7 @@ const entriesQuery = z.object({
   to: isoDate.optional(),
   customerId: z.string().uuid().optional(),
   cardSerial: z.string().trim().min(1).max(64).optional(),
-  method: z.enum(['qr_scan', 'serial', 'phone', 'manual']).optional(),
+  method: z.enum(['qr_scan', 'serial', 'phone', 'manual', 'online']).optional(),
   refunded: z.enum(['true', 'false']).optional(),
   punchedBy: z.string().uuid().optional(),
   limit: z.coerce.number().int().min(1).max(1000).optional(),

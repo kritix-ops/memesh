@@ -113,7 +113,7 @@ export interface ScanLookupCustomer {
 export interface ScanLookupEntry {
   id: string;
   punchedAt: string;
-  method: 'qr_scan' | 'serial' | 'phone' | 'manual';
+  method: 'qr_scan' | 'serial' | 'phone' | 'manual' | 'online';
   entriesConsumed: number;
   staffFirstName: string | null;
   staffLastName: string | null;

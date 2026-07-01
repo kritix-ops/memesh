@@ -4,7 +4,7 @@ import { logStaffAction } from './actions';
 import { getCardSettings } from './card-settings';
 import { punchCardEntries, punchCards, scanAttempts } from './schema/index';
 
-export type PunchMethod = 'qr_scan' | 'serial' | 'phone' | 'manual';
+export type PunchMethod = 'qr_scan' | 'serial' | 'phone' | 'manual' | 'online';
 export type PunchFailureReason =
   | 'not_found'
   | 'inactive'

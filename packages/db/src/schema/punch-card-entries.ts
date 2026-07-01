@@ -2,7 +2,15 @@ import { integer, pgEnum, pgTable, text, timestamp, uuid, varchar } from 'drizzl
 import { punchCards } from './punch-cards';
 import { staff } from './staff';
 
-export const punchMethodEnum = pgEnum('punch_method', ['qr_scan', 'serial', 'phone', 'manual']);
+// 'online' = a customer self-service punch from the personal area (booking a
+// round with their כרטיסייה, super-brief §3.4). punched_by is null for these.
+export const punchMethodEnum = pgEnum('punch_method', [
+  'qr_scan',
+  'serial',
+  'phone',
+  'manual',
+  'online',
+]);
 
 export const punchCardEntries = pgTable('punch_card_entries', {
   id: uuid('id').primaryKey().defaultRandom(),

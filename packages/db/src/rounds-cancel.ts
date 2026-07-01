@@ -11,7 +11,7 @@ import type { PgDatabase } from 'drizzle-orm/pg-core';
 import { getCardSettings } from './card-settings';
 import { getRoundSettings } from './round-settings';
 import { isWithinCancelWindow } from './round-time';
-import { bookings, roundInstances, rounds } from './schema/index';
+import { bookings, punchCardEntries, punchCards, roundInstances, rounds } from './schema/index';
 
 type AnyPgDatabase = PgDatabase<any, any, any>;
 
@@ -29,7 +29,7 @@ export type CancelBookingDeps = {
 };
 
 export type CancelBookingResult =
-  | { ok: true; refunded: boolean; refundAmountIls: number }
+  | { ok: true; refunded: boolean; punchReturned: boolean; refundAmountIls: number }
   | { ok: false; error: 'not_found' | 'forbidden' | 'not_confirmed' | 'too_late' | 'refund_failed' };
 
 const hhmm = (t: string): string => t.slice(0, 5);
@@ -68,27 +68,57 @@ export const cancelBooking = async (
       return { ok: false, error: 'too_late' as const };
     }
 
-    // Booking value to refund: ticket price by type + companions × companion price.
-    const cardSettings = await getCardSettings(tx);
-    const ticketPrice =
-      b.ticketType === 'child_under_walking'
-        ? cardSettings.roundChildBabyPriceIls
-        : cardSettings.roundChildOverWalkingPriceIls;
-    const amount = ticketPrice + b.additionalCompanions * cardSettings.roundAdditionalCompanionPriceIls;
-
-    // Paid bookings must have a confirmed refund before the seat is released.
     let refunded = false;
+    let punchReturned = false;
+    let refundAmountIls = 0;
+
     if (b.source === 'paid') {
+      // Paid bookings must have a confirmed refund before the seat is released.
+      // Refund value = ticket price by type + companions × companion price.
       if (!b.wcOrderId) return { ok: false, error: 'refund_failed' as const };
-      refunded = await deps.refund(b.wcOrderId, amount);
+      const cardSettings = await getCardSettings(tx);
+      const ticketPrice =
+        b.ticketType === 'child_under_walking'
+          ? cardSettings.roundChildBabyPriceIls
+          : cardSettings.roundChildOverWalkingPriceIls;
+      refundAmountIls = ticketPrice + b.additionalCompanions * cardSettings.roundAdditionalCompanionPriceIls;
+      refunded = await deps.refund(b.wcOrderId, refundAmountIls);
       if (!refunded) return { ok: false, error: 'refund_failed' as const };
+    } else if (b.source === 'punchcard') {
+      // Return the entry we spent: find it by the booking-id link, mark it
+      // refunded, restore the card's used count, and reactivate the card if
+      // exhaustion had deactivated it. No money moves.
+      const entryRows = await tx
+        .select()
+        .from(punchCardEntries)
+        .where(eq(punchCardEntries.idempotencyKey, b.id));
+      const entry = entryRows[0];
+      if (entry && entry.refundedAt === null) {
+        const cardRows = await tx
+          .select()
+          .from(punchCards)
+          .where(eq(punchCards.id, entry.punchCardId))
+          .for('update');
+        const card = cardRows[0];
+        if (card) {
+          const restored = Math.max(0, card.usedEntries - entry.entriesConsumed);
+          const reactivate = !card.isActive && card.cancelledAt === null;
+          await tx
+            .update(punchCardEntries)
+            .set({ refundedAt: now, refundReason: 'round booking cancelled' })
+            .where(eq(punchCardEntries.id, entry.id));
+          await tx
+            .update(punchCards)
+            .set({ usedEntries: restored, ...(reactivate && { isActive: true }), updatedAt: now })
+            .where(eq(punchCards.id, card.id));
+          punchReturned = true;
+        }
+      }
     }
-    // (Non-paid sources — manual/gift/punchcard — don't exist in the v1 flow;
-    // they'd cancel with no WC money to move. Punch return / gift refund land
-    // with those flows.)
+    // (gift/manual sources don't exist in the v1 flow; gift refund lands with §7.)
 
     await tx.update(bookings).set({ status: 'cancelled', updatedAt: now }).where(eq(bookings.id, b.id));
     // Waitlist promotion on the freed seat lands with the waitlist PR.
-    return { ok: true as const, refunded, refundAmountIls: amount };
+    return { ok: true as const, refunded, punchReturned, refundAmountIls };
   });
 };
