@@ -21,6 +21,7 @@ import { cronRoundsRemindersRoutes } from './routes/cron-rounds-reminders.js';
 import { cronWcReconcileRoutes } from './routes/cron-wc-reconcile.js';
 import { reportsRoutes } from './routes/reports.js';
 import { rolePermissionsRoutes } from './routes/role-permissions.js';
+import { roundSettingsRoutes } from './routes/round-settings.js';
 import { roundsAdminRoutes } from './routes/rounds-admin.js';
 import { roundsBookingRoutes } from './routes/rounds-booking.js';
 import { staffRoutes } from './routes/staff.js';
@@ -96,6 +97,7 @@ export const buildApp = async (): Promise<FastifyInstance> => {
   await fastify.register(customersRoutes);
   await fastify.register(cardsRoutes);
   await fastify.register(cardSettingsRoutes);
+  await fastify.register(roundSettingsRoutes);
   await fastify.register(punchRoutes);
   await fastify.register(debugQrRoutes);
   await fastify.register(staffRoutes);
