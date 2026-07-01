@@ -17,6 +17,7 @@ import {
   entriesReport,
   revenueReport,
 } from './reports';
+import { bookings, roundInstances, rounds } from './schema';
 
 async function freshDb() {
   const client = new PGlite();
@@ -282,6 +283,76 @@ test('revenueReport excludes cancelled cards from totals', async () => {
 
   const res = await revenueReport(db);
   assert.equal(res.totalCardsSold, 0);
+});
+
+test('revenueReport buckets paid companions and merges periods with card sales', async () => {
+  const db = await freshDb();
+  const cust = await createCustomer(db, { firstName: 'Comp', lastName: 'Anion', phone: phone() });
+  // A card sold in May — gives May a cards bucket.
+  await createPunchCard(db, resolver, {
+    customerId: cust.id,
+    now: new Date('2026-05-10T00:00:00.000Z'),
+  });
+
+  const [round] = await db
+    .insert(rounds)
+    .values({
+      label: 'afternoon',
+      displayName: 'סבב',
+      startTime: '16:00:00',
+      endTime: '18:00:00',
+      defaultCapacity: 50,
+    })
+    .returning();
+  const [instance] = await db
+    .insert(roundInstances)
+    .values({ roundId: round!.id, date: '2026-05-15', capacity: 50 })
+    .returning();
+
+  // Paid companion confirmed in May → merges into the May row.
+  await db.insert(bookings).values({
+    roundInstanceId: instance!.id,
+    customerId: cust.id,
+    ticketType: 'child_over_walking',
+    additionalCompanions: 1,
+    source: 'paid',
+    status: 'confirmed',
+    confirmedAt: new Date('2026-05-15T10:00:00.000Z'),
+  });
+  // Paid companion confirmed in June — a period with NO card sales must still
+  // appear as its own row.
+  await db.insert(bookings).values({
+    roundInstanceId: instance!.id,
+    customerId: cust.id,
+    ticketType: 'child_over_walking',
+    additionalCompanions: 1,
+    source: 'paid',
+    status: 'confirmed',
+    confirmedAt: new Date('2026-06-15T10:00:00.000Z'),
+  });
+  // Comped (manual) companion — must NOT count.
+  await db.insert(bookings).values({
+    roundInstanceId: instance!.id,
+    customerId: cust.id,
+    ticketType: 'child_over_walking',
+    additionalCompanions: 1,
+    source: 'manual',
+    status: 'confirmed',
+    confirmedAt: new Date('2026-05-15T11:00:00.000Z'),
+  });
+
+  const res = await revenueReport(db, { groupBy: 'month' });
+  assert.equal(res.totalCardsSold, 1);
+  assert.equal(res.totalCompanionsSold, 2);
+  assert.equal(res.rows.length, 2); // May (card + companion) + June (companion only)
+  const may = res.rows.find((r) => r.period === '2026-05');
+  assert.equal(may?.cardsSold, 1);
+  assert.equal(may?.companionsSold, 1);
+  const june = res.rows.find((r) => r.period === '2026-06');
+  assert.equal(june?.cardsSold, 0);
+  assert.equal(june?.companionsSold, 1);
+  // Revenue estimate stays cards-only.
+  assert.equal(june?.estimatedRevenueShekels, 0);
 });
 
 // ---------------------------------------------------------------------------

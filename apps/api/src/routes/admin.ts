@@ -42,6 +42,9 @@ export type DashboardLiveStats = {
   activeHoldsCount: number;
   punchCardsSold: number;
   punchCardsDelta: number | null;
+  /** Paid additional companions on today's confirmed bookings. */
+  companionsCount: number;
+  companionsDelta: number | null;
 };
 
 export type DashboardLiveRound = {
@@ -204,6 +207,8 @@ async function computeDashboardLive(): Promise<Omit<CachedDashboard, 'expiresAt'
           activeHoldsCount: stats.activeHoldsCount,
           punchCardsSold: stats.punchCardsSold,
           punchCardsDelta: stats.punchCardsDelta,
+          companionsCount: stats.companionsCount,
+          companionsDelta: stats.companionsDelta,
         },
       },
       // Alerts intentionally empty until the application-layer detection lands
@@ -259,6 +264,8 @@ function applyPrivacyGateToResponse(
       activeHoldsCount: cached.data.today.stats.activeHoldsCount,
       punchCardsSold: cached.data.today.stats.punchCardsSold,
       punchCardsDelta: cached.data.today.stats.punchCardsDelta,
+      companionsCount: cached.data.today.stats.companionsCount,
+      companionsDelta: cached.data.today.stats.companionsDelta,
     },
     { showRevenue: cached.settings.showRevenue, requesterRole },
   );

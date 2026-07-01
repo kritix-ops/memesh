@@ -42,6 +42,9 @@ export interface DashboardLiveStats {
   activeHoldsCount: number;
   punchCardsSold: number;
   punchCardsDelta: number | null;
+  /** Paid additional companions on today's confirmed bookings. */
+  companionsCount: number;
+  companionsDelta: number | null;
 }
 
 export interface DashboardLiveRound {

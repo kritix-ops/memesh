@@ -57,9 +57,10 @@ export function RevenueReport() {
     };
   }, [filters]);
 
-  const cols: TableCol<'period' | 'cards' | 'revenue'>[] = [
+  const cols: TableCol<'period' | 'cards' | 'companions' | 'revenue'>[] = [
     { key: 'period', label: 'תקופה', width: 160 },
     { key: 'cards', label: 'כרטיסיות שנמכרו', width: 160 },
+    { key: 'companions', label: 'מלווים נוספים', width: 130 },
     { key: 'revenue', label: 'הכנסה משוערת' },
   ];
 
@@ -68,6 +69,7 @@ export function RevenueReport() {
     const csv = toCsv(result.rows, [
       { label: 'תקופה', value: (r) => r.period },
       { label: 'כרטיסיות שנמכרו', value: (r) => r.cardsSold },
+      { label: 'מלווים נוספים', value: (r) => r.companionsSold },
       { label: 'הכנסה משוערת (₪)', value: (r) => r.estimatedRevenueShekels },
     ]);
     downloadCsv(`memesh-revenue-${new Date().toISOString().slice(0, 10)}.csv`, csv);
@@ -76,7 +78,7 @@ export function RevenueReport() {
   return (
     <SectionShell
       title="הכנסות"
-      description="סיכום כרטיסיות שנמכרו לפי תקופה. הכנסה משוערת = מחיר נוכחי בהגדרות × כמות. כרטיסיות שבוטלו לא נחשבות."
+      description="סיכום כרטיסיות שנמכרו לפי תקופה. הכנסה משוערת = מחיר נוכחי בהגדרות × כמות. כרטיסיות שבוטלו לא נחשבות. מלווים נוספים נספרים מהזמנות סבבים בתשלום ואינם כלולים בהכנסה המשוערת."
     >
       <FilterBar>
         <DateRangeField label="טווח" value={when} onChange={setWhen} />
@@ -110,6 +112,7 @@ export function RevenueReport() {
             }}
           >
             <StatTile label="סה״כ כרטיסיות בטווח" value={result.totalCardsSold} />
+            <StatTile label="סה״כ מלווים נוספים" value={result.totalCompanionsSold} />
             <StatTile
               label="סה״כ הכנסה משוערת"
               value={fmtMoney(result.totalEstimatedRevenueShekels)}
@@ -143,6 +146,7 @@ export function RevenueReport() {
               <tr key={r.period}>
                 <Td>{r.period}</Td>
                 <Td muted>{r.cardsSold}</Td>
+                <Td muted>{r.companionsSold}</Td>
                 <Td>
                   <strong>{fmtMoney(r.estimatedRevenueShekels)}</strong>
                   <span style={{ color: MUTED, fontSize: 12.5, marginInlineStart: 6 }}>
