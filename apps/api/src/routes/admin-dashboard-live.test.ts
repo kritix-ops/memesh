@@ -124,6 +124,11 @@ test('GET /admin/dashboard/live returns the documented shape (empty DB)', async 
   assert.equal(body.settings.showWeekAhead, true, 'week grid shown by default');
   assert.equal(body.settings.capacityWarningPct, 70, 'default amber threshold');
   assert.equal(body.settings.capacityDangerPct, 90, 'default red threshold');
+  assert.deepEqual(
+    body.settings.widgetsOrder,
+    ['rounds_today', 'stats_today', 'alerts', 'waitlist', 'week_ahead'],
+    'default zone order exposed for the SPA to honor',
+  );
   // showRevenue is NOT exposed here — revenue visibility is enforced by
   // stripping the revenue fields, inferred client-side from their absence.
   assert.equal(body.settings.showRevenue, undefined, 'showRevenue not leaked into settings');

@@ -22,6 +22,7 @@ import {
   card as cardStyle,
   humanizeSettingsError,
 } from './shared';
+import { DashboardSettingsSection } from './DashboardSettingsSection';
 
 type SectionKey =
   | 'pricing'
@@ -32,7 +33,8 @@ type SectionKey =
   | 'pos-controls'
   | 'thankyou'
   | 'email-content'
-  | 'gift-cards';
+  | 'gift-cards'
+  | 'dashboard';
 
 const SECTIONS: { key: SectionKey; label: string }[] = [
   { key: 'pricing', label: 'כרטיסייה' },
@@ -44,6 +46,7 @@ const SECTIONS: { key: SectionKey; label: string }[] = [
   { key: 'thankyou', label: 'דף תודה' },
   { key: 'email-content', label: 'תוכן אימייל' },
   { key: 'gift-cards', label: 'כרטיסיות מתנה' },
+  { key: 'dashboard', label: 'דשבורד' },
 ];
 
 const subNavStyle = (active: boolean): CSSProperties => ({
@@ -176,6 +179,9 @@ export function Settings() {
         {active === 'gift-cards' && (
           <GiftCardsSection loaded={loaded} onSaved={onSaved} reload={reload} />
         )}
+        {/* Self-contained: loads + saves dashboard_settings on its own, so it
+            doesn't take the card-settings `loaded`/`onSaved`/`reload` props. */}
+        {active === 'dashboard' && <DashboardSettingsSection />}
       </div>
     </div>
   );
