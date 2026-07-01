@@ -20,5 +20,6 @@ export * from './rounds';
 export * from './round-instances';
 export * from './bookings';
 export * from './waitlist-entries';
+export * from './round-reminder-log';
 export * from './dashboard-settings';
 export * from './round-settings';

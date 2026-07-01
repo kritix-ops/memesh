@@ -155,6 +155,13 @@
       "when": 1782914222575,
       "tag": "0021_round_active_hours",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1782916735621,
+      "tag": "0022_rounds_reminders",
+      "breakpoints": true
     }
   ]
 }

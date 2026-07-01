@@ -1,4 +1,5 @@
-import { pgTable, smallint, timestamp } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
+import { boolean, integer, pgTable, smallint, time, timestamp } from 'drizzle-orm/pg-core';
 
 // Singleton config for the rounds *operational* params (super-brief §15) — the
 // knobs the purchase / cancel / waitlist flow reads at runtime. Separate from
@@ -24,6 +25,13 @@ export const roundSettings = pgTable('round_settings', {
   // waits for the next active-hours sweep. Default 08:00-22:00.
   activeHoursStart: smallint('active_hours_start').notNull().default(8),
   activeHoursEnd: smallint('active_hours_end').notNull().default(22),
+  // Minutes before a round's end_time to send a stay-duration reminder to its
+  // confirmed bookings (super-brief §9). Default [30, 10].
+  reminderOffsets: integer('reminder_offsets').array().notNull().default(sql`'{30,10}'::integer[]`),
+  // The venue's daily closing time; used with skipLastRoundReminder to suppress
+  // a pointless "almost done" ping on the final round of the day.
+  closingTime: time('closing_time').notNull().default('19:00:00'),
+  skipLastRoundReminder: boolean('skip_last_round_reminder').notNull().default(true),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 

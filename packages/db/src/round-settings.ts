@@ -23,13 +23,21 @@ export type UpdateRoundSettingsInput = {
   claimWindowMinutes?: number;
   activeHoursStart?: number;
   activeHoursEnd?: number;
+  reminderOffsets?: number[];
+  closingTime?: string;
+  skipLastRoundReminder?: boolean;
 };
 
 export type RoundSettingsValidationError =
   | { code: 'hold_ttl_out_of_range'; min: number; max: number }
   | { code: 'cancellation_window_out_of_range'; min: number; max: number }
   | { code: 'claim_window_out_of_range'; min: number; max: number }
-  | { code: 'active_hours_out_of_range'; min: number; max: number };
+  | { code: 'active_hours_out_of_range'; min: number; max: number }
+  | { code: 'reminder_offsets_invalid' }
+  | { code: 'closing_time_invalid' };
+
+const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+const REMINDER_OFFSET_MAX = 240;
 
 /** Read the singleton row, self-healing the seed if a misconfigured DB lost it. */
 export const getRoundSettings = async (db: AnyPgDatabase): Promise<RoundSettingsRow> => {
@@ -77,6 +85,20 @@ export const validateRoundSettingsPatch = (
       return { code: 'active_hours_out_of_range', min: ACTIVE_HOUR_MIN, max: ACTIVE_HOUR_MAX };
     }
   }
+  if (patch.reminderOffsets !== undefined) {
+    // Empty array = reminders disabled. Up to 5 offsets, each 1-240 minutes.
+    const a = patch.reminderOffsets;
+    if (
+      !Array.isArray(a) ||
+      a.length > 5 ||
+      a.some((n) => !Number.isInteger(n) || n < 1 || n > REMINDER_OFFSET_MAX)
+    ) {
+      return { code: 'reminder_offsets_invalid' };
+    }
+  }
+  if (patch.closingTime !== undefined && !HHMM_RE.test(patch.closingTime)) {
+    return { code: 'closing_time_invalid' };
+  }
   return null;
 };
 
@@ -118,6 +140,25 @@ export const updateRoundSettings = async (
   if (patch.activeHoursEnd !== undefined && patch.activeHoursEnd !== current.activeHoursEnd) {
     diff.activeHoursEnd = [current.activeHoursEnd, patch.activeHoursEnd];
     next.activeHoursEnd = patch.activeHoursEnd;
+  }
+  if (
+    patch.reminderOffsets !== undefined &&
+    JSON.stringify(patch.reminderOffsets) !== JSON.stringify(current.reminderOffsets)
+  ) {
+    diff.reminderOffsets = [current.reminderOffsets, patch.reminderOffsets];
+    next.reminderOffsets = patch.reminderOffsets;
+  }
+  // DB stores time as 'HH:MM:SS'; compare on the 'HH:MM' the admin sends.
+  if (patch.closingTime !== undefined && patch.closingTime !== current.closingTime.slice(0, 5)) {
+    diff.closingTime = [current.closingTime, patch.closingTime];
+    next.closingTime = patch.closingTime;
+  }
+  if (
+    patch.skipLastRoundReminder !== undefined &&
+    patch.skipLastRoundReminder !== current.skipLastRoundReminder
+  ) {
+    diff.skipLastRoundReminder = [current.skipLastRoundReminder, patch.skipLastRoundReminder];
+    next.skipLastRoundReminder = patch.skipLastRoundReminder;
   }
 
   if (Object.keys(diff).length === 0) return { ok: true, row: current, diff: {} };

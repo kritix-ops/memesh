@@ -26,6 +26,7 @@ export * from './rounds-swap.js';
 export * from './rounds-punch.js';
 export * from './rounds-cancel.js';
 export * from './rounds-waitlist.js';
+export * from './rounds-reminders.js';
 export * from './round-time.js';
 export * from './dashboard-settings.js';
 export * from './round-settings.js';
