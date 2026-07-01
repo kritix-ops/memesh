@@ -23,28 +23,40 @@ import { envKeyResolver } from '../qr.js';
 // route handler the normal way. Because the parser is added inside a
 // Fastify plugin (no `fastify-plugin` wrapping), its scope ends at this
 // plugin and does not change body parsing for the rest of the API.
+//
+// A wildcard fallback is also registered because some WP hosts / security
+// plugins strip the Content-Type header from WC's ping delivery, and Fastify
+// would otherwise 415 the request before HMAC verification could run. The
+// fallback keeps the same rawBody + JSON.parse behavior; security is
+// unchanged because the HMAC check still gates every request downstream.
 export const webhooksWcRoutes: FastifyPluginAsync = async (fastify) => {
-  fastify.addContentTypeParser(
-    'application/json',
-    { parseAs: 'buffer' },
-    (_request, body, done) => {
-      const buf = body as Buffer;
-      // Save the byte-exact body for HMAC verification later in the route.
-      (_request as unknown as { rawBody: Buffer }).rawBody = buf;
-      if (buf.length === 0) {
-        // WC sometimes pings with an empty body when the webhook is first
-        // activated. Hand back an empty object so the route can early-out
-        // on topic/payload validation rather than 500-ing on a parse error.
-        done(null, {});
-        return;
-      }
-      try {
-        done(null, JSON.parse(buf.toString('utf8')));
-      } catch (err) {
-        done(err as Error);
-      }
-    },
-  );
+  const parseWebhookBody = (
+    request: unknown,
+    body: string | Buffer,
+    done: (err: Error | null, body?: unknown) => void,
+  ): void => {
+    const buf = body as Buffer;
+    // Save the byte-exact body for HMAC verification later in the route.
+    (request as { rawBody: Buffer }).rawBody = buf;
+    if (buf.length === 0) {
+      // WC sometimes pings with an empty body when the webhook is first
+      // activated. Hand back an empty object so the route can early-out
+      // on topic/payload validation rather than 500-ing on a parse error.
+      done(null, {});
+      return;
+    }
+    try {
+      done(null, JSON.parse(buf.toString('utf8')));
+    } catch {
+      // Non-JSON body (or a body arriving without a Content-Type from a
+      // stripping host): still expose rawBody so HMAC verification runs.
+      // The route rejects downstream if the signature does not match.
+      done(null, {});
+    }
+  };
+
+  fastify.addContentTypeParser('application/json', { parseAs: 'buffer' }, parseWebhookBody);
+  fastify.addContentTypeParser('*', { parseAs: 'buffer' }, parseWebhookBody);
 
   // Optional smoke endpoint for end-to-end network checks (no auth, no
   // secrets exposed). Useful to confirm DNS + Vercel routing before
