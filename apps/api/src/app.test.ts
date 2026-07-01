@@ -237,6 +237,35 @@ test('POST /webhooks/woocommerce/order without headers returns 503 in tests (no 
   assert.equal(res.statusCode, 503);
 });
 
+test('POST /webhooks/woocommerce/order accepts a body with no Content-Type (WC ping fallback)', async () => {
+  // Some WP hosts / security plugins strip the Content-Type header from WC's
+  // webhook ping. Without a wildcard parser Fastify would 415 the request
+  // before the HMAC gate could run. Assert the fallback catches it: a body
+  // with no Content-Type must reach the route (503 in tests because
+  // WC_WEBHOOK_SECRET is unset, NOT 415 from a rejected parse).
+  const res = await app.inject({
+    method: 'POST',
+    url: '/webhooks/woocommerce/order',
+    headers: {},
+    payload: '{"id":1,"status":"completed","line_items":[]}',
+  });
+  assert.notEqual(res.statusCode, 415);
+  assert.equal(res.statusCode, 503);
+});
+
+test('POST /webhooks/woocommerce/order accepts a body with a non-JSON Content-Type', async () => {
+  // Sibling case: even a form-encoded Content-Type must reach the HMAC gate,
+  // not be rejected by the parser.
+  const res = await app.inject({
+    method: 'POST',
+    url: '/webhooks/woocommerce/order',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    payload: 'irrelevant=1',
+  });
+  assert.notEqual(res.statusCode, 415);
+  assert.equal(res.statusCode, 503);
+});
+
 // ---------------------------------------------------------------------------
 // /cron/wc-reconcile — structural HTTP gates only. The reconciliation
 // pipeline itself is covered in src/lib/wc-reconciliation.test.ts.
