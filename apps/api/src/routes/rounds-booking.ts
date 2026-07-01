@@ -5,6 +5,7 @@ import {
   mintBooking,
   releaseHold,
   roundAvailabilityForDate,
+  swapBooking,
 } from '@memesh/db';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
@@ -27,6 +28,10 @@ const holdSchema = z.object({
 
 const releaseSchema = z.object({ holdId: z.string().uuid() });
 const devPaySchema = z.object({ holdId: z.string().uuid() });
+const swapSchema = z.object({
+  bookingId: z.string().uuid(),
+  targetRoundInstanceId: z.string().uuid(),
+});
 
 export const roundsBookingRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get(
@@ -114,6 +119,38 @@ export const roundsBookingRoutes: FastifyPluginAsync = async (fastify) => {
     }
     request.log.info({ holdId: parsed.data.holdId, customerId }, '[rounds hold] released');
     return { ok: true };
+  });
+
+  // Change the time of a confirmed booking to another available round
+  // (super-brief §6.1). Customer-gated + owner-checked in the DB helper. Atomic
+  // move that can't oversell the target and re-mints the barcode.
+  fastify.post('/rounds/swap', { preHandler: requireCustomer }, async (request, reply) => {
+    const customerId = request.customer?.id;
+    if (!customerId) return reply.code(401).send({ error: 'unauthorized' });
+    const parsed = swapSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'invalid_body', issues: parsed.error.issues });
+    }
+    const result = await swapBooking(
+      db,
+      {
+        bookingId: parsed.data.bookingId,
+        customerId,
+        targetRoundInstanceId: parsed.data.targetRoundInstanceId,
+      },
+      envKeyResolver,
+    );
+    if (!result.ok) {
+      const code =
+        result.error === 'not_found' || result.error === 'target_not_found'
+          ? 404
+          : result.error === 'forbidden'
+            ? 403
+            : 409; // not_confirmed / too_late / same_round / target_closed / target_full
+      return reply.code(code).send({ error: result.error });
+    }
+    request.log.info({ bookingId: result.bookingId, customerId }, '[rounds swap] done');
+    return { bookingId: result.bookingId, barcodeToken: result.barcodeToken };
   });
 
   // Dev-only "pay now" — simulates a completed WooCommerce payment for a held
