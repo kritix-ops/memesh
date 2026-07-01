@@ -23,6 +23,7 @@ import {
   humanizeSettingsError,
 } from './shared';
 import { DashboardSettingsSection } from './DashboardSettingsSection';
+import { RoundSettingsSection } from './RoundSettingsSection';
 
 type SectionKey =
   | 'pricing'
@@ -34,6 +35,7 @@ type SectionKey =
   | 'thankyou'
   | 'email-content'
   | 'gift-cards'
+  | 'rounds'
   | 'dashboard';
 
 const SECTIONS: { key: SectionKey; label: string }[] = [
@@ -46,6 +48,7 @@ const SECTIONS: { key: SectionKey; label: string }[] = [
   { key: 'thankyou', label: 'דף תודה' },
   { key: 'email-content', label: 'תוכן אימייל' },
   { key: 'gift-cards', label: 'כרטיסיות מתנה' },
+  { key: 'rounds', label: 'סבבים' },
   { key: 'dashboard', label: 'דשבורד' },
 ];
 
@@ -181,6 +184,7 @@ export function Settings() {
         )}
         {/* Self-contained: loads + saves dashboard_settings on its own, so it
             doesn't take the card-settings `loaded`/`onSaved`/`reload` props. */}
+        {active === 'rounds' && <RoundSettingsSection />}
         {active === 'dashboard' && <DashboardSettingsSection />}
       </div>
     </div>
