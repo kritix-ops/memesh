@@ -2,6 +2,7 @@ import { db, expireHolds, expireWaitlistClaims, promoteWaitlist } from '@memesh/
 import { timingSafeEqual } from 'node:crypto';
 import type { FastifyPluginAsync } from 'fastify';
 import { env } from '../config.js';
+import { fireWaitlistOffer } from '../lib/waitlist-notify.js';
 
 // Vercel Cron hits this to flip expired holds (held → expired) past their TTL
 // (super-brief §3.3), then drive the waitlist (§8): every hold that expired
@@ -48,7 +49,10 @@ export const cronRoundsHoldSweepRoutes: FastifyPluginAsync = async (fastify) => 
       for (const roundInstanceId of roundsToPromote) {
         try {
           const res = await promoteWaitlist(db, roundInstanceId);
-          if (res.promoted) promoted += 1;
+          if (res.promoted) {
+            promoted += 1;
+            await fireWaitlistOffer(res.promoted, log);
+          }
         } catch (err) {
           log.error({ err, roundInstanceId }, '[cron hold-sweep] promote failed (non-fatal)');
         }
