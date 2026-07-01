@@ -45,3 +45,12 @@ export const swapRoundBooking = (
     body: { bookingId, targetRoundInstanceId },
     audience: 'customer',
   });
+
+export const cancelRoundBooking = (
+  bookingId: string,
+): Promise<ApiResult<{ ok: true; refunded: boolean; refundAmountIls: number }>> =>
+  apiRequest('/rounds/cancel', {
+    method: 'POST',
+    body: { bookingId },
+    audience: 'customer',
+  });
