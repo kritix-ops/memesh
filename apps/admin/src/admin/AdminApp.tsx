@@ -64,6 +64,7 @@ import { EditCardModal, type EditCardSubmit } from './EditCardModal';
 import { LiveRoundsDashboard } from './LiveRoundsDashboard';
 import { ReassignCardModal } from './ReassignCardModal';
 import { Reports } from './reports/Reports';
+import { Rounds } from './Rounds';
 import { Settings } from './settings/Settings';
 
 const ORANGE = '#ffa983';
@@ -106,11 +107,12 @@ const ghostBtn: CSSProperties = {
   cursor: 'pointer',
 };
 
-type View = 'dashboard' | 'customers' | 'cards' | 'staff' | 'reports' | 'settings';
+type View = 'dashboard' | 'rounds' | 'customers' | 'cards' | 'staff' | 'reports' | 'settings';
 // `adminOnly` items are filtered out of the nav for managers (and any other
 // non-admin role). The server enforces the same gate; this is UX only.
 const NAV: { key: View; label: string; adminOnly?: boolean }[] = [
   { key: 'dashboard', label: 'לוח בקרה' },
+  { key: 'rounds', label: 'סבבים', adminOnly: true },
   { key: 'customers', label: 'ניהול לקוחות' },
   { key: 'cards', label: 'ניהול כרטיסיות' },
   { key: 'staff', label: 'ניהול צוות' },
@@ -250,6 +252,7 @@ export function AdminApp() {
 
       <div style={{ flex: 1, minWidth: 0 }}>
         {view === 'dashboard' && <Dashboard />}
+        {view === 'rounds' && <Rounds />}
         {view === 'customers' && <Customers />}
         {view === 'cards' && <Cards />}
         {view === 'staff' && <Staff />}
