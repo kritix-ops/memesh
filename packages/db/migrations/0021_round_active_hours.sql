@@ -1,0 +1,2 @@
+ALTER TABLE "round_settings" ADD COLUMN "active_hours_start" smallint DEFAULT 8 NOT NULL;--> statement-breakpoint
+ALTER TABLE "round_settings" ADD COLUMN "active_hours_end" smallint DEFAULT 22 NOT NULL;

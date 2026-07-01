@@ -14,17 +14,22 @@ const CANCEL_WINDOW_MIN = 0;
 const CANCEL_WINDOW_MAX = 720; // 30 days
 const CLAIM_WINDOW_MIN = 1;
 const CLAIM_WINDOW_MAX = 1440; // 24h
+const ACTIVE_HOUR_MIN = 0;
+const ACTIVE_HOUR_MAX = 23;
 
 export type UpdateRoundSettingsInput = {
   holdTtlMinutes?: number;
   cancellationWindowHours?: number;
   claimWindowMinutes?: number;
+  activeHoursStart?: number;
+  activeHoursEnd?: number;
 };
 
 export type RoundSettingsValidationError =
   | { code: 'hold_ttl_out_of_range'; min: number; max: number }
   | { code: 'cancellation_window_out_of_range'; min: number; max: number }
-  | { code: 'claim_window_out_of_range'; min: number; max: number };
+  | { code: 'claim_window_out_of_range'; min: number; max: number }
+  | { code: 'active_hours_out_of_range'; min: number; max: number };
 
 /** Read the singleton row, self-healing the seed if a misconfigured DB lost it. */
 export const getRoundSettings = async (db: AnyPgDatabase): Promise<RoundSettingsRow> => {
@@ -67,6 +72,11 @@ export const validateRoundSettingsPatch = (
       return { code: 'claim_window_out_of_range', min: CLAIM_WINDOW_MIN, max: CLAIM_WINDOW_MAX };
     }
   }
+  for (const h of [patch.activeHoursStart, patch.activeHoursEnd]) {
+    if (h !== undefined && (!Number.isInteger(h) || h < ACTIVE_HOUR_MIN || h > ACTIVE_HOUR_MAX)) {
+      return { code: 'active_hours_out_of_range', min: ACTIVE_HOUR_MIN, max: ACTIVE_HOUR_MAX };
+    }
+  }
   return null;
 };
 
@@ -100,6 +110,14 @@ export const updateRoundSettings = async (
   if (patch.claimWindowMinutes !== undefined && patch.claimWindowMinutes !== current.claimWindowMinutes) {
     diff.claimWindowMinutes = [current.claimWindowMinutes, patch.claimWindowMinutes];
     next.claimWindowMinutes = patch.claimWindowMinutes;
+  }
+  if (patch.activeHoursStart !== undefined && patch.activeHoursStart !== current.activeHoursStart) {
+    diff.activeHoursStart = [current.activeHoursStart, patch.activeHoursStart];
+    next.activeHoursStart = patch.activeHoursStart;
+  }
+  if (patch.activeHoursEnd !== undefined && patch.activeHoursEnd !== current.activeHoursEnd) {
+    diff.activeHoursEnd = [current.activeHoursEnd, patch.activeHoursEnd];
+    next.activeHoursEnd = patch.activeHoursEnd;
   }
 
   if (Object.keys(diff).length === 0) return { ok: true, row: current, diff: {} };

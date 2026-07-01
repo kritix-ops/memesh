@@ -12,6 +12,7 @@
 import { and, count, eq, sql } from 'drizzle-orm';
 import type { PgDatabase } from 'drizzle-orm/pg-core';
 import { signBookingToken, type KeyResolver } from '@memesh/qr-engine';
+import { markWaitlistClaimed } from './rounds-waitlist';
 import { bookings, punchCardEntries, punchCards, roundInstances } from './schema/index';
 
 type AnyPgDatabase = PgDatabase<any, any, any>;
@@ -129,6 +130,9 @@ export const bookRoundWithPunch = async (
       .update(punchCards)
       .set({ usedEntries: nextUsed, isActive: !exhausted, updatedAt: now })
       .where(eq(punchCards.id, cardRow.id));
+
+    // If this customer was on the waitlist for this round, close their offer.
+    await markWaitlistClaimed(tx, input.roundInstanceId, input.customerId, now);
 
     return {
       ok: true as const,

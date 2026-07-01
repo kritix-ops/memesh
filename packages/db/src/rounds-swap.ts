@@ -8,6 +8,7 @@ import { and, count, eq, sql } from 'drizzle-orm';
 import type { PgDatabase } from 'drizzle-orm/pg-core';
 import { signBookingToken, type KeyResolver } from '@memesh/qr-engine';
 import { isBeforeRoundStart } from './round-time';
+import { markWaitlistClaimed } from './rounds-waitlist';
 import { bookings, roundInstances, rounds } from './schema/index';
 
 type AnyPgDatabase = PgDatabase<any, any, any>;
@@ -19,7 +20,7 @@ export type SwapBookingInput = {
 };
 
 export type SwapBookingResult =
-  | { ok: true; bookingId: string; barcodeToken: string; barcodeVersion: number }
+  | { ok: true; bookingId: string; barcodeToken: string; barcodeVersion: number; vacatedRoundInstanceId: string }
   | {
       ok: false;
       error:
@@ -105,7 +106,15 @@ export const swapBooking = async (
       })
       .where(eq(bookings.id, b.id));
 
-    // Waitlist promotion on the vacated instance lands with the waitlist PR.
-    return { ok: true as const, bookingId: b.id, barcodeToken: token, barcodeVersion: nextVersion };
+    // Swapping into the target closes any waitlist offer this customer held for
+    // it. The route promotes the vacated round's waitlist after the tx commits.
+    await markWaitlistClaimed(tx, input.targetRoundInstanceId, b.customerId, now);
+    return {
+      ok: true as const,
+      bookingId: b.id,
+      barcodeToken: token,
+      barcodeVersion: nextVersion,
+      vacatedRoundInstanceId: b.roundInstanceId,
+    };
   });
 };
