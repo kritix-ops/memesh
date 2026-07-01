@@ -1,15 +1,21 @@
 import { timingSafeEqual } from 'node:crypto';
 import {
+  anyActiveRounds,
   bookRoundWithPunch,
   cancelBooking,
+  confirmCompanionUpgrade,
   createHold,
   db,
+  getCardSettings,
+  getCustomerById,
   joinWaitlist,
   leaveWaitlist,
   listCustomerRoundBookings,
   listCustomerWaitlist,
   mintBooking,
+  prepareCompanionCheckout,
   promoteWaitlist,
+  recordCompanionOrder,
   releaseHold,
   resolveOrCreateCustomerFromWc,
   roundAvailabilityForDate,
@@ -38,6 +44,7 @@ const holdSchema = z.object({
 });
 
 const releaseSchema = z.object({ holdId: z.string().uuid() });
+const companionCheckoutSchema = z.object({ bookingId: z.string().uuid() });
 const devPaySchema = z.object({ holdId: z.string().uuid() });
 const swapSchema = z.object({
   bookingId: z.string().uuid(),
@@ -123,11 +130,15 @@ export const roundsBookingRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(400).send({ error: 'invalid_date' });
       }
       const rows = await roundAvailabilityForDate(db, date);
+      const settings = await getCardSettings(db);
       request.log.info({ date, rounds: rows.length }, '[rounds availability]');
       // Public shape: enough to render the picker, nothing internal (no
-      // per-round revenue, no held/booking internals).
+      // per-round revenue, no held/booking internals). companionPriceIls is
+      // public pricing (it's on the storefront anyway) so pickers show the
+      // real settings price instead of a hardcoded number.
       return {
         date,
+        companionPriceIls: settings.roundAdditionalCompanionPriceIls,
         rounds: rows.map((r) => ({
           roundInstanceId: r.roundInstanceId,
           label: r.label,
@@ -138,6 +149,20 @@ export const roundsBookingRoutes: FastifyPluginAsync = async (fastify) => {
           isClosed: r.isClosed,
         })),
       };
+    },
+  );
+
+  // Is the rounds system in use at all? The WP product-page picker calls this
+  // (server-side, cached in a transient) to decide whether choosing a round is
+  // mandatory: no active rounds → entry tickets sell as plain products
+  // (Yanay 2026-07-02). Public + rate-limited like availability.
+  fastify.get(
+    '/rounds/enabled',
+    { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } },
+    async (request) => {
+      const enabled = await anyActiveRounds(db);
+      request.log.info({ enabled }, '[rounds enabled]');
+      return { enabled };
     },
   );
 
@@ -332,6 +357,108 @@ export const roundsBookingRoutes: FastifyPluginAsync = async (fastify) => {
       remaining: result.remaining,
     };
   });
+
+  // Start (or resume) the paid-extra-companion checkout for a punch booking
+  // (plan 2026-07-02-punch-companion-upsell). Creates a pending WC order with
+  // a fee line and returns its order-pay URL; the paid-order webhook confirms
+  // the companion. Companions never consume capacity, so there is no hold.
+  // Idempotent-ish: a pending order is reused, a paid one short-circuits.
+  fastify.post(
+    '/rounds/companion/checkout',
+    { preHandler: requireCustomer, config: { rateLimit: { max: 15, timeWindow: '1 minute' } } },
+    async (request, reply) => {
+      const customerId = request.customer?.id;
+      if (!customerId) return reply.code(401).send({ error: 'unauthorized' });
+      const parsed = companionCheckoutSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.code(400).send({ error: 'invalid_body', issues: parsed.error.issues });
+      }
+      const bookingId = parsed.data.bookingId;
+
+      const prep = await prepareCompanionCheckout(db, { bookingId, customerId });
+      if (!prep.ok) {
+        const code =
+          prep.error === 'not_found' ? 404 : prep.error === 'forbidden' ? 403 : 409;
+        request.log.info({ bookingId, customerId, error: prep.error }, '[rounds companion checkout] rejected');
+        return reply.code(code).send({ error: prep.error });
+      }
+
+      // Free per settings (price 0) — no order, confirm on the spot.
+      if (prep.priceIls <= 0) {
+        const res = await confirmCompanionUpgrade(db, { bookingId, wcOrderId: `free-${bookingId}` });
+        if (!res.ok) return reply.code(409).send({ error: res.error });
+        request.log.info({ bookingId, customerId }, '[rounds companion checkout] free — confirmed inline');
+        return { confirmed: true, priceIls: 0 };
+      }
+
+      if (!wcClient || !env.WC_API_URL) {
+        request.log.error({ bookingId }, '[rounds companion checkout] WC not configured');
+        return reply.code(503).send({ error: 'wc_not_configured' });
+      }
+      const siteBase = env.WC_API_URL.replace(/\/wp-json\/.*$/, '');
+      const payUrlFor = (orderId: number | string, orderKey: string): string =>
+        `${siteBase}/checkout/order-pay/${orderId}/?pay_for_order=true&key=${encodeURIComponent(orderKey)}`;
+
+      // Retry path: a previous checkout already created an order. Reuse it
+      // while it can still be paid; short-circuit when it's already paid; fall
+      // through to a fresh order when it was cancelled/deleted in WC.
+      if (prep.booking.wcOrderId) {
+        try {
+          const existing = await wcClient.getOrder(prep.booking.wcOrderId);
+          if (existing.status === 'processing' || existing.status === 'completed') {
+            request.log.info(
+              { bookingId, wcOrderId: existing.id },
+              '[rounds companion checkout] already paid — webhook confirms',
+            );
+            return { alreadyPaid: true, wcOrderId: existing.id };
+          }
+          if (existing.status === 'pending' || existing.status === 'on-hold' || existing.status === 'failed') {
+            request.log.info(
+              { bookingId, wcOrderId: existing.id, status: existing.status },
+              '[rounds companion checkout] reusing pending order',
+            );
+            return { payUrl: payUrlFor(existing.id, existing.orderKey), wcOrderId: existing.id, priceIls: prep.priceIls };
+          }
+          // cancelled / refunded / trash → create a fresh order below.
+        } catch (err) {
+          request.log.warn(
+            { err, bookingId, wcOrderId: prep.booking.wcOrderId },
+            '[rounds companion checkout] existing order fetch failed — creating fresh',
+          );
+        }
+      }
+
+      const customer = await getCustomerById(db, customerId);
+      if (!customer) return reply.code(401).send({ error: 'unauthorized' });
+      let order;
+      try {
+        order = await wcClient.createOrder({
+          billing: {
+            first_name: customer.firstName,
+            last_name: customer.lastName ?? '',
+            phone: customer.phone,
+            ...(customer.email ? { email: customer.email } : {}),
+          },
+          fee_lines: [
+            {
+              name: `מלווה נוסף — ${prep.booking.roundLabel} ${prep.booking.date} ${prep.booking.startTime}`,
+              total: prep.priceIls.toFixed(2),
+            },
+          ],
+          meta_data: [{ key: '_memesh_companion_booking_id', value: bookingId }],
+        });
+      } catch (err) {
+        request.log.error({ err, bookingId }, '[rounds companion checkout] WC order create failed');
+        return reply.code(502).send({ error: 'wc_order_create_failed' });
+      }
+      await recordCompanionOrder(db, { bookingId, wcOrderId: String(order.id) });
+      request.log.info(
+        { bookingId, customerId, wcOrderId: order.id, priceIls: prep.priceIls },
+        '[rounds companion checkout] order created',
+      );
+      return { payUrl: payUrlFor(order.id, order.orderKey), wcOrderId: order.id, priceIls: prep.priceIls };
+    },
+  );
 
   // Cancel a confirmed booking with an auto-refund (super-brief §6.2).
   // Customer-gated + owner-checked. The DB helper releases the seat only after

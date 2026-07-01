@@ -164,6 +164,7 @@ export const webhooksWcRoutes: FastifyPluginAsync = async (fastify) => {
               orderId: roundResult.orderId,
               minted: roundResult.minted.length,
               failed: roundResult.failed.length,
+              companion: roundResult.companion,
             },
             '[webhook wc rounds] processed',
           );
@@ -171,6 +172,12 @@ export const webhooksWcRoutes: FastifyPluginAsync = async (fastify) => {
             log.warn(
               { deliveryId, orderId: roundResult.orderId, failed: roundResult.failed },
               '[webhook wc rounds] mint_failed — paid seats without a booking, refund TODO',
+            );
+          }
+          if (roundResult.companion && !roundResult.companion.ok) {
+            log.warn(
+              { deliveryId, orderId: roundResult.orderId, companion: roundResult.companion },
+              '[webhook wc companion] upgrade_failed — paid companion without a booking, operator refund',
             );
           }
           // TODO (booking-notify PR): fire the barcode email/SMS for

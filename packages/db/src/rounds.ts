@@ -255,6 +255,21 @@ export const roundAvailabilityForDate = async (
   return result;
 };
 
+/**
+ * Is the rounds system in use at all — any active round template? The WP
+ * product-page picker uses this to decide whether choosing a round is
+ * mandatory (Yanay 2026-07-02: with no rounds configured, entry tickets sell
+ * as plain products; once rounds exist, picking one is required).
+ */
+export const anyActiveRounds = async (db: AnyPgDatabase): Promise<boolean> => {
+  const rows = await db
+    .select({ id: rounds.id })
+    .from(rounds)
+    .where(eq(rounds.isActive, true))
+    .limit(1);
+  return rows.length > 0;
+};
+
 // ---------------------------------------------------------------------------
 // Customer personal area — my round bookings (super-brief §11.3)
 // ---------------------------------------------------------------------------
@@ -276,6 +291,12 @@ export interface CustomerRoundBooking {
   source: 'paid' | 'punchcard' | 'gift' | 'manual';
   /** The scannable barcode. Always present for confirmed/used bookings. */
   barcodeToken: string | null;
+  /**
+   * A companion checkout was started but not paid yet (punchcard booking with
+   * a stamped wc_order_id and additional_companions still 0). The UI shows a
+   * "complete payment" retry.
+   */
+  companionPending: boolean;
 }
 
 /**
@@ -302,6 +323,7 @@ export const listCustomerRoundBookings = async (
       additionalCompanions: bookings.additionalCompanions,
       source: bookings.source,
       barcodeToken: bookings.barcodeToken,
+      wcOrderId: bookings.wcOrderId,
     })
     .from(bookings)
     .innerJoin(roundInstances, eq(roundInstances.id, bookings.roundInstanceId))
@@ -327,6 +349,8 @@ export const listCustomerRoundBookings = async (
       additionalCompanions: r.additionalCompanions,
       source: r.source,
       barcodeToken: r.barcodeToken,
+      companionPending:
+        r.source === 'punchcard' && r.wcOrderId !== null && r.additionalCompanions === 0,
     }))
     .sort((a, b) => `${a.date} ${a.startTime}`.localeCompare(`${b.date} ${b.startTime}`));
 };
