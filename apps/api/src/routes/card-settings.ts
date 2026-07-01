@@ -230,6 +230,11 @@ const validationStatus: Record<CardSettingsValidationError, number> = {
   gift_buyer_claim_email_intro_length: 400,
   gift_buyer_claim_email_intro_unknown_placeholder: 400,
   gift_buyer_claim_email_footer_note_length: 400,
+  // Round entry pricing (added to the union in the round-pricing work but never
+  // mapped here) — out-of-range validations, same 400 as every other *_out_of_range.
+  round_child_baby_price_out_of_range: 400,
+  round_child_over_walking_price_out_of_range: 400,
+  round_additional_companion_price_out_of_range: 400,
   no_changes: 409,
 };
 
