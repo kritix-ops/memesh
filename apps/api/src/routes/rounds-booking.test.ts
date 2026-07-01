@@ -108,6 +108,31 @@ test('POST /rounds/hold/release without a customer token returns 401', async () 
   assert.equal(res.statusCode, 401);
 });
 
+// --- POST /rounds/dev-pay (dev-only mint stub) ------------------------------
+
+test('POST /rounds/dev-pay without a customer token returns 401', async () => {
+  const res = await app.inject({
+    method: 'POST',
+    url: '/rounds/dev-pay',
+    payload: { holdId: '00000000-0000-0000-0000-0000000000d1' },
+  });
+  assert.equal(res.statusCode, 401);
+});
+
+test('POST /rounds/dev-pay with a valid body reaches the mint (enabled outside prod)', async () => {
+  const res = await app.inject({
+    method: 'POST',
+    url: '/rounds/dev-pay',
+    headers: { authorization: `Bearer ${await customerToken()}` },
+    payload: { holdId: '00000000-0000-0000-0000-0000000000d1' },
+  });
+  // NODE_ENV is 'test' so the stub is enabled (not 404-disabled). No such hold
+  // → 404 on a real DB, or 500 on the DB-less box; either way it passed the
+  // customer gate + body validation rather than 401.
+  assert.notEqual(res.statusCode, 401);
+  assert.ok([403, 404, 409, 500].includes(res.statusCode), `got ${res.statusCode}`);
+});
+
 // --- cron sweeper -----------------------------------------------------------
 
 test('GET /cron/rounds-hold-sweep without the cron secret returns 401', async () => {

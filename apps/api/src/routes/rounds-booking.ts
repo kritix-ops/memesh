@@ -1,7 +1,9 @@
-import { createHold, db, releaseHold, roundAvailabilityForDate } from '@memesh/db';
+import { createHold, db, mintBooking, releaseHold, roundAvailabilityForDate } from '@memesh/db';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
+import { env } from '../config.js';
 import { requireCustomer } from '../lib/customer-guard.js';
+import { envKeyResolver } from '../qr.js';
 
 // Customer-facing rounds flow. Availability is PUBLIC — the WordPress round
 // picker reads it before the customer logs in — and rate-limited so it can't be
@@ -17,6 +19,7 @@ const holdSchema = z.object({
 });
 
 const releaseSchema = z.object({ holdId: z.string().uuid() });
+const devPaySchema = z.object({ holdId: z.string().uuid() });
 
 export const roundsBookingRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get(
@@ -94,5 +97,41 @@ export const roundsBookingRoutes: FastifyPluginAsync = async (fastify) => {
     }
     request.log.info({ holdId: parsed.data.holdId, customerId }, '[rounds hold] released');
     return { ok: true };
+  });
+
+  // Dev-only "pay now" — simulates a completed WooCommerce payment for a held
+  // seat so buy → booking can be exercised end to end before the WC wiring
+  // lands. DISABLED in production (404) so it can never mint a free booking
+  // there; owner-checked so a customer can only pay for their own hold.
+  fastify.post('/rounds/dev-pay', { preHandler: requireCustomer }, async (request, reply) => {
+    if (env.NODE_ENV === 'production') {
+      return reply.code(404).send({ error: 'not_found' });
+    }
+    const customerId = request.customer?.id;
+    if (!customerId) return reply.code(401).send({ error: 'unauthorized' });
+    const parsed = devPaySchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'invalid_body', issues: parsed.error.issues });
+    }
+    const result = await mintBooking(
+      db,
+      {
+        holdId: parsed.data.holdId,
+        wcOrderId: `dev-${parsed.data.holdId}`,
+        source: 'paid',
+        expectedCustomerId: customerId,
+      },
+      envKeyResolver,
+    );
+    if (!result.ok) {
+      const code = result.error === 'not_found' ? 404 : result.error === 'forbidden' ? 403 : 409;
+      return reply.code(code).send({ error: result.error });
+    }
+    request.log.info({ bookingId: result.booking.bookingId, customerId }, '[rounds dev-pay] minted');
+    return {
+      bookingId: result.booking.bookingId,
+      barcodeToken: result.booking.barcodeToken,
+      idempotentReplay: result.idempotentReplay,
+    };
   });
 };
