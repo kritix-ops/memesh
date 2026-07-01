@@ -61,14 +61,20 @@ export function EntriesReport() {
     let cancelled = false;
     setLoading(true);
     setError(null);
+    console.info('[web admin reports] entries fetch', { filters });
     (async () => {
       const res = await fetchEntriesReport(filters);
       if (cancelled) return;
       setLoading(false);
       if (res.ok) {
+        console.info('[web admin reports] entries fetch ok', {
+          rows: res.data.rows.length,
+          total: res.data.total,
+        });
         setRows(res.data.rows);
         setTotal(res.data.total);
       } else {
+        console.warn('[web admin reports] entries fetch failed', { error: res.error });
         setError(res.error);
       }
     })();

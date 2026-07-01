@@ -160,3 +160,13 @@ export const fromDateInput = (s: string): Date | null => {
   if (!m) return null;
   return startOfDay(new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
 };
+
+/**
+ * Same parse, but to the END of that local day (23:59:59.999). Range "to"
+ * inputs must use this — an inclusive end date parsed to 00:00 would silently
+ * exclude everything that happened during the selected last day.
+ */
+export const fromDateInputEnd = (s: string): Date | null => {
+  const d = fromDateInput(s);
+  return d ? endOfDay(d) : null;
+};

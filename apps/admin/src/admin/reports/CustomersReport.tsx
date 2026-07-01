@@ -5,6 +5,7 @@ import {
   type CustomersReportRow,
 } from '../../lib/api/reports';
 import { downloadCsv, presetRange, printReport, toCsv } from '../../lib/export';
+import { parseIntFilter } from './report-filter-logic';
 import {
   DateRangeField,
   EmptyState,
@@ -54,8 +55,8 @@ export function CustomersReport() {
     if (source) f.source = source;
     if (marketing) f.marketingConsent = marketing === 'true';
     if (hasActive) f.hasActiveCard = hasActive === 'true';
-    const dd = Number(dormantDays);
-    if (Number.isInteger(dd) && dd > 0) f.dormantSinceDays = dd;
+    const dd = parseIntFilter(dormantDays, 1, 3650);
+    if (dd !== undefined) f.dormantSinceDays = dd;
     return f;
   }, [q, registered, source, marketing, hasActive, dormantDays, sort, sortDir]);
 
@@ -63,12 +64,18 @@ export function CustomersReport() {
     let cancelled = false;
     setLoading(true);
     setError(null);
+    console.info('[web admin reports] customers fetch', { filters });
     (async () => {
       const res = await fetchCustomersReport(filters);
       if (cancelled) return;
       setLoading(false);
-      if (res.ok) setRows(res.data.rows);
-      else setError(res.error);
+      if (res.ok) {
+        console.info('[web admin reports] customers fetch ok', { rows: res.data.rows.length });
+        setRows(res.data.rows);
+      } else {
+        console.warn('[web admin reports] customers fetch failed', { error: res.error });
+        setError(res.error);
+      }
     })();
     return () => {
       cancelled = true;

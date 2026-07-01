@@ -1,6 +1,7 @@
 import { type CSSProperties, type ReactNode, useEffect, useState } from 'react';
 import {
   fromDateInput,
+  fromDateInputEnd,
   PRESET_LABELS,
   presetRange,
   toDateInput,
@@ -254,7 +255,7 @@ export function DateRangeField({
             onChange={(e) =>
               onChange({
                 preset: 'custom',
-                range: { ...value.range, to: fromDateInput(e.target.value) },
+                range: { ...value.range, to: fromDateInputEnd(e.target.value) },
               })
             }
             style={inputStyle}

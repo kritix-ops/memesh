@@ -56,6 +56,37 @@ test('dashboardStats counts recent entries, cards, and customers', async () => {
   assert.equal(stats.expiringIn30d, 0); // fresh cards expire in a year
 });
 
+test('dashboardStats excludes refunded entries and cancelled cards', async () => {
+  const db = await freshDb();
+  const cust = await createCustomer(db, { firstName: 'Ref', lastName: 'Und', phone: phone() });
+  const card = await createPunchCard(db, resolver, { customerId: cust.id, now: NOW });
+  const kept = await punchCard(db, { punchCardId: card.id, method: 'serial', now: NOW });
+  const refunded = await punchCard(db, { punchCardId: card.id, method: 'serial', now: NOW });
+  if (!kept.ok || !refunded.ok) return;
+
+  const adminId = crypto.randomUUID();
+  await db.execute(
+    sql`INSERT INTO staff (id, first_name, last_name, phone, role, is_active)
+        VALUES (${adminId}, 'A', 'D', ${phone()}, 'admin', true)`,
+  );
+  await refundEntry(db, {
+    entryId: refunded.entryId,
+    refundedBy: adminId,
+    approvedBy: adminId,
+    reason: 'בדיקת החזר',
+    now: NOW,
+  });
+
+  // A cancelled card sold this month is a return, not a sale.
+  const cancelled = await createPunchCard(db, resolver, { customerId: cust.id, now: NOW });
+  await cancelCard(db, { cardId: cancelled.id, reason: 'בדיקת ביטול', now: NOW });
+
+  const stats = await dashboardStats(db, NOW);
+  assert.equal(stats.entriesLast24h, 1); // the refunded punch no longer counts
+  assert.equal(stats.entriesLast30d, 1);
+  assert.equal(stats.cardsSoldLast30d, 1); // card + cancelled card → only the live one
+});
+
 test('customerDetail returns the customer with cards and entries', async () => {
   const db = await freshDb();
   const cust = await createCustomer(db, { firstName: 'Tamar', lastName: 'Levi', phone: phone() });
@@ -153,6 +184,56 @@ test('customersReport hasActiveCard filter excludes never-bought and exhausted-o
   assert.equal(none[0]?.firstName, 'No');
 });
 
+test('customersReport hasActiveCard treats a date-expired card as inactive', async () => {
+  const db = await freshDb();
+  const expiredOnly = await createCustomer(db, { firstName: 'Ex', lastName: 'Pired', phone: phone() });
+  // Sold 10 days ago with 1-day validity → expired 9 days ago; is_active
+  // stays true in the row, so only an expiry-aware filter catches it.
+  await createPunchCard(db, resolver, {
+    customerId: expiredOnly.id,
+    validityDays: 1,
+    now: daysAgo(10),
+  });
+  const live = await createCustomer(db, { firstName: 'Li', lastName: 'Ve', phone: phone() });
+  await createPunchCard(db, resolver, { customerId: live.id, now: NOW });
+
+  const withActive = await customersReport(db, { hasActiveCard: true }, NOW);
+  assert.deepEqual(withActive.map((r) => r.id), [live.id]);
+  const withoutActive = await customersReport(db, { hasActiveCard: false }, NOW);
+  assert.deepEqual(withoutActive.map((r) => r.id), [expiredOnly.id]);
+});
+
+test('customersReport dormantSinceDays filters before the row limit', async () => {
+  const db = await freshDb();
+  // Dormant customer registered FIRST — under createdAt desc it is the last
+  // row fetched, so a JS post-filter after LIMIT 1 would have missed it.
+  const dorm = await createCustomer(db, { firstName: 'Dor', lastName: 'Mant', phone: phone() });
+  const dormCard = await createPunchCard(db, resolver, { customerId: dorm.id, now: daysAgo(60) });
+  await punchCard(db, { punchCardId: dormCard.id, method: 'serial', now: daysAgo(45) });
+  const fresh = await createCustomer(db, { firstName: 'Fre', lastName: 'Sh', phone: phone() });
+  const freshCard = await createPunchCard(db, resolver, { customerId: fresh.id, now: NOW });
+  await punchCard(db, { punchCardId: freshCard.id, method: 'serial', now: daysAgo(2) });
+
+  const rows = await customersReport(db, { dormantSinceDays: 30, limit: 1 }, NOW);
+  assert.deepEqual(rows.map((r) => r.id), [dorm.id]);
+});
+
+test('customersReport sorts by lastVisit in SQL, never-visited as oldest', async () => {
+  const db = await freshDb();
+  const recent = await createCustomer(db, { firstName: 'Re', lastName: 'Cent', phone: phone() });
+  const rc = await createPunchCard(db, resolver, { customerId: recent.id, now: NOW });
+  await punchCard(db, { punchCardId: rc.id, method: 'serial', now: daysAgo(1) });
+  const older = await createCustomer(db, { firstName: 'Ol', lastName: 'Der', phone: phone() });
+  const oc = await createPunchCard(db, resolver, { customerId: older.id, now: NOW });
+  await punchCard(db, { punchCardId: oc.id, method: 'serial', now: daysAgo(5) });
+  const never = await createCustomer(db, { firstName: 'Ne', lastName: 'Ver', phone: phone() });
+
+  const desc = await customersReport(db, { sort: 'lastVisit', sortDir: 'desc' }, NOW);
+  assert.deepEqual(desc.map((r) => r.id), [recent.id, older.id, never.id]);
+  const asc = await customersReport(db, { sort: 'lastVisit', sortDir: 'asc' }, NOW);
+  assert.deepEqual(asc.map((r) => r.id), [never.id, older.id, recent.id]);
+});
+
 // ---------------------------------------------------------------------------
 // cardsReport
 // ---------------------------------------------------------------------------
@@ -190,6 +271,40 @@ test('cardsReport usageMin/Max filter narrows by percentage', async () => {
 
   const low = await cardsReport(db, { usageMaxPct: 0 }, NOW);
   assert.equal(low.length, 1);
+});
+
+test('cardsReport usage filter applies before the row limit', async () => {
+  const db = await freshDb();
+  const cust = await createCustomer(db, { firstName: 'Li', lastName: 'Mit', phone: phone() });
+  // The matching card is the OLDEST — under createdAt desc it sits past a
+  // LIMIT 2 window, so a JS post-filter after the limit would have dropped it.
+  const halfUsed = await createPunchCard(db, resolver, { customerId: cust.id, now: daysAgo(3) });
+  for (let i = 0; i < 6; i += 1) {
+    await punchCard(db, { punchCardId: halfUsed.id, method: 'serial', now: daysAgo(3) });
+  }
+  await createPunchCard(db, resolver, { customerId: cust.id, now: daysAgo(2) });
+  await createPunchCard(db, resolver, { customerId: cust.id, now: daysAgo(1) });
+
+  const rows = await cardsReport(db, { usageMinPct: 50, limit: 2 }, NOW);
+  assert.deepEqual(rows.map((r) => r.id), [halfUsed.id]);
+});
+
+test('cardsReport status buckets are expiry-aware', async () => {
+  const db = await freshDb();
+  const cust = await createCustomer(db, { firstName: 'Ti', lastName: 'Me', phone: phone() });
+  // Sold 10 days ago with 1-day validity → date-expired; is_active stays true.
+  const dateExpired = await createPunchCard(db, resolver, {
+    customerId: cust.id,
+    validityDays: 1,
+    now: daysAgo(10),
+  });
+  const fresh = await createPunchCard(db, resolver, { customerId: cust.id, now: NOW });
+
+  const active = await cardsReport(db, { status: 'active' }, NOW);
+  assert.deepEqual(active.map((r) => r.id), [fresh.id]);
+  const expired = await cardsReport(db, { status: 'expired' }, NOW);
+  assert.deepEqual(expired.map((r) => r.id), [dateExpired.id]);
+  assert.equal(expired[0]?.isActive, true); // row flag untouched — bucket derived from expires_at
 });
 
 // ---------------------------------------------------------------------------
@@ -273,6 +388,19 @@ test('revenueReport buckets cards-sold by month and uses current price', async (
   assert.equal(res.rows.length, 2); // May + June
   const may = res.rows.find((r) => r.period === '2026-05');
   assert.equal(may?.cardsSold, 2);
+});
+
+test('revenueReport buckets days by the venue clock (Asia/Jerusalem), not UTC', async () => {
+  const db = await freshDb();
+  const cust = await createCustomer(db, { firstName: 'Tz', lastName: 'Test', phone: phone() });
+  // 22:00 UTC on May 31 is already 01:00 June 1 in Israel (UTC+3 in summer).
+  await createPunchCard(db, resolver, {
+    customerId: cust.id,
+    now: new Date('2026-05-31T22:00:00.000Z'),
+  });
+
+  const res = await revenueReport(db, { groupBy: 'day' });
+  assert.deepEqual(res.rows.map((r) => r.period), ['2026-06-01']);
 });
 
 test('revenueReport excludes cancelled cards from totals', async () => {
@@ -398,6 +526,52 @@ test('cancellationsReport merges card cancellations and entry refunds, newest fi
   assert.equal(page.rows[1]?.reason, 'תשלום כפול');
   assert.equal(page.rows[1]?.entriesConsumed, 1);
   assert.equal(page.rows[1]?.method, 'serial');
+});
+
+test('cancellationsReport pages correctly across sources with SQL-bounded windows', async () => {
+  const db = await freshDb();
+  const cust = await createCustomer(db, { firstName: 'Pa', lastName: 'Ge', phone: phone() });
+  const adminId = crypto.randomUUID();
+  await db.execute(
+    sql`INSERT INTO staff (id, first_name, last_name, phone, role, is_active)
+        VALUES (${adminId}, 'A', 'D', ${phone()}, 'admin', true)`,
+  );
+
+  // Two entry refunds — the OLDEST events (6 and 5 days ago).
+  const punched = await createPunchCard(db, resolver, { customerId: cust.id, now: daysAgo(20) });
+  const p1 = await punchCard(db, { punchCardId: punched.id, method: 'serial', now: daysAgo(15) });
+  const p2 = await punchCard(db, { punchCardId: punched.id, method: 'serial', now: daysAgo(15) });
+  if (!p1.ok || !p2.ok) return;
+  await refundEntry(db, {
+    entryId: p1.entryId,
+    refundedBy: adminId,
+    approvedBy: adminId,
+    reason: 'החזר ראשון',
+    now: daysAgo(6),
+  });
+  await refundEntry(db, {
+    entryId: p2.entryId,
+    refundedBy: adminId,
+    approvedBy: adminId,
+    reason: 'החזר שני',
+    now: daysAgo(5),
+  });
+
+  // Four card cancellations — the NEWEST events (4..1 days ago).
+  for (let d = 4; d >= 1; d -= 1) {
+    const c = await createPunchCard(db, resolver, { customerId: cust.id, now: daysAgo(10) });
+    await cancelCard(db, { cardId: c.id, reason: `ביטול בדיקה ${d}`, now: daysAgo(d) });
+  }
+
+  // Page 3 (offset 4, limit 2) reaches past every card cancellation into the
+  // refunds — correct only when each source's SQL window covers offset+limit
+  // rows, and counts must reflect the FULL matching sets, not the windows.
+  const page = await cancellationsReport(db, { limit: 2, offset: 4 });
+  assert.equal(page.total, 6);
+  assert.equal(page.cardCount, 4);
+  assert.equal(page.entryCount, 2);
+  assert.deepEqual(page.rows.map((r) => r.kind), ['entry', 'entry']);
+  assert.deepEqual(page.rows.map((r) => r.reason), ['החזר שני', 'החזר ראשון']);
 });
 
 test('cancellationsReport kind filter restricts to one source', async () => {

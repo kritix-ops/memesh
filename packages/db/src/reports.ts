@@ -4,6 +4,8 @@ import {
   count,
   desc,
   eq,
+  exists,
+  gt,
   gte,
   ilike,
   inArray,
@@ -11,8 +13,10 @@ import {
   isNull,
   lt,
   lte,
+  notExists,
   or,
   sql,
+  type SQL,
 } from 'drizzle-orm';
 import { alias, type PgDatabase } from 'drizzle-orm/pg-core';
 import { getCustomerById } from './accounts';
@@ -38,11 +42,24 @@ const countRows = async (
   db: AnyPgDatabase,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   table: any,
-  where: ReturnType<typeof gte>,
+  where: SQL | undefined,
 ): Promise<number> => {
   const rows = await db.select({ n: count() }).from(table).where(where);
   return Number(rows[0]?.n ?? 0);
 };
+
+/**
+ * A card that is genuinely usable right now: flagged active AND not past its
+ * expiry date. `isActive` alone is not enough — nothing flips it when
+ * `expiresAt` passes (only exhaustion and cancellation do), so date-expired
+ * cards keep isActive=true in the row. Boundary matches the punch flow:
+ * expiresAt <= now is expired.
+ */
+const cardIsCurrentlyActive = (now: Date): SQL =>
+  and(
+    eq(punchCards.isActive, true),
+    or(isNull(punchCards.expiresAt), gt(punchCards.expiresAt, now)),
+  )!;
 
 export interface DashboardStats {
   entriesLast24h: number;
@@ -57,25 +74,17 @@ export const dashboardStats = async (
   db: AnyPgDatabase,
   now: Date = new Date(),
 ): Promise<DashboardStats> => {
-  const entriesLast24h = await countRows(
-    db,
-    punchCardEntries,
-    gte(punchCardEntries.punchedAt, daysAgo(now, 1)),
-  );
-  const entriesLast7d = await countRows(
-    db,
-    punchCardEntries,
-    gte(punchCardEntries.punchedAt, daysAgo(now, 7)),
-  );
-  const entriesLast30d = await countRows(
-    db,
-    punchCardEntries,
-    gte(punchCardEntries.punchedAt, daysAgo(now, 30)),
-  );
+  // Refunded entries are visits that were rolled back — they don't count.
+  const entriesSince = (from: Date) =>
+    and(gte(punchCardEntries.punchedAt, from), isNull(punchCardEntries.refundedAt));
+  const entriesLast24h = await countRows(db, punchCardEntries, entriesSince(daysAgo(now, 1)));
+  const entriesLast7d = await countRows(db, punchCardEntries, entriesSince(daysAgo(now, 7)));
+  const entriesLast30d = await countRows(db, punchCardEntries, entriesSince(daysAgo(now, 30)));
+  // Cancelled = refunded/returned, so not "sold" — same rule as revenueReport.
   const cardsSoldLast30d = await countRows(
     db,
     punchCards,
-    gte(punchCards.createdAt, daysAgo(now, 30)),
+    and(gte(punchCards.createdAt, daysAgo(now, 30)), isNull(punchCards.cancelledAt)),
   );
   const newCustomersLast7d = await countRows(
     db,
@@ -221,7 +230,8 @@ export interface CustomersReportRow {
  * Customers report. Builds a base customer query, then enriches each row
  * with active-card count and last-visit timestamp via subqueries. Filter
  * combinators are AND'd; q is a wide ILIKE across name + phone + number +
- * email.
+ * email. Every filter and sort runs in SQL, BEFORE the limit — a JS
+ * post-filter would silently drop matching customers past the fetch window.
  */
 export const customersReport = async (
   db: AnyPgDatabase,
@@ -247,17 +257,48 @@ export const customersReport = async (
   if (filters.source) conds.push(eq(customers.source, filters.source));
   if (filters.marketingConsent === true) conds.push(isNotNull(customers.marketingConsentAt));
   if (filters.marketingConsent === false) conds.push(isNull(customers.marketingConsentAt));
+  if (filters.hasActiveCard !== undefined) {
+    const activeCardForCustomer = db
+      .select({ one: sql`1` })
+      .from(punchCards)
+      .where(and(eq(punchCards.customerId, customers.id), cardIsCurrentlyActive(now)));
+    conds.push(
+      filters.hasActiveCard ? exists(activeCardForCustomer) : notExists(activeCardForCustomer),
+    );
+  }
+  if (filters.dormantSinceDays !== undefined) {
+    // Dormant = no (non-refunded card-holder) visit since the cutoff. This
+    // also catches customers with no cards / no entries at all.
+    const cutoff = daysAgo(now, filters.dormantSinceDays);
+    conds.push(
+      notExists(
+        db
+          .select({ one: sql`1` })
+          .from(punchCardEntries)
+          .innerJoin(punchCards, eq(punchCards.id, punchCardEntries.punchCardId))
+          .where(
+            and(
+              eq(punchCards.customerId, customers.id),
+              gte(punchCardEntries.punchedAt, cutoff),
+            ),
+          ),
+      ),
+    );
+  }
 
   const where = conds.length === 0 ? undefined : conds.length === 1 ? conds[0] : and(...conds);
 
-  // Sort SQL builder per column.
-  const sortCol =
-    filters.sort === 'customerNumber'
-      ? customers.customerNumber
-      : filters.sort === 'lastVisit'
-        ? customers.createdAt // last-visit sort handled in JS below since it's a subquery
-        : customers.createdAt;
-  const sortFn = filters.sortDir === 'asc' ? asc : desc;
+  // Sort SQL builder per column. lastVisit lives on the entries table, so it
+  // sorts via a correlated subquery; never-visited customers sort as oldest.
+  const lastVisitSql = sql`(select max(${punchCardEntries.punchedAt}) from ${punchCardEntries} inner join ${punchCards} on ${punchCards.id} = ${punchCardEntries.punchCardId} where ${punchCards.customerId} = ${customers.id})`;
+  const orderExpr =
+    filters.sort === 'lastVisit'
+      ? filters.sortDir === 'asc'
+        ? sql`${lastVisitSql} asc nulls first`
+        : sql`${lastVisitSql} desc nulls last`
+      : (filters.sortDir === 'asc' ? asc : desc)(
+          filters.sort === 'customerNumber' ? customers.customerNumber : customers.createdAt,
+        );
 
   let baseQuery = db
     .select({
@@ -274,7 +315,7 @@ export const customersReport = async (
     .from(customers)
     .$dynamic();
   if (where) baseQuery = baseQuery.where(where);
-  const baseRows = await baseQuery.orderBy(sortFn(sortCol)).limit(limit);
+  const baseRows = await baseQuery.orderBy(orderExpr).limit(limit);
 
   // Enrich each row with active-card count + last-visit. We do this in a
   // single follow-up query per metric, keyed by the customer ids we just
@@ -286,7 +327,7 @@ export const customersReport = async (
     .select({
       customerId: punchCards.customerId,
       total: sql<number>`cast(count(*) as int)`,
-      active: sql<number>`cast(count(case when ${punchCards.isActive} then 1 end) as int)`,
+      active: sql<number>`cast(count(case when ${cardIsCurrentlyActive(now)} then 1 end) as int)`,
     })
     .from(punchCards)
     .where(inArray(punchCards.customerId, ids))
@@ -306,7 +347,7 @@ export const customersReport = async (
     .groupBy(punchCards.customerId);
   const lastVisits = new Map(lastVisitRows.map((r) => [r.customerId, r.lastVisit]));
 
-  let enriched: CustomersReportRow[] = baseRows.map((r) => {
+  return baseRows.map((r) => {
     const cc = cardCounts.get(r.id) ?? { total: 0, active: 0 };
     return {
       ...r,
@@ -320,25 +361,6 @@ export const customersReport = async (
       totalCards: cc.total,
     };
   });
-
-  // Apply post-filters that need the enriched data.
-  if (filters.hasActiveCard === true) enriched = enriched.filter((r) => r.activeCards > 0);
-  if (filters.hasActiveCard === false) enriched = enriched.filter((r) => r.activeCards === 0);
-  if (filters.dormantSinceDays !== undefined) {
-    const cutoff = daysAgo(now, filters.dormantSinceDays).getTime();
-    enriched = enriched.filter((r) => !r.lastVisit || new Date(r.lastVisit).getTime() < cutoff);
-  }
-
-  // lastVisit sort happens here because it's not on the base table.
-  if (filters.sort === 'lastVisit') {
-    enriched.sort((a, b) => {
-      const av = a.lastVisit ? new Date(a.lastVisit).getTime() : 0;
-      const bv = b.lastVisit ? new Date(b.lastVisit).getTime() : 0;
-      return filters.sortDir === 'asc' ? av - bv : bv - av;
-    });
-  }
-
-  return enriched;
 };
 
 export interface CardsReportFilters {
@@ -394,11 +416,13 @@ export const cardsReport = async (
     );
     if (qC) conds.push(qC);
   }
-  if (filters.status === 'active') conds.push(eq(punchCards.isActive, true));
+  if (filters.status === 'active') conds.push(cardIsCurrentlyActive(now));
   if (filters.status === 'cancelled') conds.push(isNotNull(punchCards.cancelledAt));
   if (filters.status === 'expired') {
-    conds.push(eq(punchCards.isActive, false));
+    // Expired covers exhaustion (isActive flipped) AND date-expiry (isActive
+    // still true — nothing flips it when expiresAt passes).
     conds.push(isNull(punchCards.cancelledAt));
+    conds.push(or(eq(punchCards.isActive, false), lte(punchCards.expiresAt, now))!);
   }
   if (filters.source) conds.push(eq(punchCards.source, filters.source));
   if (filters.soldFrom) conds.push(gte(punchCards.createdAt, filters.soldFrom));
@@ -408,6 +432,12 @@ export const cardsReport = async (
     conds.push(gte(punchCards.expiresAt, now));
     conds.push(lt(punchCards.expiresAt, daysAhead(now, filters.expiringWithinDays)));
   }
+  // Usage % must filter in SQL, before the limit — a JS post-filter would
+  // silently drop matching cards past the fetch window. Mirrors the JS
+  // usagePct computation below (Math.round of used/total, 0-total guarded).
+  const usagePctSql = sql`case when ${punchCards.totalEntries} = 0 then 0 else round(${punchCards.usedEntries} * 100.0 / ${punchCards.totalEntries}) end`;
+  if (filters.usageMinPct !== undefined) conds.push(gte(usagePctSql, filters.usageMinPct));
+  if (filters.usageMaxPct !== undefined) conds.push(lte(usagePctSql, filters.usageMaxPct));
 
   const where = conds.length === 0 ? undefined : conds.length === 1 ? conds[0] : and(...conds);
 
@@ -444,7 +474,7 @@ export const cardsReport = async (
   if (where) query = query.where(where);
   const baseRows = await query.orderBy(sortFn(sortCol)).limit(limit);
 
-  let enriched: CardsReportRow[] = baseRows.map((r) => ({
+  return baseRows.map((r) => ({
     ...r,
     expiresAt: r.expiresAt instanceof Date ? r.expiresAt.toISOString() : (r.expiresAt as string | null),
     cancelledAt:
@@ -454,14 +484,6 @@ export const cardsReport = async (
     createdAt: r.createdAt instanceof Date ? r.createdAt.toISOString() : String(r.createdAt),
     usagePct: r.totalEntries === 0 ? 0 : Math.round((r.usedEntries / r.totalEntries) * 100),
   }));
-
-  if (filters.usageMinPct !== undefined) {
-    enriched = enriched.filter((r) => r.usagePct >= filters.usageMinPct!);
-  }
-  if (filters.usageMaxPct !== undefined) {
-    enriched = enriched.filter((r) => r.usagePct <= filters.usageMaxPct!);
-  }
-  return enriched;
 };
 
 export interface EntriesReportFilters {
@@ -628,13 +650,15 @@ export const revenueReport = async (
 
   const where = conds.length === 1 ? conds[0] : and(...conds);
 
-  // Bucket expression per groupBy.
+  // Bucket expression per groupBy. Buckets follow the venue clock
+  // (Asia/Jerusalem), not the DB server's — otherwise a late-night online
+  // sale lands on the previous day's row.
   const bucketSql =
     groupBy === 'day'
-      ? sql<string>`to_char(${punchCards.createdAt}, 'YYYY-MM-DD')`
+      ? sql<string>`to_char(${punchCards.createdAt} at time zone 'Asia/Jerusalem', 'YYYY-MM-DD')`
       : groupBy === 'week'
-        ? sql<string>`to_char(date_trunc('week', ${punchCards.createdAt}), 'IYYY-"W"IW')`
-        : sql<string>`to_char(${punchCards.createdAt}, 'YYYY-MM')`;
+        ? sql<string>`to_char(date_trunc('week', ${punchCards.createdAt} at time zone 'Asia/Jerusalem'), 'IYYY-"W"IW')`
+        : sql<string>`to_char(${punchCards.createdAt} at time zone 'Asia/Jerusalem', 'YYYY-MM')`;
 
   const rowsRaw = await db
     .select({
@@ -646,13 +670,14 @@ export const revenueReport = async (
     .groupBy(bucketSql)
     .orderBy(bucketSql);
 
-  // Companions bucketed by booking confirmed_at with the same period shape.
+  // Companions bucketed by booking confirmed_at with the same period shape
+  // (and the same venue-clock rule as the cards buckets above).
   const companionBucketSql =
     groupBy === 'day'
-      ? sql<string>`to_char(${bookings.confirmedAt}, 'YYYY-MM-DD')`
+      ? sql<string>`to_char(${bookings.confirmedAt} at time zone 'Asia/Jerusalem', 'YYYY-MM-DD')`
       : groupBy === 'week'
-        ? sql<string>`to_char(date_trunc('week', ${bookings.confirmedAt}), 'IYYY-"W"IW')`
-        : sql<string>`to_char(${bookings.confirmedAt}, 'YYYY-MM')`;
+        ? sql<string>`to_char(date_trunc('week', ${bookings.confirmedAt} at time zone 'Asia/Jerusalem'), 'IYYY-"W"IW')`
+        : sql<string>`to_char(${bookings.confirmedAt} at time zone 'Asia/Jerusalem', 'YYYY-MM')`;
 
   const companionConds = [
     sql`${bookings.status} IN ('confirmed','used')`,
@@ -778,8 +803,16 @@ export const cancellationsReport = async (
   const q = filters.q?.trim();
   const qPattern = q ? `%${q}%` : null;
 
+  // Each source fetches only its newest offset+limit rows: the page's global
+  // top offset+limit rows are always contained in the union of each source's
+  // top offset+limit, so the JS merge below stays correct while memory stays
+  // bounded no matter how many cancellations accumulate. Full counts come
+  // from separate count(*) queries.
+  const fetchWindow = offset + limit;
+
   // ----- Card cancellations -----
   let cardRows: CancellationsReportRow[] = [];
+  let cardCount = 0;
   if (filters.kind !== 'entry') {
     const cardConds = [isNotNull(punchCards.cancelledAt)];
     if (filters.from) cardConds.push(gte(punchCards.cancelledAt, filters.from));
@@ -794,6 +827,14 @@ export const cancellationsReport = async (
       );
       if (qC) cardConds.push(qC);
     }
+
+    // Count first (customers join only — the WHERE never touches staff).
+    const countRes = await db
+      .select({ n: count() })
+      .from(punchCards)
+      .leftJoin(customers, eq(customers.id, punchCards.customerId))
+      .where(and(...cardConds));
+    cardCount = Number(countRes[0]?.n ?? 0);
 
     const raw = await db
       .select({
@@ -816,7 +857,8 @@ export const cancellationsReport = async (
       .leftJoin(customers, eq(customers.id, punchCards.customerId))
       .leftJoin(staff, eq(staff.id, punchCards.cancelledBy))
       .where(and(...cardConds))
-      .orderBy(desc(punchCards.cancelledAt));
+      .orderBy(desc(punchCards.cancelledAt))
+      .limit(fetchWindow);
 
     cardRows = raw.map((r) => ({
       kind: 'card',
@@ -844,6 +886,7 @@ export const cancellationsReport = async (
 
   // ----- Entry refunds -----
   let entryRows: CancellationsReportRow[] = [];
+  let entryCount = 0;
   if (filters.kind !== 'card') {
     // Alias the staff join so it stays unambiguous if a future change adds
     // another staff join here (e.g. approvedBy).
@@ -862,6 +905,15 @@ export const cancellationsReport = async (
       );
       if (qC) entryConds.push(qC);
     }
+
+    // Count first (card + customer joins only — the WHERE never touches the actor).
+    const countRes = await db
+      .select({ n: count() })
+      .from(punchCardEntries)
+      .leftJoin(punchCards, eq(punchCards.id, punchCardEntries.punchCardId))
+      .leftJoin(customers, eq(customers.id, punchCards.customerId))
+      .where(and(...entryConds));
+    entryCount = Number(countRes[0]?.n ?? 0);
 
     const raw = await db
       .select({
@@ -886,7 +938,8 @@ export const cancellationsReport = async (
       .leftJoin(customers, eq(customers.id, punchCards.customerId))
       .leftJoin(refundActor, eq(refundActor.id, punchCardEntries.refundedBy))
       .where(and(...entryConds))
-      .orderBy(desc(punchCardEntries.refundedAt));
+      .orderBy(desc(punchCardEntries.refundedAt))
+      .limit(fetchWindow);
 
     entryRows = raw.map((r) => ({
       kind: 'entry',
@@ -915,15 +968,15 @@ export const cancellationsReport = async (
     }));
   }
 
-  // Merge both sources, newest first, then page.
+  // Merge the two windows, newest first, then cut the requested page.
   const merged = [...cardRows, ...entryRows].sort(
     (a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime(),
   );
 
   return {
     rows: merged.slice(offset, offset + limit),
-    total: merged.length,
-    cardCount: cardRows.length,
-    entryCount: entryRows.length,
+    total: cardCount + entryCount,
+    cardCount,
+    entryCount,
   };
 };

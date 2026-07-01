@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { generateSerial, signToken, type KeyResolver } from '@memesh/qr-engine';
-import { and, desc, eq, ilike, isNotNull, isNull, or, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, ilike, isNotNull, isNull, lte, or, sql } from 'drizzle-orm';
 import { alias, type PgDatabase } from 'drizzle-orm/pg-core';
 import { logStaffAction } from './actions';
 import { getCardSettings } from './card-settings';
@@ -464,28 +464,33 @@ export interface ListCardsInput {
   limit?: number | undefined;
   /** Free-text search across serial + customer name / phone / number. */
   q?: string | undefined;
+  /** Override "now" for the expiry-aware status buckets (tests). */
+  now?: Date | undefined;
 }
 
 /**
  * List cards joined with customer info, filtered by status, for the admin
  * "ניהול כרטיסיות" view. Buckets are mutually exclusive:
- *   - active:    is_active = true
+ *   - active:    is_active = true AND not past expires_at
  *   - cancelled: cancelled_at IS NOT NULL  (also is_active = false)
- *   - expired:   is_active = false AND cancelled_at IS NULL
- *     (covers expiry-by-time AND exhausted 12/12 — operationally one bucket)
+ *   - expired:   cancelled_at IS NULL AND (is_active = false OR past expires_at)
+ *     (covers exhausted 12/12 AND expiry-by-time — nothing flips is_active
+ *     when expires_at passes, so the date check must happen here)
  *
  * Optional `q` runs an ILIKE across serial + customer name/phone/number.
  */
 export const listCards = async (db: AnyPgDatabase, input: ListCardsInput = {}) => {
   const limit = input.limit ?? 100;
+  const now = input.now ?? new Date();
   const conds = [];
   if (input.status === 'active') {
     conds.push(eq(punchCards.isActive, true));
+    conds.push(or(isNull(punchCards.expiresAt), gt(punchCards.expiresAt, now))!);
   } else if (input.status === 'cancelled') {
     conds.push(isNotNull(punchCards.cancelledAt));
   } else if (input.status === 'expired') {
-    conds.push(eq(punchCards.isActive, false));
     conds.push(isNull(punchCards.cancelledAt));
+    conds.push(or(eq(punchCards.isActive, false), lte(punchCards.expiresAt, now))!);
   }
   const q = input.q?.trim();
   if (q) {
