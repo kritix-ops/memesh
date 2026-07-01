@@ -119,7 +119,7 @@ export interface EntriesReportFilters {
   to?: string;
   customerId?: string;
   cardSerial?: string;
-  method?: 'qr_scan' | 'serial' | 'phone' | 'manual';
+  method?: 'qr_scan' | 'serial' | 'phone' | 'manual' | 'online';
   refunded?: boolean;
   punchedBy?: string;
   limit?: number;

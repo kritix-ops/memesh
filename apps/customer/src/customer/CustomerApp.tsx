@@ -7,6 +7,7 @@ import {
 } from '@memesh/customer-auth';
 import { fmtDate, type PunchCard as ApiPunchCard } from '@memesh/web-shared';
 import {
+  bookRoundWithPunch,
   cancelRoundBooking,
   getMyRoundBookings,
   getRoundAvailability,
@@ -609,19 +610,17 @@ function Home({
   const [error, setError] = useState<string | null>(null);
   const [roundBookings, setRoundBookings] = useState<CustomerRoundBooking[] | null>(null);
 
-  // Load /me/cards once on mount. The customer cookie was already proven by
-  // the parent provider's /me hydration; this just pulls the card list.
+  // Load /me/cards. The customer cookie was already proven by the parent
+  // provider's /me hydration; this just pulls the card list. Kept callable so a
+  // punch-card booking can refresh the remaining-entries count.
+  const loadCards = async () => {
+    const res = await getMyCards();
+    if (res.ok) setCards(res.data.cards);
+    else setError(res.error);
+  };
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const res = await getMyCards();
-      if (cancelled) return;
-      if (res.ok) setCards(res.data.cards);
-      else setError(res.error);
-    })();
-    return () => {
-      cancelled = true;
-    };
+    void loadCards();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Load the customer's active/upcoming round bookings. Independent of cards —
@@ -689,6 +688,14 @@ function Home({
           ))}
         </div>
       )}
+      {cards && cards.some((c) => c.isActive && c.usedEntries < c.totalEntries) && (
+        <PunchRoundBooking
+          cards={cards.filter((c) => c.isActive && c.usedEntries < c.totalEntries)}
+          onBooked={async () => {
+            await Promise.all([loadRoundBookings(), loadCards()]);
+          }}
+        />
+      )}
       <div>
         <div style={{ fontWeight: 600, marginBottom: 10 }}>כרטיסיות פעילות</div>
         {error && (
@@ -730,6 +737,232 @@ function Home({
       <button style={primaryBtn} onClick={onEdit}>
         עריכת פרטים
       </button>
+    </div>
+  );
+}
+
+// Book a round using a punch-card entry (super-brief §3.4). No WooCommerce — the
+// customer already paid for the card, so this just spends one entry. Pick a day,
+// pick an open round, confirm, done. A clear "uses 1 of N" confirm precedes the
+// punch so it never happens by accident.
+function PunchRoundBooking({
+  cards,
+  onBooked,
+}: {
+  cards: ApiPunchCard[];
+  onBooked: () => void | Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [date, setDate] = useState('');
+  const [rounds, setRounds] = useState<AvailabilityRound[] | null>(null);
+  const [cardId, setCardId] = useState(cards[0]?.id ?? '');
+  const [ticketType, setTicketType] = useState<'child_over_walking' | 'child_under_walking'>(
+    'child_over_walking',
+  );
+  const [chosen, setChosen] = useState<AvailabilityRound | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+
+  const selectedCard = cards.find((c) => c.id === cardId) ?? cards[0];
+  const remaining = selectedCard ? selectedCard.totalEntries - selectedCard.usedEntries : 0;
+
+  const primaryBtn: CSSProperties = {
+    border: 'none',
+    background: '#e7a33e',
+    color: '#fff',
+    borderRadius: 10,
+    padding: '11px 18px',
+    fontSize: 14.5,
+    fontWeight: 700,
+    cursor: 'pointer',
+  };
+  const ghostBtn: CSSProperties = {
+    border: '1.5px solid #e9e0d9',
+    background: '#fff',
+    color: MUTED,
+    borderRadius: 10,
+    padding: '11px 18px',
+    fontSize: 14,
+    fontWeight: 600,
+    cursor: 'pointer',
+  };
+
+  const loadAvailability = async (d: string) => {
+    setRounds(null);
+    setChosen(null);
+    setError(null);
+    if (!d) return;
+    const res = await getRoundAvailability(d);
+    if (!res.ok) {
+      setError('לא ניתן לטעון זמנים פנויים כרגע.');
+      setRounds([]);
+      return;
+    }
+    setRounds(res.data.rounds.filter((r) => r.available > 0 && !r.isClosed));
+  };
+
+  const doBook = async () => {
+    if (!chosen || !selectedCard) return;
+    setBusy(true);
+    setError(null);
+    const res = await bookRoundWithPunch(selectedCard.id, chosen.roundInstanceId, ticketType);
+    setBusy(false);
+    if (!res.ok) {
+      setError(
+        res.error === 'round_full'
+          ? 'הסבב התמלא. בחרו זמן אחר.'
+          : res.error === 'card_exhausted' || res.error === 'card_inactive'
+            ? 'לכרטיסייה לא נותרו כניסות.'
+            : res.error === 'card_expired'
+              ? 'הכרטיסייה פגה.'
+              : 'לא ניתן להזמין כרגע. נסו שוב.',
+      );
+      return;
+    }
+    setDone(true);
+    await onBooked();
+  };
+
+  if (!open) {
+    return (
+      <button onClick={() => setOpen(true)} style={{ ...primaryBtn, width: '100%' }}>
+        הזמנת כניסה לסבב עם הכרטיסייה
+      </button>
+    );
+  }
+
+  return (
+    <div style={{ ...card, display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ fontSize: 16, fontWeight: 700 }}>הזמנת כניסה לסבב</div>
+        <button
+          onClick={() => {
+            setOpen(false);
+            setDone(false);
+            setChosen(null);
+            setError(null);
+          }}
+          style={{ border: 'none', background: 'transparent', color: MUTED, fontSize: 13, cursor: 'pointer' }}
+        >
+          סגירה
+        </button>
+      </div>
+
+      {done ? (
+        <div style={{ textAlign: 'center', color: '#6f8f37', fontSize: 14.5, padding: '8px 0' }}>
+          ההזמנה נקלטה! הברקוד מחכה לך למעלה תחת "הסבבים שלי".
+        </div>
+      ) : (
+        <>
+          <div style={{ fontSize: 12.5, color: MUTED }}>
+            כרטיסייה {selectedCard?.serialNumber} · נותרו {remaining} כניסות
+          </div>
+          {cards.length > 1 && (
+            <select
+              value={cardId}
+              onChange={(e) => setCardId(e.target.value)}
+              style={{ padding: '9px 10px', borderRadius: 9, border: '1.5px solid #e9e0d9', fontSize: 14 }}
+            >
+              {cards.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.serialNumber} ({c.totalEntries - c.usedEntries} נותרו)
+                </option>
+              ))}
+            </select>
+          )}
+
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 13, color: MUTED }}>
+            תאריך
+            <input
+              type="date"
+              value={date}
+              onChange={(e) => {
+                setDate(e.target.value);
+                void loadAvailability(e.target.value);
+              }}
+              style={{ padding: '10px', borderRadius: 9, border: '1.5px solid #e9e0d9', fontSize: 14 }}
+            />
+          </label>
+
+          <div style={{ display: 'flex', gap: 8 }}>
+            {(['child_over_walking', 'child_under_walking'] as const).map((t) => (
+              <button
+                key={t}
+                onClick={() => setTicketType(t)}
+                style={{
+                  flex: 1,
+                  border: `1.5px solid ${ticketType === t ? '#e7a33e' : '#e9e0d9'}`,
+                  background: ticketType === t ? '#fdf3e3' : '#fff',
+                  color: ticketType === t ? '#b9772a' : MUTED,
+                  borderRadius: 9,
+                  padding: '9px',
+                  fontSize: 13.5,
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                {t === 'child_under_walking' ? 'תינוק/ת' : 'ילד/ה'}
+              </button>
+            ))}
+          </div>
+
+          {date && rounds === null && (
+            <div style={{ textAlign: 'center', color: MUTED, fontSize: 13 }}>טוען…</div>
+          )}
+          {rounds && rounds.length === 0 && (
+            <div style={{ textAlign: 'center', color: MUTED, fontSize: 13 }}>
+              אין סבבים פנויים ביום זה.
+            </div>
+          )}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {rounds?.map((r) => (
+              <button
+                key={r.roundInstanceId}
+                onClick={() => {
+                  setChosen(r);
+                  setError(null);
+                }}
+                style={{
+                  border: `1.5px solid ${chosen?.roundInstanceId === r.roundInstanceId ? '#e7a33e' : '#e9e0d9'}`,
+                  background: chosen?.roundInstanceId === r.roundInstanceId ? '#fdf3e3' : '#fff',
+                  borderRadius: 10,
+                  padding: '10px 14px',
+                  fontSize: 14,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                }}
+              >
+                <span style={{ fontWeight: 600 }}>
+                  {r.label} {r.startTime}–{r.endTime}
+                </span>
+                <span style={{ color: MUTED, fontSize: 13 }}>{r.available} פנויים</span>
+              </button>
+            ))}
+          </div>
+
+          {chosen && (
+            <div style={{ borderTop: '1px solid #f3efea', paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <div style={{ fontSize: 13.5, textAlign: 'center' }}>
+                כניסה לסבב {chosen.startTime}–{chosen.endTime}. ינוקב כרטיס אחד מתוך {remaining} שנותרו.
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button disabled={busy} onClick={() => void doBook()} style={{ ...primaryBtn, flex: 1 }}>
+                  {busy ? 'מזמין…' : 'אישור והזמנה'}
+                </button>
+                <button disabled={busy} onClick={() => setChosen(null)} style={{ ...ghostBtn, flex: 1 }}>
+                  חזרה
+                </button>
+              </div>
+            </div>
+          )}
+
+          {error && (
+            <div style={{ color: '#a23a3a', fontSize: 13, textAlign: 'center' }}>{error}</div>
+          )}
+        </>
+      )}
     </div>
   );
 }
@@ -873,7 +1106,9 @@ function RoundBookingCard({
             לבטל את ההזמנה?
           </div>
           <div style={{ fontSize: 12.5, color: MUTED, marginBottom: 12, textAlign: 'center' }}>
-            הזיכוי יוחזר אוטומטית לאמצעי התשלום שלכם.
+            {booking.source === 'punchcard'
+              ? 'הכניסה תוחזר לכרטיסייה שלך.'
+              : 'הזיכוי יוחזר אוטומטית לאמצעי התשלום שלכם.'}
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
             <button disabled={busy} onClick={() => void doCancel()} style={{ ...dangerBtn, flex: 1 }}>
