@@ -1,7 +1,16 @@
 import { type CSSProperties, useEffect, useState } from 'react';
 import {
+  getRoundSettings,
+  updateRoundSettings,
+} from '../lib/api/round-settings';
+import {
+  addRoundOffDate,
   createRound,
+  deleteRound,
+  duplicateRound,
+  listRoundOffDates,
   listRounds,
+  removeRoundOffDate,
   updateRound,
   type AdminRound,
   type RoundInput,
@@ -83,6 +92,11 @@ export function Rounds() {
   const [loadError, setLoadError] = useState<string | null>(null);
   // null = list view; 'new' = create form; an AdminRound = edit form.
   const [editing, setEditing] = useState<AdminRound | 'new' | null>(null);
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [togglingEnabled, setTogglingEnabled] = useState(false);
+  const [rowBusy, setRowBusy] = useState<string | null>(null);
+  const [rowError, setRowError] = useState<string | null>(null);
+  const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
 
   const reload = async () => {
     const res = await listRounds();
@@ -93,11 +107,57 @@ export function Rounds() {
       setLoadError(res.error);
       console.warn('[web admin rounds] load failed', { error: res.error });
     }
+    const settings = await getRoundSettings();
+    if (settings.ok) setEnabled(settings.data.settings.roundsEnabled);
   };
 
   useEffect(() => {
     void reload();
   }, []);
+
+  const toggleEnabled = async () => {
+    if (enabled === null) return;
+    setTogglingEnabled(true);
+    const next = !enabled;
+    console.info('[web admin rounds] master toggle', { next });
+    const res = await updateRoundSettings({ roundsEnabled: next });
+    setTogglingEnabled(false);
+    if (res.ok) setEnabled(res.data.settings.roundsEnabled);
+    else setRowError('לא ניתן לעדכן את המתג כרגע. נסו שוב.');
+  };
+
+  const doDuplicate = async (r: AdminRound) => {
+    setRowBusy(r.id);
+    setRowError(null);
+    console.info('[web admin rounds] duplicate', { id: r.id });
+    const res = await duplicateRound(r.id);
+    setRowBusy(null);
+    if (!res.ok) {
+      setRowError('השכפול נכשל. נסו שוב.');
+      return;
+    }
+    await reload();
+    // Straight into editing the copy — it's inactive until reviewed.
+    setEditing(res.data.round);
+  };
+
+  const doDelete = async (r: AdminRound) => {
+    setRowBusy(r.id);
+    setRowError(null);
+    console.info('[web admin rounds] delete', { id: r.id });
+    const res = await deleteRound(r.id);
+    setRowBusy(null);
+    setConfirmingDelete(null);
+    if (!res.ok) {
+      setRowError(
+        res.error === 'has_bookings'
+          ? 'לסבב הזה יש הזמנות (גם ישנות), ולכן אי אפשר למחוק אותו. אפשר להשבית אותו בעריכה.'
+          : 'המחיקה נכשלה. נסו שוב.',
+      );
+      return;
+    }
+    await reload();
+  };
 
   if (editing !== null) {
     return (
@@ -120,6 +180,51 @@ export function Rounds() {
           + סבב חדש
         </button>
       </div>
+
+      {enabled !== null && (
+        <div
+          style={{
+            ...cardStyle,
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            gap: 12,
+            flexWrap: 'wrap',
+            background: enabled ? '#f4f9ee' : '#fdf3f0',
+            border: `1.5px solid ${enabled ? '#d5e6bd' : '#f0d4c8'}`,
+          }}
+        >
+          <div>
+            <div style={{ fontSize: 14.5, fontWeight: 600, color: INK }}>
+              {enabled ? 'מערכת הסבבים פעילה' : 'מערכת הסבבים כבויה'}
+            </div>
+            <div style={{ fontSize: 12.5, color: MUTED, marginTop: 3 }}>
+              {enabled
+                ? 'באתר חובה לבחור סבב בקנייה, והזמנות סבבים פועלות באזור האישי.'
+                : 'כרטיסים נמכרים באתר ללא בחירת סבב, ולא ניתן להזמין סבבים. הסבבים שהוגדרו נשמרים.'}
+            </div>
+          </div>
+          <button
+            type="button"
+            disabled={togglingEnabled}
+            onClick={() => void toggleEnabled()}
+            style={{
+              ...ghostBtn,
+              background: enabled ? '#fff' : ORANGE,
+              color: enabled ? MUTED : '#fff',
+              border: enabled ? ghostBtn.border : 'none',
+            }}
+          >
+            {togglingEnabled ? 'רגע…' : enabled ? 'כיבוי הסבבים' : 'הפעלת הסבבים'}
+          </button>
+        </div>
+      )}
+
+      {enabled && <OffDatesManager />}
+
+      {rowError && (
+        <div style={{ ...cardStyle, color: '#a23a3a', fontSize: 13.5 }}>{rowError}</div>
+      )}
 
       {loadError ? (
         <div style={{ ...cardStyle, color: '#a23a3a' }}>
@@ -159,14 +264,185 @@ export function Rounds() {
                     {r.upcomingInstances ?? 0} תאריכים קרובים · תווית: {r.label}
                   </div>
                 </div>
-                <button type="button" style={ghostBtn} onClick={() => setEditing(r)}>
-                  עריכה
-                </button>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                  <button type="button" style={ghostBtn} onClick={() => setEditing(r)}>
+                    עריכה
+                  </button>
+                  <button
+                    type="button"
+                    disabled={rowBusy === r.id}
+                    style={ghostBtn}
+                    onClick={() => void doDuplicate(r)}
+                  >
+                    {rowBusy === r.id ? 'רגע…' : 'שכפול'}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={rowBusy === r.id}
+                    style={{ ...ghostBtn, color: '#a23a3a', borderColor: '#eddad3' }}
+                    onClick={() => {
+                      setRowError(null);
+                      setConfirmingDelete(r.id);
+                    }}
+                  >
+                    מחיקה
+                  </button>
+                </div>
               </div>
+
+              {confirmingDelete === r.id && (
+                <div
+                  style={{
+                    marginTop: 12,
+                    paddingTop: 12,
+                    borderTop: '1px solid #f3efea',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 12,
+                    flexWrap: 'wrap',
+                  }}
+                >
+                  <span style={{ fontSize: 13.5, color: INK }}>
+                    למחוק את "{r.displayName}" לצמיתות?
+                  </span>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button
+                      type="button"
+                      disabled={rowBusy === r.id}
+                      style={{ ...ghostBtn, background: '#c0554b', color: '#fff', border: 'none' }}
+                      onClick={() => void doDelete(r)}
+                    >
+                      {rowBusy === r.id ? 'מוחק…' : 'כן, מחקו'}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={rowBusy === r.id}
+                      style={ghostBtn}
+                      onClick={() => setConfirmingDelete(null)}
+                    >
+                      ביטול
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+// Manage the dates on which rounds are switched off (free play — tickets sell
+// without a round). Whole-day granularity for now; per-time-window rules are
+// the planned next step (Yoav 2026-07-02).
+function OffDatesManager() {
+  const [dates, setDates] = useState<string[] | null>(null);
+  const [newDate, setNewDate] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    void (async () => {
+      const res = await listRoundOffDates();
+      if (res.ok) setDates(res.data.dates);
+      else console.warn('[web admin rounds] off-dates load failed', { error: res.error });
+    })();
+  }, []);
+
+  const add = async () => {
+    if (!newDate) return;
+    setBusy(true);
+    setError(null);
+    console.info('[web admin rounds] off-date add', { date: newDate });
+    const res = await addRoundOffDate(newDate);
+    setBusy(false);
+    if (!res.ok) {
+      setError('לא ניתן להוסיף את התאריך. נסו שוב.');
+      return;
+    }
+    setDates(res.data.dates);
+    setNewDate('');
+  };
+
+  const remove = async (d: string) => {
+    setBusy(true);
+    setError(null);
+    console.info('[web admin rounds] off-date remove', { date: d });
+    const res = await removeRoundOffDate(d);
+    setBusy(false);
+    if (res.ok) setDates(res.data.dates);
+    else setError('לא ניתן להסיר את התאריך. נסו שוב.');
+  };
+
+  const fmtIso = (iso: string): string => {
+    const [y, m, d] = iso.split('-');
+    return `${d}/${m}/${y}`;
+  };
+
+  return (
+    <div style={cardStyle}>
+      <div style={{ fontSize: 14.5, fontWeight: 600, color: INK }}>ימים ללא סבבים</div>
+      <div style={{ fontSize: 12.5, color: MUTED, marginTop: 3, marginBottom: 12 }}>
+        בתאריכים האלה לא נדרשת בחירת סבב — הכניסה נמכרת באתר כרגיל, בלי שריון סבב.
+      </div>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <input
+          type="date"
+          value={newDate}
+          onChange={(e) => setNewDate(e.target.value)}
+          style={{
+            padding: '8px 10px',
+            borderRadius: 9,
+            border: '1.5px solid #e9e0d9',
+            fontSize: 13.5,
+          }}
+        />
+        <button type="button" disabled={busy || !newDate} style={ghostBtn} onClick={() => void add()}>
+          {busy ? 'רגע…' : 'הוספה'}
+        </button>
+      </div>
+      {dates && dates.length > 0 && (
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
+          {dates.map((d) => (
+            <span
+              key={d}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '5px 10px',
+                background: '#faf6f1',
+                border: '1px solid #e9e0d9',
+                borderRadius: 999,
+                fontSize: 13,
+                color: INK,
+              }}
+            >
+              {fmtIso(d)}
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void remove(d)}
+                aria-label={`הסרת ${fmtIso(d)}`}
+                style={{
+                  border: 'none',
+                  background: 'transparent',
+                  color: MUTED,
+                  cursor: 'pointer',
+                  fontSize: 14,
+                  lineHeight: 1,
+                  padding: 0,
+                }}
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      {error && <div style={{ color: '#a23a3a', fontSize: 13, marginTop: 10 }}>{error}</div>}
     </div>
   );
 }

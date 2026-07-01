@@ -18,6 +18,7 @@ const ACTIVE_HOUR_MIN = 0;
 const ACTIVE_HOUR_MAX = 23;
 
 export type UpdateRoundSettingsInput = {
+  roundsEnabled?: boolean;
   holdTtlMinutes?: number;
   cancellationWindowHours?: number;
   claimWindowMinutes?: number;
@@ -118,6 +119,10 @@ export const updateRoundSettings = async (
   const diff: Record<string, [unknown, unknown]> = {};
   const next: Partial<RoundSettingsRow> = {};
 
+  if (patch.roundsEnabled !== undefined && patch.roundsEnabled !== current.roundsEnabled) {
+    diff.roundsEnabled = [current.roundsEnabled, patch.roundsEnabled];
+    next.roundsEnabled = patch.roundsEnabled;
+  }
   if (patch.holdTtlMinutes !== undefined && patch.holdTtlMinutes !== current.holdTtlMinutes) {
     diff.holdTtlMinutes = [current.holdTtlMinutes, patch.holdTtlMinutes];
     next.holdTtlMinutes = patch.holdTtlMinutes;

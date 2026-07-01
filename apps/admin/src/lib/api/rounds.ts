@@ -45,3 +45,18 @@ export const createRound = (input: RoundInput): Promise<ApiResult<RoundResponse>
 
 export const updateRound = (id: string, patch: RoundPatch): Promise<ApiResult<RoundResponse>> =>
   apiRequest(`/admin/rounds/${id}`, { method: 'PATCH', body: patch });
+
+export const deleteRound = (id: string): Promise<ApiResult<{ ok: true }>> =>
+  apiRequest(`/admin/rounds/${id}`, { method: 'DELETE' });
+
+export const duplicateRound = (id: string): Promise<ApiResult<RoundResponse>> =>
+  apiRequest(`/admin/rounds/${id}/duplicate`, { method: 'POST' });
+
+export const listRoundOffDates = (): Promise<ApiResult<{ dates: string[] }>> =>
+  apiRequest('/admin/rounds/off-dates');
+
+export const addRoundOffDate = (date: string): Promise<ApiResult<{ dates: string[] }>> =>
+  apiRequest('/admin/rounds/off-dates', { method: 'POST', body: { date } });
+
+export const removeRoundOffDate = (date: string): Promise<ApiResult<{ dates: string[] }>> =>
+  apiRequest(`/admin/rounds/off-dates/${date}`, { method: 'DELETE' });

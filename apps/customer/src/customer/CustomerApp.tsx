@@ -791,6 +791,7 @@ function PunchRoundBooking({
   const [done, setDone] = useState(false);
   const [addCompanion, setAddCompanion] = useState(false);
   const [companionPrice, setCompanionPrice] = useState<number | null>(null);
+  const [roundsOff, setRoundsOff] = useState(false);
   // Set when the booking succeeded but the companion payment couldn't start —
   // the done screen tells the customer to retry from the booking card.
   const [companionNote, setCompanionNote] = useState<string | null>(null);
@@ -835,6 +836,7 @@ function PunchRoundBooking({
     setRounds(res.data.rounds.filter((r) => r.available > 0 && !r.isClosed));
     setFullRounds(res.data.rounds.filter((r) => r.available === 0 && !r.isClosed));
     setCompanionPrice(res.data.companionPriceIls);
+    setRoundsOff(res.data.roundsRequired === false);
   };
 
   const doJoin = async (r: AvailabilityRound) => {
@@ -996,7 +998,9 @@ function PunchRoundBooking({
           )}
           {rounds && rounds.length === 0 && (
             <div style={{ textAlign: 'center', color: MUTED, fontSize: 13 }}>
-              אין סבבים פנויים ביום זה.
+              {roundsOff
+                ? 'בתאריך זה הכניסה חופשית — אין צורך בהזמנת סבב, פשוט מגיעים.'
+                : 'אין סבבים פנויים ביום זה.'}
             </div>
           )}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>

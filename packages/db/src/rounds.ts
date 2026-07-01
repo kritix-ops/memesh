@@ -4,9 +4,18 @@
 // upcoming instances exist. Pattern mirrors card-settings/dashboard-settings:
 // pure validation, then persist; helpers return a discriminated result.
 
-import { and, asc, count, eq, gte, lte, sql } from 'drizzle-orm';
+import { and, asc, count, eq, gte, inArray, lte, sql } from 'drizzle-orm';
 import type { PgDatabase } from 'drizzle-orm/pg-core';
-import { bookings, roundInstances, rounds, type NewRoundInstance, type Round } from './schema/index';
+import {
+  bookings,
+  roundInstances,
+  roundOffDates,
+  roundReminderLog,
+  rounds,
+  waitlistEntries,
+  type NewRoundInstance,
+  type Round,
+} from './schema/index';
 
 type AnyPgDatabase = PgDatabase<any, any, any>;
 
@@ -175,6 +184,86 @@ export const listRounds = async (db: AnyPgDatabase): Promise<Round[]> => {
   return db.select().from(rounds).orderBy(asc(rounds.sortOrder), asc(rounds.startTime));
 };
 
+export type DeleteRoundResult =
+  | { ok: true }
+  | { ok: false; error: 'not_found' | 'has_bookings' };
+
+/**
+ * Hard-delete a round template and its instances — allowed only when NO
+ * booking (any status, including cancelled) ever touched it, because bookings
+ * are the money/audit trail. With history, the admin deactivates instead.
+ * Waitlist entries and reminder-log rows are not history in that sense, so
+ * they go with the round.
+ */
+export const deleteRound = async (db: AnyPgDatabase, id: string): Promise<DeleteRoundResult> => {
+  return db.transaction(async (tx) => {
+    const existing = await tx.select({ id: rounds.id }).from(rounds).where(eq(rounds.id, id)).limit(1);
+    if (!existing[0]) return { ok: false, error: 'not_found' as const };
+
+    const instRows = await tx
+      .select({ id: roundInstances.id })
+      .from(roundInstances)
+      .where(eq(roundInstances.roundId, id));
+    const instIds = instRows.map((r) => r.id);
+    if (instIds.length > 0) {
+      const booked = await tx
+        .select({ n: count() })
+        .from(bookings)
+        .where(inArray(bookings.roundInstanceId, instIds));
+      if (Number(booked[0]?.n ?? 0) > 0) return { ok: false, error: 'has_bookings' as const };
+
+      await tx.delete(roundReminderLog).where(inArray(roundReminderLog.roundInstanceId, instIds));
+      await tx.delete(waitlistEntries).where(inArray(waitlistEntries.roundInstanceId, instIds));
+      await tx.delete(roundInstances).where(eq(roundInstances.roundId, id));
+    }
+    await tx.delete(rounds).where(eq(rounds.id, id));
+    return { ok: true as const };
+  });
+};
+
+export type DuplicateRoundResult =
+  | { ok: true; round: Round }
+  | { ok: false; error: 'not_found' };
+
+/** Suffix a name with the copy marker, keeping it inside the column limit. */
+const copyName = (base: string, max: number): string => {
+  const suffix = ' (עותק)';
+  return base.length + suffix.length <= max
+    ? `${base}${suffix}`
+    : `${base.slice(0, max - suffix.length)}${suffix}`;
+};
+
+/**
+ * Duplicate a round template. The copy is created INACTIVE so it never goes
+ * live before the admin reviews and renames it — activating it (or any edit)
+ * materializes its instances through the normal update path.
+ */
+export const duplicateRound = async (
+  db: AnyPgDatabase,
+  id: string,
+): Promise<DuplicateRoundResult> => {
+  const existing = await db.select().from(rounds).where(eq(rounds.id, id)).limit(1);
+  const current = existing[0];
+  if (!current) return { ok: false, error: 'not_found' as const };
+
+  const inserted = await db
+    .insert(rounds)
+    .values({
+      label: copyName(current.label, 64),
+      displayName: copyName(current.displayName, 128),
+      startTime: current.startTime,
+      endTime: current.endTime,
+      daysActive: current.daysActive,
+      defaultCapacity: current.defaultCapacity,
+      isActive: false,
+      sortOrder: current.sortOrder,
+    })
+    .returning();
+  const round = inserted[0];
+  if (!round) throw new Error('[rounds] duplicate returned no row');
+  return { ok: true as const, round };
+};
+
 // ---------------------------------------------------------------------------
 // Customer-facing availability (Super Brief §1.3 + Appendix A)
 // ---------------------------------------------------------------------------
@@ -266,6 +355,36 @@ export const anyActiveRounds = async (db: AnyPgDatabase): Promise<boolean> => {
     .select({ id: rounds.id })
     .from(rounds)
     .where(eq(rounds.isActive, true))
+    .limit(1);
+  return rows.length > 0;
+};
+
+// ---------------------------------------------------------------------------
+// Off dates — days on which the rounds system is switched off entirely
+// (Yoav 2026-07-02). Not "closed" (no sales) but "free play": tickets sell
+// without a round and availability reports roundsRequired=false.
+// ---------------------------------------------------------------------------
+
+/** All off dates, soonest first. Past dates are harmless clutter the admin can remove. */
+export const listRoundOffDates = async (db: AnyPgDatabase): Promise<string[]> => {
+  const rows = await db.select({ date: roundOffDates.date }).from(roundOffDates).orderBy(asc(roundOffDates.date));
+  return rows.map((r) => r.date);
+};
+
+/** Idempotent — adding an existing date is a no-op. */
+export const addRoundOffDate = async (db: AnyPgDatabase, dateIso: string): Promise<void> => {
+  await db.insert(roundOffDates).values({ date: dateIso }).onConflictDoNothing();
+};
+
+export const removeRoundOffDate = async (db: AnyPgDatabase, dateIso: string): Promise<void> => {
+  await db.delete(roundOffDates).where(eq(roundOffDates.date, dateIso));
+};
+
+export const isRoundOffDate = async (db: AnyPgDatabase, dateIso: string): Promise<boolean> => {
+  const rows = await db
+    .select({ date: roundOffDates.date })
+    .from(roundOffDates)
+    .where(eq(roundOffDates.date, dateIso))
     .limit(1);
   return rows.length > 0;
 };

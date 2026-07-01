@@ -8,6 +8,8 @@ import {
   db,
   getCardSettings,
   getCustomerById,
+  getRoundSettings,
+  isRoundOffDate,
   joinWaitlist,
   leaveWaitlist,
   listCustomerRoundBookings,
@@ -129,16 +131,25 @@ export const roundsBookingRoutes: FastifyPluginAsync = async (fastify) => {
       if (!date || !DATE_RE.test(date)) {
         return reply.code(400).send({ error: 'invalid_date' });
       }
-      const rows = await roundAvailabilityForDate(db, date);
-      const settings = await getCardSettings(db);
-      request.log.info({ date, rounds: rows.length }, '[rounds availability]');
+      const cardSettings = await getCardSettings(db);
+      const roundSettings = await getRoundSettings(db);
+      // Rounds are required for this date only when the master switch is on
+      // AND the date isn't flagged off (Yoav 2026-07-02). A not-required date
+      // returns no bookable rounds — free play, nothing to pick.
+      const roundsRequired =
+        roundSettings.roundsEnabled &&
+        (await anyActiveRounds(db)) &&
+        !(await isRoundOffDate(db, date));
+      const rows = roundsRequired ? await roundAvailabilityForDate(db, date) : [];
+      request.log.info({ date, roundsRequired, rounds: rows.length }, '[rounds availability]');
       // Public shape: enough to render the picker, nothing internal (no
       // per-round revenue, no held/booking internals). companionPriceIls is
       // public pricing (it's on the storefront anyway) so pickers show the
       // real settings price instead of a hardcoded number.
       return {
         date,
-        companionPriceIls: settings.roundAdditionalCompanionPriceIls,
+        roundsRequired,
+        companionPriceIls: cardSettings.roundAdditionalCompanionPriceIls,
         rounds: rows.map((r) => ({
           roundInstanceId: r.roundInstanceId,
           label: r.label,
@@ -154,14 +165,15 @@ export const roundsBookingRoutes: FastifyPluginAsync = async (fastify) => {
 
   // Is the rounds system in use at all? The WP product-page picker calls this
   // (server-side, cached in a transient) to decide whether choosing a round is
-  // mandatory: no active rounds → entry tickets sell as plain products
-  // (Yanay 2026-07-02). Public + rate-limited like availability.
+  // mandatory: master switch off or no active rounds → entry tickets sell as
+  // plain products (Yanay 2026-07-02). Public + rate-limited like availability.
   fastify.get(
     '/rounds/enabled',
     { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } },
     async (request) => {
-      const enabled = await anyActiveRounds(db);
-      request.log.info({ enabled }, '[rounds enabled]');
+      const settings = await getRoundSettings(db);
+      const enabled = settings.roundsEnabled && (await anyActiveRounds(db));
+      request.log.info({ enabled, masterSwitch: settings.roundsEnabled }, '[rounds enabled]');
       return { enabled };
     },
   );
