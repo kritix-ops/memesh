@@ -28,10 +28,14 @@ export interface StaffRoundsSettings {
 
 export interface StaffRoundsResponse {
   asOf: string;
+  /** The calendar date this response describes (YYYY-MM-DD). */
+  date: string;
   settings: StaffRoundsSettings;
   rounds: StaffRoundsRound[];
+  /** Populated for today only. */
   waitlist: StaffRoundsWaitlist[];
 }
 
-export const getStaffRoundsToday = (): Promise<ApiResult<StaffRoundsResponse>> =>
-  apiRequest('/staff/rounds/today');
+/** No date = today. Any YYYY-MM-DD reads that day (floor verification of future bookings). */
+export const getStaffRounds = (date?: string): Promise<ApiResult<StaffRoundsResponse>> =>
+  apiRequest(`/staff/rounds/today${date ? `?date=${encodeURIComponent(date)}` : ''}`);

@@ -1,4 +1,9 @@
-import { dashboardLiveRoundsToday, dashboardLiveWaitlist, db, getDashboardSettings } from '@memesh/db';
+import {
+  dashboardLiveRoundsForDate,
+  dashboardLiveWaitlist,
+  db,
+  getDashboardSettings,
+} from '@memesh/db';
 import type { FastifyPluginAsync } from 'fastify';
 import { requireRoleHook } from '../lib/auth-guards.js';
 
@@ -36,26 +41,41 @@ export type StaffRoundsSettings = {
 
 export type StaffRoundsResponse = {
   asOf: string;
+  /** The calendar date this response describes (YYYY-MM-DD). */
+  date: string;
   settings: StaffRoundsSettings;
   rounds: StaffRoundsRound[];
+  /** Populated for today only — future waitlists aren't a floor concern. */
   waitlist: StaffRoundsWaitlist[];
 };
 
-// 5s in-memory cache, same rationale as the admin live endpoint: a handful of
-// cashiers polling every ~30s shouldn't each hit the DB. Per-process, TTL-only.
+// 5s in-memory cache per date, same rationale as the admin live endpoint: a
+// handful of cashiers polling every ~30s shouldn't each hit the DB. The map
+// stays tiny (a shift looks at today ± a few days); stale entries are evicted
+// on write.
 const CACHE_TTL_MS = 5_000;
 type Cached = { data: StaffRoundsResponse; expiresAt: number };
-let cache: Cached | null = null;
+const cache = new Map<string, Cached>();
 
-async function computeStaffRounds(): Promise<StaffRoundsResponse> {
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+function localIsoDate(d: Date): string {
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+async function computeStaffRounds(dateIso: string, todayIso: string): Promise<StaffRoundsResponse> {
   const now = new Date();
   // Sequential — PGlite (test fixture) is single-connection; prod driver is
   // fine serial and the total stays well under 100ms.
   const settings = await getDashboardSettings(db);
-  const rounds = await dashboardLiveRoundsToday(db, now);
-  const waitlistRows = await dashboardLiveWaitlist(db, now);
+  const rounds = await dashboardLiveRoundsForDate(db, dateIso, now);
+  const waitlistRows = dateIso === todayIso ? await dashboardLiveWaitlist(db, now) : [];
   return {
     asOf: now.toISOString(),
+    date: dateIso,
     settings: {
       refreshIntervalSeconds: settings.refreshIntervalSeconds,
       capacityWarningPct: settings.capacityWarningPct,
@@ -79,29 +99,39 @@ async function computeStaffRounds(): Promise<StaffRoundsResponse> {
   };
 }
 
-async function getCachedStaffRounds(): Promise<StaffRoundsResponse> {
+async function getCachedStaffRounds(dateIso: string, todayIso: string): Promise<StaffRoundsResponse> {
   const now = Date.now();
-  if (cache && cache.expiresAt > now) return cache.data;
-  const data = await computeStaffRounds();
-  cache = { data, expiresAt: now + CACHE_TTL_MS };
+  const hit = cache.get(dateIso);
+  if (hit && hit.expiresAt > now) return hit.data;
+  const data = await computeStaffRounds(dateIso, todayIso);
+  for (const [k, v] of cache) if (v.expiresAt <= now) cache.delete(k);
+  cache.set(dateIso, { data, expiresAt: now + CACHE_TTL_MS });
   return data;
 }
 
 // Test seam — reset the cache between assertions.
 export function _resetStaffRoundsCacheForTests(): void {
-  cache = null;
+  cache.clear();
 }
 
 export const staffRoundsRoutes: FastifyPluginAsync = async (fastify) => {
+  // Kept at /today for backward compatibility; `?date=YYYY-MM-DD` reads any
+  // day so the floor can verify a future booking landed (Yanay 2026-07-04).
   fastify.get(
     '/staff/rounds/today',
     { preHandler: requireRoleHook(...STAFF) },
-    async (request): Promise<StaffRoundsResponse> => {
+    async (request, reply): Promise<StaffRoundsResponse> => {
       const t0 = Date.now();
-      const data = await getCachedStaffRounds();
+      const todayIso = localIsoDate(new Date());
+      const requested = (request.query as { date?: string }).date;
+      if (requested !== undefined && !DATE_RE.test(requested)) {
+        return reply.code(400).send({ error: 'invalid_date' }) as never;
+      }
+      const dateIso = requested ?? todayIso;
+      const data = await getCachedStaffRounds(dateIso, todayIso);
       request.log.info(
-        { ms: Date.now() - t0, rounds: data.rounds.length },
-        '[staff rounds today] served',
+        { ms: Date.now() - t0, date: dateIso, rounds: data.rounds.length },
+        '[staff rounds] served',
       );
       return data;
     },
