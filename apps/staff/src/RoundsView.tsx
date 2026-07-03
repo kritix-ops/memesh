@@ -1,5 +1,5 @@
 import { type CSSProperties, useCallback, useEffect, useState } from 'react';
-import { getStaffRoundsToday, type StaffRoundsResponse, type StaffRoundsRound } from './lib/api/rounds';
+import { getStaffRounds, type StaffRoundsResponse, type StaffRoundsRound } from './lib/api/rounds';
 
 // Read-only rounds status for the shift floor. Mirrors the admin dashboard's
 // rounds zone in spirit, but built for a cashier standing at the counter: big
@@ -35,6 +35,20 @@ const card: CSSProperties = {
   padding: 18,
 };
 
+const navBtn: CSSProperties = {
+  width: 38,
+  height: 38,
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  border: '1.5px solid #e9e0d9',
+  borderRadius: 10,
+  background: '#fff',
+  color: INK,
+  fontSize: 18,
+  cursor: 'pointer',
+};
+
 function fmtRelative(iso: string): string {
   const m = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
   if (m < 1) return 'הרגע';
@@ -43,27 +57,51 @@ function fmtRelative(iso: string): string {
   return `לפני ${h} ש׳`;
 }
 
+function localIsoDate(d: Date): string {
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function shiftIsoDate(iso: string, days: number): string {
+  const d = new Date(`${iso}T12:00:00`); // noon avoids DST edges
+  d.setDate(d.getDate() + days);
+  return localIsoDate(d);
+}
+
+const WEEKDAY_HE = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
+
+function fmtIsoDateHe(iso: string): string {
+  const [y, m, d] = iso.split('-');
+  const weekday = WEEKDAY_HE[new Date(`${iso}T12:00:00`).getDay()];
+  return `יום ${weekday} · ${d}/${m}/${y}`;
+}
+
 export function RoundsView() {
+  const todayIso = localIsoDate(new Date());
+  const [date, setDate] = useState(todayIso);
   const [data, setData] = useState<StaffRoundsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [paused, setPaused] = useState(false);
+  const isToday = date === todayIso;
 
   const load = useCallback(async () => {
-    const res = await getStaffRoundsToday();
+    const res = await getStaffRounds(date === localIsoDate(new Date()) ? undefined : date);
     if (res.ok) {
       setData(res.data);
       setError(null);
-      console.info('[staff rounds] fetch ok', { rounds: res.data.rounds.length });
+      console.info('[staff rounds] fetch ok', { date, rounds: res.data.rounds.length });
     } else {
       setError(res.error);
-      console.warn('[staff rounds] fetch fail', { error: res.error });
+      console.warn('[staff rounds] fetch fail', { date, error: res.error });
     }
-  }, []);
+  }, [date]);
 
   useEffect(() => {
-    console.info('[staff rounds] mount');
+    console.info('[staff rounds] mount/date', { date });
     void load();
-  }, [load]);
+  }, [load, date]);
 
   const refreshSeconds = data?.settings.refreshIntervalSeconds ?? 30;
 
@@ -104,7 +142,9 @@ export function RoundsView() {
           marginBottom: 14,
         }}
       >
-        <h1 style={{ fontSize: 22, fontWeight: 600, color: INK, margin: 0 }}>סבבי היום</h1>
+        <h1 style={{ fontSize: 22, fontWeight: 600, color: INK, margin: 0 }}>
+          {isToday ? 'סבבי היום' : 'סבבים'}
+        </h1>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: MUTED }}>
           <span
             aria-hidden
@@ -125,6 +165,65 @@ export function RoundsView() {
         </div>
       </div>
 
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 10,
+          marginBottom: 14,
+          flexWrap: 'wrap',
+        }}
+      >
+        <button
+          type="button"
+          onClick={() => setDate((d) => shiftIsoDate(d, -1))}
+          aria-label="יום קודם"
+          style={navBtn}
+        >
+          ‹
+        </button>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+          <span style={{ fontSize: 15, fontWeight: 600, color: INK }}>{fmtIsoDateHe(date)}</span>
+          <input
+            type="date"
+            value={date}
+            onChange={(e) => e.target.value && setDate(e.target.value)}
+            aria-label="בחירת תאריך"
+            style={{
+              padding: '7px 10px',
+              borderRadius: 9,
+              border: '1.5px solid #e9e0d9',
+              fontSize: 13.5,
+              background: '#fff',
+            }}
+          />
+        </label>
+        <button
+          type="button"
+          onClick={() => setDate((d) => shiftIsoDate(d, 1))}
+          aria-label="יום הבא"
+          style={navBtn}
+        >
+          ›
+        </button>
+        {!isToday && (
+          <button
+            type="button"
+            onClick={() => setDate(localIsoDate(new Date()))}
+            style={{
+              ...navBtn,
+              width: 'auto',
+              padding: '0 14px',
+              fontSize: 13.5,
+              fontWeight: 600,
+            }}
+          >
+            היום
+          </button>
+        )}
+      </div>
+
       {!data ? (
         error ? (
           <div style={{ ...card, color: '#a23a3a' }}>
@@ -134,7 +233,9 @@ export function RoundsView() {
           <div style={{ ...card, color: MUTED, textAlign: 'center' }}>טוען…</div>
         )
       ) : data.rounds.length === 0 ? (
-        <div style={{ ...card, color: MUTED, textAlign: 'center' }}>אין סבבים היום.</div>
+        <div style={{ ...card, color: MUTED, textAlign: 'center' }}>
+          {isToday ? 'אין סבבים היום.' : 'אין סבבים בתאריך זה.'}
+        </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           {[...data.rounds]

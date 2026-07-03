@@ -75,9 +75,20 @@ export const dashboardLiveRoundsToday = async (
   db: AnyPgDatabase,
   now: Date = new Date(),
 ): Promise<RoundsTodayRow[]> => {
-  const todayIso = toIsoDate(now);
+  return dashboardLiveRoundsForDate(db, toIsoDate(now), now);
+};
 
-  // Round instances for today + parent round template.
+/**
+ * Same per-round occupancy, for any calendar date — the staff panel's date
+ * navigation reads future days so a cashier can verify a fresh booking landed
+ * (Yanay 2026-07-04). `now` still controls hold-expiry math.
+ */
+export const dashboardLiveRoundsForDate = async (
+  db: AnyPgDatabase,
+  dateIso: string,
+  now: Date = new Date(),
+): Promise<RoundsTodayRow[]> => {
+  // Round instances for the date + parent round template.
   const instances = await db
     .select({
       id: roundInstances.id,
@@ -90,7 +101,7 @@ export const dashboardLiveRoundsToday = async (
     })
     .from(roundInstances)
     .innerJoin(rounds, eq(rounds.id, roundInstances.roundId))
-    .where(eq(roundInstances.date, todayIso));
+    .where(eq(roundInstances.date, dateIso));
 
   if (instances.length === 0) return [];
 

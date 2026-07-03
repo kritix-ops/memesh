@@ -48,6 +48,33 @@ test('GET /staff/rounds/today as a cashier reaches the DB branch (all staff role
   );
 });
 
+test('GET /staff/rounds/today rejects a malformed ?date=', async () => {
+  const res = await app.inject({
+    method: 'GET',
+    url: '/staff/rounds/today?date=not-a-date',
+    headers: auth(await tokenFor('cashier')),
+  });
+  assert.equal(res.statusCode, 400);
+  assert.equal(res.json().error, 'invalid_date');
+});
+
+test('GET /staff/rounds/today?date=YYYY-MM-DD serves that date (future days visible to the floor)', async () => {
+  _resetStaffRoundsCacheForTests();
+  const res = await app.inject({
+    method: 'GET',
+    url: '/staff/rounds/today?date=2027-01-15',
+    headers: auth(await tokenFor('cashier')),
+  });
+  assert.ok(
+    res.statusCode === 200 || res.statusCode === 500,
+    `expected 200 or 500, got ${res.statusCode}`,
+  );
+  if (res.statusCode !== 200) return;
+  const body = res.json();
+  assert.equal(body.date, '2027-01-15');
+  assert.deepEqual(body.waitlist, [], 'waitlist stays empty for non-today dates');
+});
+
 test('GET /staff/rounds/today returns occupancy + waitlist only, never revenue', async () => {
   _resetStaffRoundsCacheForTests();
   const res = await app.inject({
