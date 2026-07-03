@@ -273,16 +273,23 @@ add_filter('woocommerce_add_cart_item_data', function ($data, $product_id) {
     return $data;
 }, 10, 2);
 
-/** Bump line price by ₪12 when the extra companion is chosen. */
-add_action('woocommerce_before_calculate_totals', function ($cart) {
+/**
+ * The extra companion is charged as a FEE row, not a silent price bump, so
+ * "מלווה נוסף +₪12" shows as its own line in the cart totals, checkout,
+ * order, emails, and receipt (Yoav 2026-07-02). The ticket line keeps its
+ * real product price.
+ */
+add_action('woocommerce_cart_calculate_fees', function ($cart) {
     if (is_admin() && !defined('DOING_AJAX')) return;
+    $count = 0;
     foreach ($cart->get_cart() as $item) {
-        if (!empty($item['memesh_extra_companion'])) {
-            $product = $item['data'];
-            $product->set_price(floatval($product->get_price()) + 12);
-        }
+        if (!empty($item['memesh_extra_companion'])) $count += 1;
     }
-}, 10, 1);
+    if ($count > 0) {
+        $label = $count > 1 ? sprintf('מלווה נוסף × %d', $count) : 'מלווה נוסף';
+        $cart->add_fee($label, 12 * $count, false);
+    }
+});
 
 /** Show the round + companion in cart / checkout. */
 add_filter('woocommerce_get_item_data', function ($items, $cart_item) {
