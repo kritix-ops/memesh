@@ -291,6 +291,25 @@ add_action('woocommerce_cart_calculate_fees', function ($cart) {
     }
 });
 
+/**
+ * The custom cart template renders only the line-item name and prices — it
+ * skips WC item meta and fee rows. Fold the companion (and the round date)
+ * into the name itself so every cart design shows them (Yanay 2026-07-04).
+ */
+add_filter('woocommerce_cart_item_name', function ($name, $cart_item) {
+    $extras = [];
+    if (!empty($cart_item['memesh_date'])) {
+        $extras[] = 'סבב ' . $cart_item['memesh_date'];
+    }
+    if (!empty($cart_item['memesh_extra_companion'])) {
+        $extras[] = 'כולל מלווה נוסף (+₪12)';
+    }
+    if ($extras) {
+        $name .= ' — ' . implode(' · ', $extras);
+    }
+    return $name;
+}, 10, 2);
+
 /** Show the round + companion in cart / checkout. */
 add_filter('woocommerce_get_item_data', function ($items, $cart_item) {
     if (!empty($cart_item['memesh_round_instance_id'])) {
