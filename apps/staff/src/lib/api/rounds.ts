@@ -22,6 +22,8 @@ export interface RoundAttendee {
   bookingId: string;
   firstName: string;
   lastName: string;
+  phone: string;
+  email: string | null;
   ticketType: 'child_under_walking' | 'child_over_walking';
   additionalCompanions: number;
   arrived: boolean;

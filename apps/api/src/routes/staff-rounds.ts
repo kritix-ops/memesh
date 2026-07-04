@@ -144,9 +144,10 @@ export const staffRoundsRoutes: FastifyPluginAsync = async (fastify) => {
     },
   );
 
-  // Who's booked on a round + arrival status — the floor's "מי הגיע" list
-  // (Yanay 2026-07-04). Names only, never phone/email: check-in matches a
-  // person at the door, it doesn't contact them. All staff roles may read.
+  // Who's booked on a round + arrival status + contact details — the floor's
+  // "מי הגיע" list (Yanay 2026-07-04; contact details explicitly requested so
+  // staff can call a no-show). All staff roles may read, same trust level as
+  // the POS customer search.
   const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   fastify.get(
     '/staff/rounds/:roundInstanceId/attendees',

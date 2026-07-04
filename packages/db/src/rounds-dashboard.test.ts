@@ -913,7 +913,9 @@ test('listRoundAttendees: names + arrival status, arrived first, cancelled exclu
   assert.equal(list[0]?.firstName, 'גל'); // arrived first
   assert.equal(list[0]?.arrived, true);
   assert.ok(list[0]?.usedAt);
+  assert.ok(list[0]?.phone, 'contact phone included (Yanay 2026-07-04)');
   assert.equal(list[1]?.firstName, 'אורי');
   assert.equal(list[1]?.arrived, false);
   assert.equal(list[1]?.additionalCompanions, 1);
+  assert.ok(list[1]?.phone);
 });
