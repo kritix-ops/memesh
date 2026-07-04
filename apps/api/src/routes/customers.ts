@@ -1,12 +1,11 @@
 import {
   createCustomer,
   customerDetail,
-  customers,
   db,
   deleteCustomer,
   getCardSettings,
+  listCustomers,
 } from '@memesh/db';
-import { desc, ilike, or } from 'drizzle-orm';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { requireRoleHook } from '../lib/auth-guards.js';
@@ -23,6 +22,18 @@ const childSchema = z.object({
   name: z.string().min(1).max(80),
   dob: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   notes: z.string().max(500).optional(),
+});
+
+// GET /customers query params. All optional so a bare request keeps its
+// legacy meaning; hasActiveCard travels as a string because query strings
+// have no booleans.
+const listQuerySchema = z.object({
+  q: z.string().max(120).optional(),
+  sort: z.enum(['name', 'newest', 'oldest', 'lastPurchase']).optional(),
+  status: z.enum(['active', 'frozen', 'vip']).optional(),
+  hasActiveCard: z.enum(['true', 'false']).optional(),
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+  offset: z.coerce.number().int().min(0).optional(),
 });
 
 const createBodySchema = z.object({
@@ -156,36 +167,41 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
     },
   );
 
-  // Search by name, phone, or customer number for the staff lookup screen.
-  // When no `q` is provided, return the most recent N customers — this is what
-  // the admin Customers tab uses as its default list (so an operator who has
-  // just added a customer immediately sees them without having to type a
-  // search). The cap stays small (50) so the response is fast and the UI
-  // doesn't try to render thousands of rows.
-  fastify.get('/customers', { preHandler: requireRoleHook(...STAFF) }, async (request, _reply) => {
-    const q = (request.query as { q?: string }).q?.trim();
-    if (!q) {
-      const results = await db
-        .select()
-        .from(customers)
-        .orderBy(desc(customers.createdAt))
-        .limit(50);
-      return { results };
+  // Browse / search the customer directory for the staff lookup screen and
+  // the admin Customers tab. Free text (q), sort, status / active-card
+  // filters, and limit/offset pagination all compose in SQL (see
+  // listCustomers in @memesh/db). Defaults preserve the legacy behavior a
+  // bare request had: newest-first, 50 rows without q, 20 with. The response
+  // adds `total` (count across all pages) and per-row `lastPurchaseAt` —
+  // both additive, so older consumers that only read `results` are
+  // unaffected.
+  fastify.get('/customers', { preHandler: requireRoleHook(...STAFF) }, async (request, reply) => {
+    const parsed = listQuerySchema.safeParse(request.query);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'invalid_query', issues: parsed.error.issues });
     }
-    const pattern = `%${q}%`;
-    const results = await db
-      .select()
-      .from(customers)
-      .where(
-        or(
-          ilike(customers.firstName, pattern),
-          ilike(customers.lastName, pattern),
-          ilike(customers.phone, pattern),
-          ilike(customers.customerNumber, pattern),
-        ),
-      )
-      .orderBy(desc(customers.createdAt))
-      .limit(20);
-    return { results };
+    const { sort, status, hasActiveCard, limit, offset } = parsed.data;
+    const q = parsed.data.q?.trim();
+    const result = await listCustomers(db, {
+      ...(q && { q }),
+      sort: sort ?? 'newest',
+      ...(status && { status }),
+      ...(hasActiveCard !== undefined && { hasActiveCard: hasActiveCard === 'true' }),
+      limit: limit ?? (q ? 20 : 50),
+      offset: offset ?? 0,
+    });
+    request.log.info(
+      {
+        q: q ?? null,
+        sort: sort ?? 'newest',
+        status: status ?? null,
+        hasActiveCard: hasActiveCard ?? null,
+        offset: offset ?? 0,
+        count: result.results.length,
+        total: result.total,
+      },
+      '[customers] list',
+    );
+    return result;
   });
 };

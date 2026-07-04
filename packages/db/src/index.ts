@@ -7,6 +7,7 @@ export * from './handoff-tokens.js';
 export * from './handoff-thankyou.js';
 export * from './email-otp.js';
 export * from './accounts.js';
+export * from './customer-directory.js';
 export * from './reports.js';
 export * from './actions.js';
 export * from './card-settings.js';

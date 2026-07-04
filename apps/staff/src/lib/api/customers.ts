@@ -52,8 +52,27 @@ export interface PunchCardEntry {
   refundReason: string | null;
 }
 
+// Directory browse/sort/filter params understood by GET /customers. Mirrors
+// listQuerySchema in apps/api/src/routes/customers.ts.
+export type CustomerSort = 'name' | 'newest' | 'oldest' | 'lastPurchase';
+
+export interface CustomerListFilters {
+  sort?: CustomerSort;
+  status?: CustomerStatus;
+  hasActiveCard?: boolean;
+  limit?: number;
+  offset?: number;
+}
+
+export interface CustomerDirectoryEntry extends Customer {
+  /** ISO timestamp of the most recent card purchase, null if none. */
+  lastPurchaseAt: string | null;
+}
+
 export interface CustomerSearchResponse {
-  results: Customer[];
+  results: CustomerDirectoryEntry[];
+  /** Count across ALL pages of the current filter set, not just this one. */
+  total: number;
 }
 
 export interface CustomerDetailResponse {
@@ -63,18 +82,23 @@ export interface CustomerDetailResponse {
 }
 
 /**
- * List or search customers. With a non-empty `q`, returns up to 20 matches
- * by name, phone, or customer number. With an empty `q` (or omitted), the
- * server returns the 50 most recently created customers — used as the
- * default list on the admin Customers tab so the operator sees existing
- * customers without having to type a search.
+ * List or search customers — the directory behind the staff lookup screen
+ * and the admin Customers tab. `q` matches name, phone, customer number, or
+ * email; sort/status/hasActiveCard/limit/offset compose with it server-side.
+ * With no options at all the server keeps its legacy defaults (newest first,
+ * 50 rows without q, 20 with), so existing callers behave as before.
  */
 export const searchCustomers = (
   q: string,
-  opts: { signal?: AbortSignal } = {},
+  opts: CustomerListFilters & { signal?: AbortSignal } = {},
 ): Promise<ApiResult<CustomerSearchResponse>> => {
   const params = new URLSearchParams();
   if (q) params.set('q', q);
+  if (opts.sort) params.set('sort', opts.sort);
+  if (opts.status) params.set('status', opts.status);
+  if (opts.hasActiveCard !== undefined) params.set('hasActiveCard', String(opts.hasActiveCard));
+  if (opts.limit !== undefined) params.set('limit', String(opts.limit));
+  if (opts.offset !== undefined) params.set('offset', String(opts.offset));
   const qs = params.toString();
   const url = qs ? `/customers?${qs}` : '/customers';
   return apiRequest(url, opts.signal ? { signal: opts.signal } : {});

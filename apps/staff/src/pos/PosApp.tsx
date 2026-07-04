@@ -19,7 +19,10 @@ import {
   type ChildRecord,
   type Customer,
   type CustomerDetailResponse,
+  type CustomerDirectoryEntry,
+  type CustomerSort,
   type CustomerSourceValue,
+  type CustomerStatus,
   type PunchCard as ApiPunchCard,
 } from '../lib/api/customers';
 import {
@@ -140,6 +143,10 @@ const hhMm = (iso: string): string => {
 };
 
 const SEARCH_DEBOUNCE_MS = 250;
+// Directory page size. Small enough for a fast first paint on the till,
+// large enough that the auto-load sentinel rarely fires more than once
+// before the cashier finds who they came for.
+const DIRECTORY_PAGE_SIZE = 30;
 
 // Server returns short reason codes from POST /punch (see apps/api/src/routes/punch.ts).
 // Map them to messages the cashier can act on.
@@ -172,8 +179,7 @@ function humanizeRefundError(code: string): string {
     return 'סיסמת אדמין שגויה. ודאו שמדובר באדמין פעיל ונסו שוב.';
   if (code === 'entry_not_found') return 'הכניסה לא נמצאה. ייתכן שכבר הוחזרה.';
   if (code === 'already_refunded') return 'הכניסה כבר הוחזרה.';
-  if (code === 'card_cancelled')
-    return 'לא ניתן להחזיר כניסות בכרטיסייה מבוטלת.';
+  if (code === 'card_cancelled') return 'לא ניתן להחזיר כניסות בכרטיסייה מבוטלת.';
   if (code === 'invalid_body') return 'נתונים לא תקינים. בדקו ונסו שוב.';
   if (code === 'forbidden') return 'אין לך הרשאה לבצע החזר.';
   return 'תקלה זמנית. נסו שוב בעוד רגע.';
@@ -327,10 +333,20 @@ export function PosApp() {
     }
   }, [selectedId, sellStep]);
 
-  // Live search state (debounced + abortable). Empty query => no fetch.
-  const [searchResults, setSearchResults] = useState<Customer[]>([]);
+  // Live directory state (debounced + abortable). An empty query browses the
+  // full customer list — sort and filters compose with the typed query, and
+  // pages of DIRECTORY_PAGE_SIZE append via the load-more sentinel.
+  const [searchResults, setSearchResults] = useState<CustomerDirectoryEntry[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
+  const [searchSort, setSearchSort] = useState<CustomerSort>('name');
+  const [searchStatus, setSearchStatus] = useState<CustomerStatus | 'all'>('all');
+  const [searchActiveOnly, setSearchActiveOnly] = useState(false);
+  const [searchTotal, setSearchTotal] = useState(0);
+  const [searchLoadingMore, setSearchLoadingMore] = useState(false);
+  // Bumped every time a fresh page-0 request fires; an in-flight load-more
+  // that resolves against an older token drops its (now stale) page.
+  const searchReqRef = useRef(0);
 
   // Live customer detail state. Fetched when selectedId changes.
   const [detail, setDetail] = useState<CustomerDetailResponse | null>(null);
@@ -688,39 +704,97 @@ export function PosApp() {
     setSellStep('done');
   };
 
-  // Debounced search effect: 250ms after typing stops, fetch /customers?q=...
-  // and abort if the user types again before the fetch resolves.
+  // Debounced directory effect: 250ms after the query / sort / filters
+  // settle, fetch page 0 of /customers. Runs only while the search screen is
+  // up (so entering it always shows fresh data), aborts when the inputs
+  // change mid-flight, and bumps searchReqRef so a racing load-more knows
+  // its page belongs to a previous filter set.
   useEffect(() => {
+    if (screen !== 'search') return;
     const q = query.trim();
-    if (!q) {
-      setSearchResults([]);
-      setSearchError(null);
-      setSearchLoading(false);
-      return;
-    }
+    searchReqRef.current += 1;
+    // Loading flips on before the debounce window, not inside it — otherwise
+    // the empty state flashes for 250ms every time the screen opens.
+    setSearchLoading(true);
+    setSearchError(null);
     const controller = new AbortController();
     const timer = setTimeout(async () => {
-      setSearchLoading(true);
-      setSearchError(null);
-      console.info('[web search] fire', { q });
-      const res = await searchCustomers(q, { signal: controller.signal });
+      console.info('[pos directory] fire', {
+        q,
+        sort: searchSort,
+        status: searchStatus,
+        activeOnly: searchActiveOnly,
+      });
+      const res = await searchCustomers(q, {
+        signal: controller.signal,
+        sort: searchSort,
+        ...(searchStatus !== 'all' && { status: searchStatus }),
+        ...(searchActiveOnly && { hasActiveCard: true }),
+        limit: DIRECTORY_PAGE_SIZE,
+        offset: 0,
+      });
       if (controller.signal.aborted) {
-        console.info('[web search] aborted', { q });
+        console.info('[pos directory] aborted', { q });
         return;
       }
       setSearchLoading(false);
       if (res.ok) {
         setSearchResults(res.data.results);
+        setSearchTotal(res.data.total);
+        console.info('[pos directory] page loaded', {
+          count: res.data.results.length,
+          total: res.data.total,
+        });
       } else {
         setSearchError(res.error);
         setSearchResults([]);
+        setSearchTotal(0);
       }
     }, SEARCH_DEBOUNCE_MS);
     return () => {
       clearTimeout(timer);
       controller.abort();
     };
-  }, [query]);
+  }, [screen, query, searchSort, searchStatus, searchActiveOnly]);
+
+  // Next directory page for the auto-load sentinel. Never runs while page 0
+  // or another page is in flight, never past the server total, and a page
+  // that raced a filter change (token mismatch) is discarded — appending it
+  // would mix two different filter sets in one list.
+  const loadMoreCustomers = async () => {
+    if (searchLoading || searchLoadingMore || searchResults.length >= searchTotal) return;
+    const req = searchReqRef.current;
+    const q = query.trim();
+    setSearchLoadingMore(true);
+    console.info('[pos directory] load more', {
+      offset: searchResults.length,
+      total: searchTotal,
+    });
+    const res = await searchCustomers(q, {
+      sort: searchSort,
+      ...(searchStatus !== 'all' && { status: searchStatus }),
+      ...(searchActiveOnly && { hasActiveCard: true }),
+      limit: DIRECTORY_PAGE_SIZE,
+      offset: searchResults.length,
+    });
+    setSearchLoadingMore(false);
+    if (req !== searchReqRef.current) {
+      console.info('[pos directory] load more dropped (stale)', { req });
+      return;
+    }
+    if (res.ok) {
+      const { results, total } = res.data;
+      setSearchResults((prev) => {
+        // Offset pages can overlap when a customer was added meanwhile.
+        const seen = new Set(prev.map((c) => c.id));
+        return [...prev, ...results.filter((c) => !seen.has(c.id))];
+      });
+      setSearchTotal(total);
+      console.info('[pos directory] page appended', { count: results.length, total });
+    } else {
+      setSearchError(res.error);
+    }
+  };
 
   // Customer detail effect: load the selected customer + cards + entries.
   useEffect(() => {
@@ -863,6 +937,15 @@ export function PosApp() {
             searchLoading={searchLoading}
             searchError={searchError}
             searchResults={searchResults}
+            sort={searchSort}
+            setSort={setSearchSort}
+            statusFilter={searchStatus}
+            setStatusFilter={setSearchStatus}
+            activeOnly={searchActiveOnly}
+            setActiveOnly={setSearchActiveOnly}
+            total={searchTotal}
+            loadingMore={searchLoadingMore}
+            onLoadMore={loadMoreCustomers}
             onOpenCustomer={openCustomer}
             onClose={() => setScreen('home')}
           />
@@ -963,15 +1046,10 @@ export function PosApp() {
         />
       )}
       {selfPinModalOpen && (
-        <SelfPinModal
-          length={sellControls.pinLength}
-          onClose={() => setSelfPinModalOpen(false)}
-        />
+        <SelfPinModal length={sellControls.pinLength} onClose={() => setSelfPinModalOpen(false)} />
       )}
     </>
   );
-
-
 }
 
 // ---------------------------------------------------------------------------
@@ -1039,7 +1117,7 @@ function Home({
   const tiles = [
     {
       label: 'חיפוש לקוח',
-      sub: 'לפי שם, טלפון או מספר',
+      sub: 'כל הלקוחות · חיפוש, מיון וסינון',
       bg: 'linear-gradient(160deg,#fff,#fff8f3)',
       border: '#ffe3d4',
       tint: '#fff4ee',
@@ -1803,11 +1881,35 @@ function Customer({
 }
 
 // ---------------------------------------------------------------------------
-// Search — query input + debounced result list. Search state and the
-// debounce effect live on PosApp (so the input value persists when the
-// cashier navigates away and back); the screen receives the values to
-// render and the setter for the input.
+// Search — the customer directory: query input, sort + filter chips, and the
+// paginated result list. All state lives on PosApp (so it persists when the
+// cashier opens a customer and comes back); the screen renders the values
+// and reports interactions upward. The sentinel row at the bottom auto-loads
+// the next page via IntersectionObserver, with a tap fallback.
 // ---------------------------------------------------------------------------
+
+const SORT_OPTIONS: { value: CustomerSort; label: string }[] = [
+  { value: 'name', label: 'א-ב' },
+  { value: 'newest', label: 'חדשים' },
+  { value: 'lastPurchase', label: 'רכישה אחרונה' },
+];
+
+const STATUS_OPTIONS: { value: CustomerStatus | 'all'; label: string }[] = [
+  { value: 'all', label: 'הכל' },
+  { value: 'vip', label: 'VIP' },
+  { value: 'frozen', label: 'מוקפאים' },
+];
+
+const chipStyle = (active: boolean): CSSProperties => ({
+  border: active ? `1.5px solid ${ORANGE}` : '1.5px solid #e9e0d9',
+  background: active ? '#fff4ee' : '#fff',
+  color: active ? ORANGE : MUTED,
+  borderRadius: 999,
+  padding: '8px 14px',
+  fontSize: 14,
+  fontWeight: 600,
+  cursor: 'pointer',
+});
 
 function Search({
   query,
@@ -1815,6 +1917,15 @@ function Search({
   searchLoading,
   searchError,
   searchResults,
+  sort,
+  setSort,
+  statusFilter,
+  setStatusFilter,
+  activeOnly,
+  setActiveOnly,
+  total,
+  loadingMore,
+  onLoadMore,
   onOpenCustomer,
   onClose,
 }: {
@@ -1822,12 +1933,42 @@ function Search({
   setQuery: (next: string) => void;
   searchLoading: boolean;
   searchError: string | null;
-  searchResults: Customer[];
+  searchResults: CustomerDirectoryEntry[];
+  sort: CustomerSort;
+  setSort: (next: CustomerSort) => void;
+  statusFilter: CustomerStatus | 'all';
+  setStatusFilter: (next: CustomerStatus | 'all') => void;
+  activeOnly: boolean;
+  setActiveOnly: (next: boolean) => void;
+  total: number;
+  loadingMore: boolean;
+  onLoadMore: () => void;
   onOpenCustomer: (id: string) => void;
   onClose: () => void;
 }) {
-  const q = query.trim();
-  const showEmpty = q.length > 0 && !searchLoading && !searchError && searchResults.length === 0;
+  const hasMore = searchResults.length < total;
+  const showEmpty = !searchLoading && !searchError && searchResults.length === 0;
+  const filtered = query.trim().length > 0 || statusFilter !== 'all' || activeOnly;
+
+  // Auto-load: fire onLoadMore when the sentinel scrolls into view. The
+  // callback lives in a ref so the observer isn't rebuilt every render
+  // (onLoadMore is a fresh closure each time).
+  const loadMoreRef = useRef(onLoadMore);
+  loadMoreRef.current = onLoadMore;
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el || typeof IntersectionObserver === 'undefined') return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) loadMoreRef.current();
+      },
+      { rootMargin: '200px' },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [hasMore]);
+
   return (
     <div>
       <BackBar label="חזרה" onClick={onClose} />
@@ -1835,10 +1976,48 @@ function Search({
         autoFocus
         value={query}
         onChange={(e) => setQuery(e.target.value)}
-        placeholder="שם, טלפון או מספר לקוח…"
+        placeholder="שם, טלפון, מספר לקוח או אימייל…"
         style={inputStyle}
       />
+      <div
+        style={{
+          marginTop: 12,
+          display: 'flex',
+          flexWrap: 'wrap',
+          alignItems: 'center',
+          gap: 8,
+        }}
+      >
+        <span style={{ fontSize: 13, color: MUTED }}>מיון:</span>
+        {SORT_OPTIONS.map((o) => (
+          <button
+            key={o.value}
+            onClick={() => setSort(o.value)}
+            style={chipStyle(sort === o.value)}
+          >
+            {o.label}
+          </button>
+        ))}
+        <span style={{ fontSize: 13, color: MUTED, marginInlineStart: 8 }}>סינון:</span>
+        {STATUS_OPTIONS.map((o) => (
+          <button
+            key={o.value}
+            onClick={() => setStatusFilter(o.value)}
+            style={chipStyle(statusFilter === o.value)}
+          >
+            {o.label}
+          </button>
+        ))}
+        <button onClick={() => setActiveOnly(!activeOnly)} style={chipStyle(activeOnly)}>
+          עם כרטיסייה פעילה
+        </button>
+      </div>
       <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {!searchLoading && !searchError && total > 0 && (
+          <div style={{ fontSize: 13, color: MUTED }}>
+            {total === 1 ? 'לקוח אחד' : `${total} לקוחות`}
+          </div>
+        )}
         {searchLoading && <div style={{ ...card, textAlign: 'center', color: MUTED }}>מחפש…</div>}
         {searchError && (
           <div style={{ ...card, textAlign: 'center', color: '#a23a3a' }}>
@@ -1881,19 +2060,41 @@ function Search({
                 <div style={{ fontWeight: 600 }}>{realFullName(c)}</div>
                 <div style={{ fontSize: 13, color: MUTED }}>
                   {c.phone} · {c.customerNumber}
+                  {sort === 'lastPurchase' && (
+                    <>
+                      {' · '}
+                      {c.lastPurchaseAt
+                        ? `רכישה אחרונה: ${fmtDate(yyyyMmDd(c.lastPurchaseAt))}`
+                        : 'ללא רכישות'}
+                    </>
+                  )}
                 </div>
               </div>
             </button>
           );
         })}
-        {searchResults.length === 20 && (
-          <div style={{ ...card, textAlign: 'center', color: MUTED, fontSize: 13 }}>
-            מוצגים 20 הראשונים. המשיכו לסנן לחיפוש מדויק יותר.
+        {!searchLoading && hasMore && (
+          <div ref={sentinelRef} style={{ ...card, textAlign: 'center', padding: 10 }}>
+            <button
+              onClick={onLoadMore}
+              disabled={loadingMore}
+              style={{
+                background: 'none',
+                border: 'none',
+                color: MUTED,
+                fontSize: 14,
+                fontWeight: 600,
+                cursor: loadingMore ? 'default' : 'pointer',
+                padding: 6,
+              }}
+            >
+              {loadingMore ? 'טוען עוד…' : 'הצגת לקוחות נוספים'}
+            </button>
           </div>
         )}
         {showEmpty && (
           <div style={{ ...card, textAlign: 'center', color: MUTED }}>
-            לא נמצאו לקוחות שמתאימים לחיפוש
+            {filtered ? 'לא נמצאו לקוחות שמתאימים לחיפוש' : 'אין עדיין לקוחות במערכת'}
           </div>
         )}
       </div>
@@ -2277,8 +2478,7 @@ function Sell({
                 ...primaryBtn,
                 flex: 1,
                 opacity: sellSubmitting || !nameOnReceiptChecked ? 0.6 : 1,
-                cursor:
-                  sellSubmitting || !nameOnReceiptChecked ? 'not-allowed' : 'pointer',
+                cursor: sellSubmitting || !nameOnReceiptChecked ? 'not-allowed' : 'pointer',
               }}
               onClick={onSubmit}
               disabled={sellSubmitting || !nameOnReceiptChecked}
@@ -2596,9 +2796,7 @@ function Scan({ onClose }: { onClose: () => void }) {
       )}
 
       {phase === 'loading-preview' && (
-        <div style={{ ...card, textAlign: 'center', color: MUTED }}>
-          טוען פרטי כרטיסייה…
-        </div>
+        <div style={{ ...card, textAlign: 'center', color: MUTED }}>טוען פרטי כרטיסייה…</div>
       )}
 
       {(phase === 'confirming' || phase === 'submitting') && (
