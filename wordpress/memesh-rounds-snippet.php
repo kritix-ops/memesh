@@ -117,6 +117,7 @@ add_action('woocommerce_before_add_to_cart_button', function () {
         </div>
 
         <div id="memesh-round-msg" class="memesh-round-msg"></div>
+        <input type="hidden" id="memesh-round-times" name="memesh_round_times" value="" />
     </div>
     <script>
     (function () {
@@ -125,13 +126,22 @@ add_action('woocommerce_before_add_to_cart_button', function () {
         var roundEl = document.getElementById('memesh-round');
         var roundField = document.getElementById('memesh-round-field');
         var msgEl = document.getElementById('memesh-round-msg');
+        var timesEl = document.getElementById('memesh-round-times');
         if (!dateEl) return;
+        // Keep the chosen round's hours in a hidden field so the cart /
+        // checkout / receipt can show "סבב 05/07/2026 · 09:00–14:00" and the
+        // buyer knows exactly which slot they bought, not just the date.
+        roundEl.addEventListener('change', function () {
+            var opt = roundEl.options[roundEl.selectedIndex];
+            timesEl.value = (opt && opt.getAttribute('data-times')) || '';
+        });
         dateEl.addEventListener('change', function () {
             roundEl.innerHTML = '<option value="">טוען…</option>';
             roundEl.required = true;
             roundField.style.display = '';
             msgEl.textContent = '';
             msgEl.style.color = '#a23a3a';
+            timesEl.value = '';
             fetch(api + '/rounds/availability?date=' + encodeURIComponent(dateEl.value))
                 .then(function (r) { return r.json(); })
                 .then(function (data) {
@@ -151,8 +161,8 @@ add_action('woocommerce_before_add_to_cart_button', function () {
                         return;
                     }
                     var options = open.map(function (x) {
-                        return '<option value="' + x.roundInstanceId + '">' + x.label + ' ' +
-                               x.startTime + '–' + x.endTime + ' (' + x.available + ' פנויים)</option>';
+                        return '<option value="' + x.roundInstanceId + '" data-times="' + x.startTime + '–' + x.endTime + '">' +
+                               x.label + ' ' + x.startTime + '–' + x.endTime + ' (' + x.available + ' פנויים)</option>';
                     }).join('');
                     if (optional) {
                         // Free-play day with round windows: picking a round is a
@@ -267,6 +277,17 @@ add_filter('woocommerce_add_to_cart_validation', function ($passed, $product_id)
     return $passed;
 }, 10, 2);
 
+/** "05/07/2026 · 09:00–14:00" from the stored ISO date + times. Display only. */
+function memesh_round_display($cart_item) {
+    if (empty($cart_item['memesh_date'])) return '';
+    $parts = explode('-', $cart_item['memesh_date']);
+    $display = count($parts) === 3 ? "{$parts[2]}/{$parts[1]}/{$parts[0]}" : $cart_item['memesh_date'];
+    if (!empty($cart_item['memesh_round_times'])) {
+        $display .= ' · ' . $cart_item['memesh_round_times'];
+    }
+    return $display;
+}
+
 /** Carry the choices into the cart item (only when a round was actually chosen). */
 add_filter('woocommerce_add_cart_item_data', function ($data, $product_id) {
     if (!memesh_is_round_product($product_id)) return $data;
@@ -275,6 +296,9 @@ add_filter('woocommerce_add_cart_item_data', function ($data, $product_id) {
     $data['memesh_date']              = sanitize_text_field($_POST['memesh_date']);
     $data['memesh_ticket_type']       = memesh_ticket_type_for_product($product_id);
     $data['memesh_extra_companion']   = !empty($_POST['memesh_extra_companion']) ? 1 : 0;
+    // The round's hours, for display only (booking truth is the instance id).
+    $times = isset($_POST['memesh_round_times']) ? sanitize_text_field($_POST['memesh_round_times']) : '';
+    $data['memesh_round_times'] = preg_match('/^[0-9]{2}:[0-9]{2}[–-][0-9]{2}:[0-9]{2}$/u', $times) ? $times : '';
     return $data;
 }, 10, 2);
 
@@ -331,21 +355,22 @@ add_action('woocommerce_cart_item_removed', function ($removed_key, $cart) {
 }, 10, 2);
 
 /**
- * Fold the round date into the ticket's line-item name — templates that apply
- * the name filter (mini cart, emails) show it inline. The companion is NOT
- * repeated here: it has its own cart line now.
+ * Fold the round date + hours into the ticket's line-item name — templates
+ * that apply the name filter (mini cart, the custom cart/checkout) show it
+ * inline. The companion is NOT repeated here: it has its own cart line.
  */
 add_filter('woocommerce_cart_item_name', function ($name, $cart_item) {
-    if (!empty($cart_item['memesh_date'])) {
-        $name .= ' — סבב ' . $cart_item['memesh_date'];
+    $display = memesh_round_display($cart_item);
+    if ($display !== '') {
+        $name .= ' — סבב ' . $display;
     }
     return $name;
 }, 10, 2);
 
-/** Show the round date in cart / checkout item meta. */
+/** Show the round date + hours in cart / checkout item meta. */
 add_filter('woocommerce_get_item_data', function ($items, $cart_item) {
     if (!empty($cart_item['memesh_round_instance_id'])) {
-        $items[] = ['name' => 'סבב', 'value' => esc_html($cart_item['memesh_date'])];
+        $items[] = ['name' => 'סבב', 'value' => esc_html(memesh_round_display($cart_item))];
     }
     return $items;
 }, 10, 2);
@@ -401,4 +426,8 @@ add_action('woocommerce_checkout_create_order_line_item', function ($item, $cart
     $item->add_meta_data('_memesh_round_instance_id', $values['memesh_round_instance_id'], true);
     $item->add_meta_data('_memesh_ticket_type', $values['memesh_ticket_type'], true);
     $item->add_meta_data('_memesh_additional_companions', !empty($values['memesh_extra_companion']) ? 1 : 0, true);
+    // VISIBLE meta (no underscore) — this is what makes the round date + hours
+    // appear on the order confirmation email, the WC admin order, and the
+    // invoice/receipt, since order documents itemize order-line meta.
+    $item->add_meta_data('סבב', memesh_round_display($values), true);
 }, 10, 4);
