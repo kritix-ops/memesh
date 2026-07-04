@@ -54,9 +54,31 @@ export interface StaffRoundsResponse {
   waitlist: StaffRoundsWaitlist[];
 }
 
+export interface StaffDayAvailability {
+  /** YYYY-MM-DD */
+  date: string;
+  /** false = free play on this date — rounds (if any) are optional. */
+  roundsRequired: boolean;
+  rounds: {
+    roundInstanceId: string;
+    label: string;
+    startTime: string;
+    endTime: string;
+    capacity: number;
+    available: number;
+    isClosed: boolean;
+  }[];
+}
+
 /** No date = today. Any YYYY-MM-DD reads that day (floor verification of future bookings). */
 export const getStaffRounds = (date?: string): Promise<ApiResult<StaffRoundsResponse>> =>
   apiRequest(`/staff/rounds/today${date ? `?date=${encodeURIComponent(date)}` : ''}`);
+
+/** Two weeks of per-day availability for the day-strip jumper (public endpoint). */
+export const getRoundAvailabilityRange = (
+  days = 14,
+): Promise<ApiResult<{ from: string; days: StaffDayAvailability[] }>> =>
+  apiRequest(`/rounds/availability-range?days=${days}`);
 
 /** Booked customers of a round with arrival status — the "מי הגיע" list. */
 export const getRoundAttendees = (

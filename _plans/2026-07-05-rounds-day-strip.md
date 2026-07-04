@@ -1,0 +1,100 @@
+# Day-strip availability calendar in the punch booking flow (Yanay pick: variant B)
+
+## Goals
+
+Yanay's third dashboard item: see availability "by colors, what and where is free"
+without poking a blind date picker. He chose variant B of the three mockups
+(2026-07-05): a horizontal strip of upcoming days, each with a status dot, and the
+selected day's rounds listed right below - the closest shape to the studio app he
+uses. This replaces the bare date input inside the punch-card booking form.
+
+## Approach
+
+**DB** (`packages/db/src/rounds-availability-range.ts`, new): a composed helper
+`roundAvailabilityRange(db, fromIso, days, now)` returning one row per day:
+`{ date, roundsRequired, rounds }`. It mirrors the single-date route's composition
+exactly - master switch + anyActiveRounds once, then per date: resolve the winning
+schedule rule, filter rounds that fit its windows entirely, and derive
+`roundsRequired` from the rule's outside behavior. Reuses
+`roundAvailabilityForDate`, `resolveScheduleForDate`, `roundFitsWindows`,
+`getRoundSettings`. Up to 14 dates × (1 + instances) queries per call - fine at
+this scale; grouping into one SQL is a later optimization if it ever shows up.
+
+**API** (`apps/api/src/routes/rounds-booking.ts`): `GET /rounds/availability-range`
+with optional `from` (default: venue today via `venueTodayIso` - the API host is
+UTC, never the server clock) and optional `days` (default 14, max 21). Public and
+rate-limited like the single-date endpoint but at half the rate (heavier query).
+Same public shape per day as the existing endpoint, plus `companionPriceIls` once.
+The single-date endpoint stays untouched - the WP snippet depends on it.
+
+**UI** (`apps/customer/src/customer/CustomerApp.tsx`): the punch booking form
+loads the 14-day range when opened. The date input is replaced by a scrollable
+chip strip - weekday letter, day number, and a status dot per day (green = plenty,
+amber = quarter or less left, red = full, light gray = free-play or nothing
+offered). Tapping a chip shows that day's rounds from the already-loaded payload -
+no second fetch. The first chip is today, labeled "היום", selected on open. The
+rest of the flow (round pick, count stepper, companion upsell, waitlist for full
+rounds) is unchanged. After a successful booking the range is refetched so the
+dots stay honest.
+
+Day dot derivation (client-side, from the day's rounds):
+- no rounds offered and not required → free-play (dashed gray, detail shows the
+  existing "כניסה חופשית" notice)
+- no rounds offered but required → gray (detail shows "אין סבבים פנויים")
+- else by total remaining across open rounds: 0 → red; ≤25% of capacity → amber;
+  otherwise green.
+
+**Staff** (`apps/staff/src/RoundsView.tsx`, Yoav clarification 2026-07-05): the
+same two-week strip sits above the occupancy tiles in the staff סבבים page as a
+quick day jumper. The existing arrows + date input stay (staff sometimes needs
+arbitrary or past dates). Dots there use the staff palette and the SAME
+warn/danger occupancy thresholds as the tiles (from staff rounds settings), so
+strip and tiles never disagree. The strip refreshes on the page's existing
+auto-refresh tick.
+
+## Rejected alternatives
+
+- Month-grid variants (A, C): Yanay explicitly picked B after seeing all three
+  live.
+- Keeping the per-date fetch and calling it 14 times from the client: 14 round
+  trips on every form open versus one; the strip needs all dots at once.
+- A day-level summary endpoint + per-day detail fetch: two endpoints to maintain
+  for a payload that is small anyway (14 days × a handful of rounds).
+
+## Security
+
+Same posture as the existing public availability endpoint: aggregate seat counts
+only, no booking internals, no customer data. `days` is clamped server-side
+(1..21) so the range cannot be abused as an amplification query; rate limit 30/min.
+
+## Observability
+
+- Server: `request.log.info('[rounds availability-range]', { from, days, daysWithRounds })`.
+- Client: `console.info('[customer punch-booking] range loaded', { from, days, error? })`
+  on load, plus the existing booking submit log.
+
+## Settings
+
+Strip length is a constant (14 days) - matches the instance materialization
+horizon and keeps the payload flat. Not exposed as a setting: no realistic user
+would tune it, and the admin already controls what appears via schedule rules and
+round activation. Dot thresholds (25%) are also constants for the same reason.
+
+## Testing
+
+- `packages/db/src/rounds-availability-range.test.ts` (new): default all-rounds
+  day, free-play rule day (rounds offered but optional / none offered), closed
+  rule filtering, master switch off, bookings reducing availability, day count
+  and date sequence.
+- Route tests: public (no auth), `days` out of range → 400, malformed `from` →
+  400, valid → documented shape.
+- Full db + api suites, customer typecheck. Known baseline: staff png-import
+  failures are pre-existing, not a gate.
+
+## Deploy
+
+Stacked branch: `feat/rounds-day-strip` on top of `feat/dashboard-punch-booking-cleanup`
+(merged with origin/main for the venue-timezone helpers). PR order: punch-booking
+cleanup first, then this. Production tracks main; nothing is pushed without
+explicit approval. Additive API only - no breaking change for the WP snippet or
+old clients.

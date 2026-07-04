@@ -12,6 +12,7 @@ import {
   getMyRoundBookings,
   getMyWaitlist,
   getRoundAvailability,
+  getRoundAvailabilityRange,
   joinWaitlist,
   leaveWaitlist,
   startCompanionCheckout,
@@ -19,6 +20,7 @@ import {
   type AvailabilityRound,
   type CustomerRoundBooking,
   type CustomerWaitlistEntry,
+  type DayAvailability,
 } from '../lib/api/rounds';
 import {
   type CSSProperties,
@@ -763,11 +765,42 @@ function Home({
   );
 }
 
+// Day-strip status for the punch-booking picker (plan 2026-07-05-rounds-day-strip,
+// Yanay's variant B pick): one dot per day, derived from the day's open rounds.
+// 'free' = free play (nothing to book), 'none' = rounds required but none offered
+// (past the materialized horizon or everything closed).
+type DayStatus = 'ok' | 'warn' | 'full' | 'free' | 'none';
+
+const dayStatus = (d: DayAvailability): DayStatus => {
+  const openRounds = d.rounds.filter((r) => !r.isClosed);
+  if (openRounds.length === 0) return d.roundsRequired ? 'none' : 'free';
+  const capacity = openRounds.reduce((s, r) => s + r.capacity, 0);
+  const available = openRounds.reduce((s, r) => s + r.available, 0);
+  if (available === 0) return 'full';
+  if (capacity > 0 && available / capacity <= 0.25) return 'warn';
+  return 'ok';
+};
+
+const DAY_DOT: Record<DayStatus, string> = {
+  ok: '#8fae5d',
+  warn: '#e7a33e',
+  full: '#cf7a6b',
+  free: '#a9bac6',
+  none: '#d9d2c9',
+};
+
+const DOW_LETTERS = ['א', 'ב', 'ג', 'ד', 'ה', 'ו', 'ש'] as const;
+const dowLetter = (dateIso: string): string =>
+  DOW_LETTERS[new Date(`${dateIso}T12:00:00`).getDay()] ?? '';
+const dayOfMonth = (dateIso: string): number => Number(dateIso.slice(8, 10));
+
 // Book a round using this card's entries (super-brief §3.4). No WooCommerce — the
 // customer already paid for the card. Lives inside the punch-card card so the
-// "this card → book with it" link is obvious (Yanay feedback, 2026-07-04). Pick a
-// day, pick an open round, pick how many entries to spend — a clear "spends N of
-// M" confirm precedes the punch so it never happens by accident.
+// "this card → book with it" link is obvious (Yanay feedback, 2026-07-04). The
+// day strip shows two weeks of availability as colored dots (Yanay's variant B
+// pick, 2026-07-05); tap a day, pick an open round, pick how many entries to
+// spend — a clear "spends N of M" confirm precedes the punch so it never
+// happens by accident.
 function PunchRoundBooking({
   punchCard,
   onBooked,
@@ -778,9 +811,9 @@ function PunchRoundBooking({
   onWaitlisted: () => void | Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
-  const [date, setDate] = useState('');
-  const [rounds, setRounds] = useState<AvailabilityRound[] | null>(null);
-  const [fullRounds, setFullRounds] = useState<AvailabilityRound[]>([]);
+  const [days, setDays] = useState<DayAvailability[] | null>(null);
+  const [daysError, setDaysError] = useState(false);
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [joinMsg, setJoinMsg] = useState<string | null>(null);
   const [count, setCount] = useState(1);
   const [chosen, setChosen] = useState<AvailabilityRound | null>(null);
@@ -789,7 +822,6 @@ function PunchRoundBooking({
   const [done, setDone] = useState(false);
   const [addCompanion, setAddCompanion] = useState(false);
   const [companionPrice, setCompanionPrice] = useState<number | null>(null);
-  const [roundsOff, setRoundsOff] = useState(false);
   // Set when the booking succeeded but the companion payment couldn't start —
   // the done screen tells the customer to retry from the booking card.
   const [companionNote, setCompanionNote] = useState<string | null>(null);
@@ -797,6 +829,17 @@ function PunchRoundBooking({
   const remaining = punchCard.totalEntries - punchCard.usedEntries;
   // The stepper can never promise more than the card holds or the round seats.
   const maxCount = chosen ? Math.max(1, Math.min(remaining, chosen.available)) : remaining;
+
+  // Everything below the strip derives from the selected day — one range fetch
+  // on open covers the dots AND the per-day round lists, no second request.
+  const selectedDay = days?.find((d) => d.date === selectedDate) ?? null;
+  const openRounds = selectedDay
+    ? selectedDay.rounds.filter((r) => r.available > 0 && !r.isClosed)
+    : [];
+  const fullRounds = selectedDay
+    ? selectedDay.rounds.filter((r) => r.available === 0 && !r.isClosed)
+    : [];
+  const roundsOff = selectedDay !== null && !selectedDay.roundsRequired;
 
   const primaryBtn: CSSProperties = {
     border: 'none',
@@ -827,24 +870,37 @@ function PunchRoundBooking({
     lineHeight: '38px',
   };
 
-  const loadAvailability = async (d: string) => {
-    setRounds(null);
-    setFullRounds([]);
+  const loadRange = async () => {
+    setDays(null);
+    setDaysError(false);
     setChosen(null);
     setError(null);
     setJoinMsg(null);
-    if (!d) return;
-    const res = await getRoundAvailability(d);
+    const res = await getRoundAvailabilityRange();
+    console.info('[customer punch-booking] range loaded', {
+      ok: res.ok,
+      days: res.ok ? res.data.days.length : 0,
+      error: res.ok ? undefined : res.error,
+    });
     if (!res.ok) {
-      setError('לא ניתן לטעון זמנים פנויים כרגע.');
-      setRounds([]);
+      setDaysError(true);
+      setDays([]);
       return;
     }
-    setRounds(res.data.rounds.filter((r) => r.available > 0 && !r.isClosed));
-    setFullRounds(res.data.rounds.filter((r) => r.available === 0 && !r.isClosed));
+    setDays(res.data.days);
     setCompanionPrice(res.data.companionPriceIls);
-    setRoundsOff(res.data.roundsRequired === false);
+    // Keep the current selection only while it's still in the window;
+    // otherwise fall back to the first day (today).
+    setSelectedDate((cur) =>
+      cur && res.data.days.some((d) => d.date === cur) ? cur : (res.data.days[0]?.date ?? null),
+    );
   };
+
+  // Fresh dots every time the form opens — availability moves under our feet.
+  useEffect(() => {
+    if (open) void loadRange();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   const doJoin = async (r: AvailabilityRound) => {
     setBusy(true);
@@ -964,31 +1020,118 @@ function PunchRoundBooking({
         </div>
       ) : (
         <>
-          <label style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 13, color: MUTED }}>
-            תאריך
-            <input
-              type="date"
-              value={date}
-              onChange={(e) => {
-                setDate(e.target.value);
-                void loadAvailability(e.target.value);
-              }}
-              style={{ padding: '10px', borderRadius: 9, border: '1.5px solid #e9e0d9', fontSize: 14 }}
-            />
-          </label>
-
-          {date && rounds === null && (
+          {daysError && (
+            <div style={{ textAlign: 'center', color: '#a23a3a', fontSize: 13 }}>
+              לא ניתן לטעון זמינות כרגע. נסו לרענן את הדף.
+            </div>
+          )}
+          {!daysError && days === null && (
             <div style={{ textAlign: 'center', color: MUTED, fontSize: 13 }}>טוען…</div>
           )}
-          {rounds && rounds.length === 0 && (
+          {days && days.length > 0 && (
+            <>
+              <div style={{ display: 'flex', gap: 6, overflowX: 'auto', padding: '2px 2px 4px' }}>
+                {days.map((d, i) => {
+                  const active = selectedDate === d.date;
+                  return (
+                    <button
+                      key={d.date}
+                      onClick={() => {
+                        setSelectedDate(d.date);
+                        setChosen(null);
+                        setError(null);
+                        setJoinMsg(null);
+                      }}
+                      style={{
+                        flex: '0 0 auto',
+                        minWidth: 52,
+                        border: `1.5px solid ${active ? '#e7a33e' : '#e9e0d9'}`,
+                        background: active ? '#fdf3e3' : '#fff',
+                        borderRadius: 12,
+                        padding: '8px 6px',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        gap: 4,
+                      }}
+                    >
+                      <span style={{ fontSize: 10.5, color: MUTED, fontWeight: 600 }}>
+                        {i === 0 ? 'היום' : `${dowLetter(d.date)}׳`}
+                      </span>
+                      <span
+                        style={{
+                          fontSize: 15,
+                          fontWeight: 700,
+                          color: active ? '#b9772a' : '#2d3436',
+                        }}
+                      >
+                        {dayOfMonth(d.date)}
+                      </span>
+                      <span
+                        style={{
+                          width: 7,
+                          height: 7,
+                          borderRadius: '50%',
+                          background: DAY_DOT[dayStatus(d)],
+                        }}
+                      />
+                    </button>
+                  );
+                })}
+              </div>
+              <div
+                style={{
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  gap: '4px 12px',
+                  justifyContent: 'center',
+                  fontSize: 11.5,
+                  color: MUTED,
+                }}
+              >
+                {(
+                  [
+                    ['ok', 'הרבה מקום'],
+                    ['warn', 'נשארו מעט'],
+                    ['full', 'מלא'],
+                    ['free', 'כניסה חופשית'],
+                  ] as const
+                ).map(([k, label]) => (
+                  <span key={k} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                    <span
+                      style={{
+                        width: 7,
+                        height: 7,
+                        borderRadius: '50%',
+                        background: DAY_DOT[k],
+                      }}
+                    />
+                    {label}
+                  </span>
+                ))}
+              </div>
+            </>
+          )}
+
+          {selectedDay && (
+            <div style={{ fontSize: 13, color: MUTED, textAlign: 'center' }}>
+              יום {dowLetter(selectedDay.date)}׳ · {fmtDate(selectedDay.date)}
+            </div>
+          )}
+          {selectedDay && openRounds.length === 0 && (
             <div style={{ textAlign: 'center', color: MUTED, fontSize: 13 }}>
-              {roundsOff
-                ? 'בתאריך זה הכניסה חופשית — אין צורך בהזמנת סבב, פשוט מגיעים.'
-                : 'אין סבבים פנויים ביום זה.'}
+              {selectedDay.rounds.length === 0
+                ? roundsOff
+                  ? 'בתאריך זה הכניסה חופשית — אין צורך בהזמנת סבב, פשוט מגיעים.'
+                  : 'אין סבבים פנויים ביום זה.'
+                : fullRounds.length > 0
+                  ? 'כל הסבבים מלאים ביום זה — אפשר להצטרף לרשימת ההמתנה.'
+                  : 'אין סבבים פנויים ביום זה.'}
             </div>
           )}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {rounds?.map((r) => (
+            {openRounds.map((r) => (
               <button
                 key={r.roundInstanceId}
                 onClick={() => {

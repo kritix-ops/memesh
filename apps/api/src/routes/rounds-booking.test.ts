@@ -67,6 +67,54 @@ test('GET /rounds/availability is public (no auth) and returns the documented sh
   }
 });
 
+// --- GET /rounds/availability-range (public) ---------------------------------
+
+test('GET /rounds/availability-range rejects a malformed from date with 400', async () => {
+  const res = await app.inject({ method: 'GET', url: '/rounds/availability-range?from=07-01-2026' });
+  assert.equal(res.statusCode, 400);
+  assert.equal(res.json().error, 'invalid_date');
+});
+
+test('GET /rounds/availability-range rejects days out of range with 400', async () => {
+  for (const days of ['0', '22', 'abc']) {
+    const res = await app.inject({ method: 'GET', url: `/rounds/availability-range?days=${days}` });
+    assert.equal(res.statusCode, 400, `days=${days}`);
+    assert.equal(res.json().error, 'invalid_days');
+  }
+});
+
+test('GET /rounds/availability-range is public and returns one entry per day', async () => {
+  const res = await app.inject({
+    method: 'GET',
+    url: '/rounds/availability-range?from=2026-07-01&days=3',
+  });
+  // Public: never 401/403. 200 if the test box has a real DB; 500 if not.
+  assert.notEqual(res.statusCode, 401);
+  assert.notEqual(res.statusCode, 403);
+  assert.ok(
+    res.statusCode === 200 || res.statusCode === 500,
+    `expected 200 or 500, got ${res.statusCode}`,
+  );
+  if (res.statusCode !== 200) return;
+  const body = res.json();
+  assert.equal(body.from, '2026-07-01');
+  assert.equal(typeof body.companionPriceIls, 'number');
+  assert.equal(body.days.length, 3);
+  assert.deepEqual(
+    body.days.map((d: { date: string }) => d.date),
+    ['2026-07-01', '2026-07-02', '2026-07-03'],
+  );
+  for (const day of body.days) {
+    assert.equal(typeof day.roundsRequired, 'boolean');
+    assert.ok(Array.isArray(day.rounds), 'rounds is an array');
+    for (const r of day.rounds) {
+      // Public shape must not leak internal fields.
+      assert.equal(r.taken, undefined, 'no internal taken count');
+      assert.equal(r.revenueIls, undefined, 'no revenue');
+    }
+  }
+});
+
 // --- GET /rounds/my-bookings (customer-gated) -------------------------------
 
 test('GET /rounds/my-bookings without a customer token returns 401', async () => {

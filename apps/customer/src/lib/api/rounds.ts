@@ -46,6 +46,20 @@ export const getRoundAvailability = (
   }>
 > => apiRequest(`/rounds/availability?date=${encodeURIComponent(date)}`, { audience: 'customer' });
 
+export interface DayAvailability {
+  /** YYYY-MM-DD */
+  date: string;
+  /** false = free play on this date — rounds (if any) are optional. */
+  roundsRequired: boolean;
+  rounds: AvailabilityRound[];
+}
+
+/** Upcoming days for the day-strip picker. `from` defaults to venue today server-side. */
+export const getRoundAvailabilityRange = (
+  days = 14,
+): Promise<ApiResult<{ from: string; companionPriceIls: number; days: DayAvailability[] }>> =>
+  apiRequest(`/rounds/availability-range?days=${days}`, { audience: 'customer' });
+
 export const swapRoundBooking = (
   bookingId: string,
   targetRoundInstanceId: string,
