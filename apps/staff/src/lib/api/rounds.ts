@@ -10,6 +10,8 @@ export interface StaffRoundsRound {
   endTime: string;
   capacity: number;
   taken: number;
+  /** Active pre-payment holds — the "בתהליך תשלום" slice of `taken`. */
+  heldCount: number;
   /** Real bookings: confirmed + used (holds excluded). */
   bookedCount: number;
   /** Checked in at the door. */

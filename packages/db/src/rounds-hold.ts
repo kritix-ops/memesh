@@ -21,10 +21,20 @@ export type CreateHoldInput = {
   additionalCompanions?: number;
   /** Provisional — the confirm/mint step sets the real source. Defaults to 'paid'. */
   source?: HoldSource;
+  /**
+   * Refresh an existing active hold for the same customer + instance + ticket
+   * type instead of inserting a second row. Set by the WC checkout path only:
+   * WooCommerce re-creates order line items on every checkout attempt, so a
+   * payment retry re-fires the hold hook and would otherwise pin a ghost seat
+   * for the TTL (Yanay's "2/60" report, 2026-07-04). Safe there because the WP
+   * cart allows at most one line per ticket product. Customer-app callers
+   * leave it unset.
+   */
+  reuseActiveHold?: boolean;
 };
 
 export type CreateHoldResult =
-  | { ok: true; holdId: string; expiresAt: string }
+  | { ok: true; holdId: string; expiresAt: string; reused: boolean }
   | { ok: false; error: 'not_found' | 'closed' | 'sold_out' };
 
 /**
@@ -71,6 +81,41 @@ export const createHold = async (
     if (!inst) return { ok: false, error: 'not_found' as const };
     if (inst.isClosed) return { ok: false, error: 'closed' as const };
 
+    // Reuse before the capacity check: the existing hold already occupies its
+    // seat, so refreshing it must succeed even on a round that filled up
+    // between the two checkout attempts.
+    if (input.reuseActiveHold) {
+      const existing = await tx
+        .select({ id: bookings.id })
+        .from(bookings)
+        .where(
+          and(
+            eq(bookings.roundInstanceId, input.roundInstanceId),
+            eq(bookings.customerId, input.customerId),
+            eq(bookings.ticketType, input.ticketType),
+            eq(bookings.status, 'held'),
+            sql`${bookings.holdExpiresAt} > ${now}`,
+          ),
+        )
+        .limit(1)
+        .for('update');
+      const hold = existing[0];
+      if (hold) {
+        const holdExpiresAt = new Date(now.getTime() + ttlMs);
+        await tx
+          .update(bookings)
+          .set({
+            holdExpiresAt,
+            // Last submission wins — the retry may have toggled the companion
+            // checkbox, and this is what the customer is about to pay for.
+            additionalCompanions: input.additionalCompanions ?? 0,
+            updatedAt: now,
+          })
+          .where(eq(bookings.id, hold.id));
+        return { ok: true as const, holdId: hold.id, expiresAt: holdExpiresAt.toISOString(), reused: true };
+      }
+    }
+
     const takenRows = await tx
       .select({ n: count() })
       .from(bookings)
@@ -98,7 +143,7 @@ export const createHold = async (
       .returning({ id: bookings.id });
     const booking = inserted[0];
     if (!booking) throw new Error('[rounds-hold] insert returned no row');
-    return { ok: true as const, holdId: booking.id, expiresAt: holdExpiresAt.toISOString() };
+    return { ok: true as const, holdId: booking.id, expiresAt: holdExpiresAt.toISOString(), reused: false };
   });
 };
 

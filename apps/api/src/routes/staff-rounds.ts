@@ -23,6 +23,8 @@ export type StaffRoundsRound = {
   capacity: number;
   /** confirmed + used + active holds */
   taken: number;
+  /** Active pre-payment holds — the "בתהליך תשלום" slice of `taken`. */
+  heldCount: number;
   /** Real bookings: confirmed + used (holds excluded). */
   bookedCount: number;
   /** Checked in at the door — "כמה הגיעו". */
@@ -93,6 +95,7 @@ async function computeStaffRounds(dateIso: string, todayIso: string): Promise<St
       endTime: r.endTime,
       capacity: r.capacity,
       taken: r.taken,
+      heldCount: r.heldCount,
       bookedCount: r.bookedCount,
       arrivedCount: r.arrivedCount,
       pctFull: r.pctFull,

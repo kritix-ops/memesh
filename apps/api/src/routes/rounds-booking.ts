@@ -266,11 +266,16 @@ export const roundsBookingRoutes: FastifyPluginAsync = async (fastify) => {
         wpUserId: hint.wpUserId ?? null,
         marketingConsent: hint.marketingConsent ?? false,
       });
+      // reuseActiveHold: WooCommerce re-creates order line items on every
+      // checkout attempt, so a payment retry re-fires this call. Refreshing
+      // the existing hold instead of inserting a second one keeps a retry
+      // from pinning a ghost seat for the TTL.
       const result = await createHold(db, {
         roundInstanceId: parsed.data.roundInstanceId,
         customerId: customer.id,
         ticketType: parsed.data.ticketType,
         source: 'paid',
+        reuseActiveHold: true,
         ...(parsed.data.additionalCompanions !== undefined
           ? { additionalCompanions: parsed.data.additionalCompanions }
           : {}),
@@ -280,7 +285,12 @@ export const roundsBookingRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(code).send({ error: result.error });
       }
       request.log.info(
-        { holdId: result.holdId, customerId: customer.id, roundInstanceId: parsed.data.roundInstanceId },
+        {
+          holdId: result.holdId,
+          customerId: customer.id,
+          roundInstanceId: parsed.data.roundInstanceId,
+          reused: result.reused,
+        },
         '[rounds hold wc] created',
       );
       return { holdId: result.holdId, expiresAt: result.expiresAt };
