@@ -99,6 +99,7 @@ test('GET /staff/rounds/today returns occupancy + waitlist only, never revenue',
   assert.equal(body.settings.showRevenue, undefined, 'no revenue toggle leaked');
   for (const r of body.rounds) {
     assert.equal(r.revenueIls, undefined, 'no per-round revenue');
+    assert.equal(typeof r.heldCount, 'number', 'heldCount exposed for the panel');
   }
 });
 

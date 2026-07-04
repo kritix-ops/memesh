@@ -90,6 +90,91 @@ test('lazy expiry: a past-TTL hold frees the seat for a later hold', async () =>
   assert.equal((await createHold(db, { roundInstanceId: instId, customerId, ...ticket }, later)).ok, true);
 });
 
+test('reuseActiveHold: a checkout retry refreshes the same hold instead of leaking a second seat', async () => {
+  const db = await freshDb();
+  const { instId, customerId } = await setup(db, 2);
+  const first = await createHold(
+    db,
+    { roundInstanceId: instId, customerId, ...ticket, reuseActiveHold: true },
+    NOW,
+  );
+  assert.equal(first.ok, true);
+  if (!first.ok) return;
+  assert.equal(first.reused, false);
+
+  // Retry 2 minutes later with the companion checkbox now ticked.
+  const retryAt = new Date(NOW.getTime() + 2 * 60_000);
+  const retry = await createHold(
+    db,
+    { roundInstanceId: instId, customerId, ...ticket, additionalCompanions: 1, reuseActiveHold: true },
+    retryAt,
+  );
+  assert.equal(retry.ok, true);
+  if (!retry.ok) return;
+  assert.equal(retry.reused, true);
+  assert.equal(retry.holdId, first.holdId, 'same hold, not a new row');
+  // TTL restarts from the retry (default 15 min).
+  assert.equal(retry.expiresAt, new Date(retryAt.getTime() + 15 * 60_000).toISOString());
+
+  const rows = await db.select().from(bookings).where(eq(bookings.roundInstanceId, instId));
+  assert.equal(rows.length, 1, 'exactly one booking row');
+  assert.equal(rows[0]!.additionalCompanions, 1, 'last submission wins on companions');
+});
+
+test('reuseActiveHold: no reuse across ticket types or past-TTL holds', async () => {
+  const db = await freshDb();
+  const { instId, customerId } = await setup(db, 3);
+  const over = await createHold(
+    db,
+    { roundInstanceId: instId, customerId, ticketType: 'child_over_walking', reuseActiveHold: true },
+    NOW,
+  );
+  const under = await createHold(
+    db,
+    { roundInstanceId: instId, customerId, ticketType: 'child_under_walking', reuseActiveHold: true },
+    NOW,
+  );
+  assert.equal(over.ok, true);
+  assert.equal(under.ok, true);
+  if (!over.ok || !under.ok) return;
+  assert.equal(under.reused, false, 'different ticket type is a different seat');
+  assert.notEqual(under.holdId, over.holdId);
+
+  // 16 min later (TTL 15): the old hold is lazily expired — a fresh row, not a revival.
+  const later = new Date(NOW.getTime() + 16 * 60_000);
+  const afterExpiry = await createHold(
+    db,
+    { roundInstanceId: instId, customerId, ticketType: 'child_over_walking', reuseActiveHold: true },
+    later,
+  );
+  assert.equal(afterExpiry.ok, true);
+  if (!afterExpiry.ok) return;
+  assert.equal(afterExpiry.reused, false);
+  assert.notEqual(afterExpiry.holdId, over.holdId);
+});
+
+test('reuseActiveHold: a retry succeeds even when the round has since filled', async () => {
+  const db = await freshDb();
+  const { instId, customerId } = await setup(db, 1);
+  const first = await createHold(
+    db,
+    { roundInstanceId: instId, customerId, ...ticket, reuseActiveHold: true },
+    NOW,
+  );
+  assert.equal(first.ok, true);
+  if (!first.ok) return;
+  // The round is now full — a plain hold is rejected, the retry is not.
+  const retry = await createHold(
+    db,
+    { roundInstanceId: instId, customerId, ...ticket, reuseActiveHold: true },
+    NOW,
+  );
+  assert.equal(retry.ok, true);
+  if (!retry.ok) return;
+  assert.equal(retry.reused, true);
+  assert.equal(retry.holdId, first.holdId);
+});
+
 test('releaseHold: owner frees the seat, non-owner is forbidden', async () => {
   const db = await freshDb();
   const { instId, customerId } = await setup(db, 1);

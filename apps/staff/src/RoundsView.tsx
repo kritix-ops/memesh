@@ -354,6 +354,12 @@ function RoundStatusCard({
         )}
       </div>
 
+      {!round.isClosed && round.heldCount > 0 && (
+        <div style={{ marginTop: 6, fontSize: 13.5, color: MUTED }}>
+          מתוכם {round.heldCount} בתהליך תשלום — שריון זמני שמשתחרר לבד אם הרכישה לא מושלמת
+        </div>
+      )}
+
       {round.bookedCount > 0 && (
         <div style={{ marginTop: 8, fontSize: 14.5, color: INK }}>
           <strong style={{ color: round.arrivedCount > 0 ? STATUS.green.fg : INK }}>
