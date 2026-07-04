@@ -148,8 +148,9 @@ async function punchBookingWithPendingCompanion(db: Awaited<ReturnType<typeof fr
     NOW,
   );
   if (!booked.ok) throw new Error('book');
-  await recordCompanionOrder(db, { bookingId: booked.bookingId, wcOrderId: '777' }, NOW);
-  return booked.bookingId;
+  const bookedId = booked.bookings[0]!.bookingId;
+  await recordCompanionOrder(db, { bookingId: bookedId, wcOrderId: '777' }, NOW);
+  return bookedId;
 }
 
 const companionOrder = (bookingId: string, over: { id?: number; status?: string } = {}) => ({

@@ -69,7 +69,7 @@ async function setup(db: Awaited<ReturnType<typeof freshDb>>) {
     NOW,
   );
   if (!booked.ok) throw new Error('book');
-  return { bookingId: booked.bookingId, customerId: cust.id, cardId: card.id };
+  return { bookingId: booked.bookings[0]!.bookingId, customerId: cust.id, cardId: card.id };
 }
 
 // ---------------------------------------------------------------------------

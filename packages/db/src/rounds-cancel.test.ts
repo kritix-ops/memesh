@@ -125,13 +125,14 @@ test('cancelBooking returns the punch (not money) for a punch-card booking', asy
   const booked = await bookRoundWithPunch(db, { roundInstanceId: inst!.id, customerId: cust.id, punchCardId: cardRow.id, ticketType: 'child_over_walking' }, resolver, NOW);
   assert.equal(booked.ok, true);
   if (!booked.ok) return;
+  const bookedId = booked.bookings[0]!.bookingId;
 
   let refundCalled = false;
   const refund = async () => {
     refundCalled = true;
     return true;
   };
-  const res = await cancelBooking(db, { bookingId: booked.bookingId, customerId: cust.id }, { refund }, NOW);
+  const res = await cancelBooking(db, { bookingId: bookedId, customerId: cust.id }, { refund }, NOW);
   assert.equal(res.ok, true);
   if (!res.ok) return;
   assert.equal(res.punchReturned, true);
@@ -140,10 +141,35 @@ test('cancelBooking returns the punch (not money) for a punch-card booking', asy
 
   const after = (await db.select().from(punchCards).where(eq(punchCards.id, cardRow.id)).limit(1))[0];
   assert.equal(after!.usedEntries, 0); // the entry was returned
-  const entry = (await db.select().from(punchCardEntries).where(eq(punchCardEntries.idempotencyKey, booked.bookingId)).limit(1))[0];
+  const entry = (await db.select().from(punchCardEntries).where(eq(punchCardEntries.idempotencyKey, bookedId)).limit(1))[0];
   assert.ok(entry!.refundedAt !== null);
-  const booking = (await db.select().from(bookings).where(eq(bookings.id, booked.bookingId)).limit(1))[0];
+  const booking = (await db.select().from(bookings).where(eq(bookings.id, bookedId)).limit(1))[0];
   assert.equal(booking!.status, 'cancelled');
+});
+
+test('cancelBooking on one of several punch bookings returns exactly one punch', async () => {
+  const db = await freshDb();
+  const r = await createRound(db, { label: 'a', displayName: 'A', startTime: '16:00', endTime: '18:00', daysActive: 127, defaultCapacity: 5 }, NOW);
+  if (!r.ok) throw new Error('round');
+  const inst = (await db.select().from(roundInstances).where(and(eq(roundInstances.roundId, r.round.id), eq(roundInstances.date, FUTURE))).limit(1))[0];
+  const cust = await createCustomer(db, { firstName: 'ט', lastName: 'י', phone: phone() });
+  const cardRow = await createPunchCard(db, resolver, { customerId: cust.id, totalEntries: 12, validityDays: 0, now: NOW });
+  const booked = await bookRoundWithPunch(db, { roundInstanceId: inst!.id, customerId: cust.id, punchCardId: cardRow.id, ticketType: 'child_over_walking', count: 3 }, resolver, NOW);
+  assert.equal(booked.ok, true);
+  if (!booked.ok) return;
+
+  const refund = async () => true;
+  const res = await cancelBooking(db, { bookingId: booked.bookings[1]!.bookingId, customerId: cust.id }, { refund }, NOW);
+  assert.equal(res.ok, true);
+  if (!res.ok) return;
+  assert.equal(res.punchReturned, true);
+
+  const after = (await db.select().from(punchCards).where(eq(punchCards.id, cardRow.id)).limit(1))[0];
+  assert.equal(after!.usedEntries, 2); // only the cancelled booking's punch came back
+  for (const [i, b] of booked.bookings.entries()) {
+    const row = (await db.select().from(bookings).where(eq(bookings.id, b.bookingId)).limit(1))[0];
+    assert.equal(row!.status, i === 1 ? 'cancelled' : 'confirmed');
+  }
 });
 
 test('cancelBooking is not repeatable — a second cancel does not refund again', async () => {

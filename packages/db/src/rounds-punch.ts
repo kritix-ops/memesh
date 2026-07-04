@@ -1,15 +1,16 @@
-// Book a round seat by spending a punch-card entry (super-brief §3.4). Same
+// Book round seats by spending punch-card entries (super-brief §3.4). Same
 // oversell guard as the paid hold, but instead of a WooCommerce payment the
-// booking is confirmed immediately against one entry on the customer's OWN
-// card. It all runs in one transaction — reserve the seat, mint the barcode,
-// punch the card — so there is never a spent punch without a booking, or a
-// booking without a spent punch. The door same-day lockout in punchCard() is a
+// bookings are confirmed immediately against entries on the customer's OWN
+// card — `count` entries mint `count` bookings (one child + one companion
+// each). It all runs in one transaction — reserve the seats, mint the
+// barcodes, punch the card — so there is never a spent punch without a
+// booking, or a booking without a spent punch. The door same-day lockout in punchCard() is a
 // door concept and would wrongly block advance bookings, so the punch is
 // written inline here (method 'online', punched_by null, no lockout). The
 // entry's idempotency_key is the booking id, which is the link cancellation
 // uses to find and reverse this exact punch.
 
-import { and, count, eq, sql } from 'drizzle-orm';
+import { and, count as countRows, eq, sql } from 'drizzle-orm';
 import type { PgDatabase } from 'drizzle-orm/pg-core';
 import { signBookingToken, type KeyResolver } from '@memesh/qr-engine';
 import { getRoundSettings } from './round-settings';
@@ -24,10 +25,14 @@ export type BookRoundWithPunchInput = {
   customerId: string;
   punchCardId: string;
   ticketType: 'child_under_walking' | 'child_over_walking';
+  /** Entries to spend in one go — N punches mint N bookings. Defaults to 1. */
+  count?: number;
 };
 
+export type BookedPunchEntry = { bookingId: string; barcodeToken: string };
+
 export type BookRoundWithPunchResult =
-  | { ok: true; bookingId: string; barcodeToken: string; remaining: number }
+  | { ok: true; bookings: BookedPunchEntry[]; remaining: number }
   | {
       ok: false;
       error:
@@ -38,7 +43,8 @@ export type BookRoundWithPunchResult =
         | 'card_forbidden'
         | 'card_inactive'
         | 'card_expired'
-        | 'card_exhausted';
+        | 'card_exhausted'
+        | 'not_enough_entries';
     };
 
 export const bookRoundWithPunch = async (
@@ -47,6 +53,11 @@ export const bookRoundWithPunch = async (
   resolver: KeyResolver,
   now: Date = new Date(),
 ): Promise<BookRoundWithPunchResult> => {
+  const count = input.count ?? 1;
+  if (!Number.isInteger(count) || count < 1) {
+    throw new Error(`[rounds-punch] invalid count ${count}`);
+  }
+
   // Schedule guards — same rule as createHold: master switch off or a round
   // filtered out by the date's schedule rule is not bookable, punch included.
   const settings = await getRoundSettings(db);
@@ -76,7 +87,7 @@ export const bookRoundWithPunch = async (
     if (inst.isClosed) return { ok: false, error: 'round_closed' as const };
 
     const takenRows = await tx
-      .select({ n: count() })
+      .select({ n: countRows() })
       .from(bookings)
       .where(
         and(
@@ -84,7 +95,7 @@ export const bookRoundWithPunch = async (
           sql`(${bookings.status} IN ('confirmed','used') OR (${bookings.status} = 'held' AND ${bookings.holdExpiresAt} > ${now}))`,
         ),
       );
-    if (Number(takenRows[0]?.n ?? 0) + 1 > inst.capacity) {
+    if (Number(takenRows[0]?.n ?? 0) + count > inst.capacity) {
       return { ok: false, error: 'round_full' as const };
     }
 
@@ -105,41 +116,56 @@ export const bookRoundWithPunch = async (
     if (cardRow.usedEntries >= cardRow.totalEntries) {
       return { ok: false, error: 'card_exhausted' as const };
     }
+    if (cardRow.usedEntries + count > cardRow.totalEntries) {
+      return { ok: false, error: 'not_enough_entries' as const };
+    }
 
-    // 3. Insert the confirmed booking, then sign its barcode (needs the id).
-    const insertedBooking = await tx
+    // 3. Insert the confirmed bookings, then sign each barcode (needs the id).
+    // One row per entry — a punch booking is always one child + one companion,
+    // so N punches are N bookings, never one booking with a quantity.
+    const insertedBookings = await tx
       .insert(bookings)
-      .values({
-        roundInstanceId: input.roundInstanceId,
-        customerId: input.customerId,
-        ticketType: input.ticketType,
-        additionalCompanions: 0,
-        source: 'punchcard',
-        status: 'confirmed',
-        punchCardId: cardRow.id,
-        confirmedAt: now,
-        updatedAt: now,
-      })
+      .values(
+        Array.from({ length: count }, () => ({
+          roundInstanceId: input.roundInstanceId,
+          customerId: input.customerId,
+          ticketType: input.ticketType,
+          additionalCompanions: 0,
+          source: 'punchcard' as const,
+          status: 'confirmed' as const,
+          punchCardId: cardRow.id,
+          confirmedAt: now,
+          updatedAt: now,
+        })),
+      )
       .returning({ id: bookings.id, barcodeVersion: bookings.barcodeVersion });
-    const booking = insertedBooking[0];
-    if (!booking) throw new Error('[rounds-punch] booking insert returned no row');
+    if (insertedBookings.length !== count) {
+      throw new Error('[rounds-punch] booking insert returned wrong row count');
+    }
 
-    const token = signBookingToken({ bookingId: booking.id, version: booking.barcodeVersion }, resolver);
-    await tx.update(bookings).set({ barcodeToken: token }).where(eq(bookings.id, booking.id));
+    const booked: BookedPunchEntry[] = [];
+    for (const booking of insertedBookings) {
+      const token = signBookingToken({ bookingId: booking.id, version: booking.barcodeVersion }, resolver);
+      await tx.update(bookings).set({ barcodeToken: token }).where(eq(bookings.id, booking.id));
+      booked.push({ bookingId: booking.id, barcodeToken: token });
+    }
 
-    // 4. Punch the card inline (no door lockout). idempotency_key = booking id
-    // links this entry to the booking for the cancellation punch-return.
-    const nextUsed = cardRow.usedEntries + 1;
+    // 4. Punch the card inline (no door lockout), one entry per booking so
+    // idempotency_key = booking id still lets cancellation reverse exactly the
+    // punch that paid for the cancelled booking.
+    await tx.insert(punchCardEntries).values(
+      booked.map((b) => ({
+        punchCardId: cardRow.id,
+        punchedBy: null,
+        method: 'online' as const,
+        entriesConsumed: 1,
+        idempotencyKey: b.bookingId,
+        notes: `round booking ${b.bookingId}`,
+        punchedAt: now,
+      })),
+    );
+    const nextUsed = cardRow.usedEntries + count;
     const exhausted = nextUsed >= cardRow.totalEntries;
-    await tx.insert(punchCardEntries).values({
-      punchCardId: cardRow.id,
-      punchedBy: null,
-      method: 'online',
-      entriesConsumed: 1,
-      idempotencyKey: booking.id,
-      notes: `round booking ${booking.id}`,
-      punchedAt: now,
-    });
     await tx
       .update(punchCards)
       .set({ usedEntries: nextUsed, isActive: !exhausted, updatedAt: now })
@@ -150,8 +176,7 @@ export const bookRoundWithPunch = async (
 
     return {
       ok: true as const,
-      bookingId: booking.id,
-      barcodeToken: token,
+      bookings: booked,
       remaining: cardRow.totalEntries - nextUsed,
     };
   });

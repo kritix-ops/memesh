@@ -709,15 +709,6 @@ function Home({
           ))}
         </div>
       )}
-      {cards && cards.some((c) => c.isActive && c.usedEntries < c.totalEntries) && (
-        <PunchRoundBooking
-          cards={cards.filter((c) => c.isActive && c.usedEntries < c.totalEntries)}
-          onBooked={async () => {
-            await Promise.all([loadRoundBookings(), loadCards(), loadWaitlist()]);
-          }}
-          onWaitlisted={loadWaitlist}
-        />
-      )}
       <div>
         <div style={{ fontWeight: 600, marginBottom: 10 }}>כרטיסיות פעילות</div>
         {error && (
@@ -753,6 +744,15 @@ function Home({
                 ? 'ללא תפוגה'
                 : `תוקף עד ${fmtDate(yyyyMmDd(c.expiresAt))}`}
             </div>
+            {c.isActive && c.usedEntries < c.totalEntries && (
+              <PunchRoundBooking
+                punchCard={c}
+                onBooked={async () => {
+                  await Promise.all([loadRoundBookings(), loadCards(), loadWaitlist()]);
+                }}
+                onWaitlisted={loadWaitlist}
+              />
+            )}
           </div>
         ))}
       </div>
@@ -763,16 +763,17 @@ function Home({
   );
 }
 
-// Book a round using a punch-card entry (super-brief §3.4). No WooCommerce — the
-// customer already paid for the card, so this just spends one entry. Pick a day,
-// pick an open round, confirm, done. A clear "uses 1 of N" confirm precedes the
-// punch so it never happens by accident.
+// Book a round using this card's entries (super-brief §3.4). No WooCommerce — the
+// customer already paid for the card. Lives inside the punch-card card so the
+// "this card → book with it" link is obvious (Yanay feedback, 2026-07-04). Pick a
+// day, pick an open round, pick how many entries to spend — a clear "spends N of
+// M" confirm precedes the punch so it never happens by accident.
 function PunchRoundBooking({
-  cards,
+  punchCard,
   onBooked,
   onWaitlisted,
 }: {
-  cards: ApiPunchCard[];
+  punchCard: ApiPunchCard;
   onBooked: () => void | Promise<void>;
   onWaitlisted: () => void | Promise<void>;
 }) {
@@ -781,10 +782,7 @@ function PunchRoundBooking({
   const [rounds, setRounds] = useState<AvailabilityRound[] | null>(null);
   const [fullRounds, setFullRounds] = useState<AvailabilityRound[]>([]);
   const [joinMsg, setJoinMsg] = useState<string | null>(null);
-  const [cardId, setCardId] = useState(cards[0]?.id ?? '');
-  const [ticketType, setTicketType] = useState<'child_over_walking' | 'child_under_walking'>(
-    'child_over_walking',
-  );
+  const [count, setCount] = useState(1);
   const [chosen, setChosen] = useState<AvailabilityRound | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -796,8 +794,9 @@ function PunchRoundBooking({
   // the done screen tells the customer to retry from the booking card.
   const [companionNote, setCompanionNote] = useState<string | null>(null);
 
-  const selectedCard = cards.find((c) => c.id === cardId) ?? cards[0];
-  const remaining = selectedCard ? selectedCard.totalEntries - selectedCard.usedEntries : 0;
+  const remaining = punchCard.totalEntries - punchCard.usedEntries;
+  // The stepper can never promise more than the card holds or the round seats.
+  const maxCount = chosen ? Math.max(1, Math.min(remaining, chosen.available)) : remaining;
 
   const primaryBtn: CSSProperties = {
     border: 'none',
@@ -818,6 +817,14 @@ function PunchRoundBooking({
     fontSize: 14,
     fontWeight: 600,
     cursor: 'pointer',
+  };
+  const stepBtn: CSSProperties = {
+    ...ghostBtn,
+    padding: 0,
+    width: 38,
+    height: 38,
+    fontSize: 20,
+    lineHeight: '38px',
   };
 
   const loadAvailability = async (d: string) => {
@@ -842,7 +849,7 @@ function PunchRoundBooking({
   const doJoin = async (r: AvailabilityRound) => {
     setBusy(true);
     setError(null);
-    const res = await joinWaitlist(r.roundInstanceId, ticketType);
+    const res = await joinWaitlist(r.roundInstanceId);
     setBusy(false);
     if (!res.ok) {
       setError(
@@ -857,34 +864,39 @@ function PunchRoundBooking({
   };
 
   const doBook = async () => {
-    if (!chosen || !selectedCard) return;
+    if (!chosen) return;
     setBusy(true);
     setError(null);
-    console.info('[customer companion] booking', {
+    console.info('[customer punch-booking] booking', {
       roundInstanceId: chosen.roundInstanceId,
+      count,
       addCompanion,
     });
-    const res = await bookRoundWithPunch(selectedCard.id, chosen.roundInstanceId, ticketType);
+    const res = await bookRoundWithPunch(punchCard.id, chosen.roundInstanceId, count);
     if (!res.ok) {
       setBusy(false);
       setError(
         res.error === 'round_full'
-          ? 'הסבב התמלא. בחרו זמן אחר.'
-          : res.error === 'card_exhausted' || res.error === 'card_inactive'
-            ? 'לכרטיסייה לא נותרו כניסות.'
-            : res.error === 'card_expired'
-              ? 'הכרטיסייה פגה.'
-              : 'לא ניתן להזמין כרגע. נסו שוב.',
+          ? 'אין מספיק מקומות פנויים בסבב. בחרו זמן אחר.'
+          : res.error === 'not_enough_entries'
+            ? 'לא נותרו מספיק כניסות בכרטיסייה.'
+            : res.error === 'card_exhausted' || res.error === 'card_inactive'
+              ? 'לכרטיסייה לא נותרו כניסות.'
+              : res.error === 'card_expired'
+                ? 'הכרטיסייה פגה.'
+                : 'לא ניתן להזמין כרגע. נסו שוב.',
       );
       return;
     }
 
     // Companion upsell: the booking stands either way — payment failure only
-    // means the extra companion waits for a retry from the booking card.
-    if (addCompanion) {
-      const checkout = await startCompanionCheckout(res.data.bookingId);
+    // means the extra companion waits for a retry from the booking card. Only
+    // offered for a single entry (the checkout attaches to one booking).
+    const firstBookingId = res.data.bookings[0]?.bookingId;
+    if (addCompanion && count === 1 && firstBookingId) {
+      const checkout = await startCompanionCheckout(firstBookingId);
       console.info('[customer companion] checkout result', {
-        bookingId: res.data.bookingId,
+        bookingId: firstBookingId,
         ok: checkout.ok,
         payUrl: checkout.ok ? checkout.data.payUrl : undefined,
         error: checkout.ok ? undefined : checkout.error,
@@ -908,13 +920,22 @@ function PunchRoundBooking({
   if (!open) {
     return (
       <button onClick={() => setOpen(true)} style={{ ...primaryBtn, width: '100%' }}>
-        הזמנת כניסה לסבב עם הכרטיסייה
+        הזמנת כניסה לסבב
       </button>
     );
   }
 
   return (
-    <div style={{ ...card, display: 'flex', flexDirection: 'column', gap: 14 }}>
+    <div
+      style={{
+        width: '100%',
+        borderTop: '1px solid #f3efea',
+        paddingTop: 14,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 14,
+      }}
+    >
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ fontSize: 16, fontWeight: 700 }}>הזמנת כניסה לסבב</div>
         <button
@@ -933,7 +954,9 @@ function PunchRoundBooking({
       {done ? (
         <div style={{ textAlign: 'center', fontSize: 14.5, padding: '8px 0' }}>
           <div style={{ color: '#6f8f37' }}>
-            ההזמנה נקלטה! הברקוד מחכה לך למעלה תחת "הסבבים שלי".
+            {count > 1
+              ? 'ההזמנות נקלטו! הברקודים מחכים לך למעלה תחת "הסבבים שלי".'
+              : 'ההזמנה נקלטה! הברקוד מחכה לך למעלה תחת "הסבבים שלי".'}
           </div>
           {companionNote && (
             <div style={{ color: '#a8643d', fontSize: 13, marginTop: 8 }}>{companionNote}</div>
@@ -941,23 +964,6 @@ function PunchRoundBooking({
         </div>
       ) : (
         <>
-          <div style={{ fontSize: 12.5, color: MUTED }}>
-            כרטיסייה {selectedCard?.serialNumber} · נותרו {remaining} כניסות
-          </div>
-          {cards.length > 1 && (
-            <select
-              value={cardId}
-              onChange={(e) => setCardId(e.target.value)}
-              style={{ padding: '9px 10px', borderRadius: 9, border: '1.5px solid #e9e0d9', fontSize: 14 }}
-            >
-              {cards.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.serialNumber} ({c.totalEntries - c.usedEntries} נותרו)
-                </option>
-              ))}
-            </select>
-          )}
-
           <label style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 13, color: MUTED }}>
             תאריך
             <input
@@ -970,28 +976,6 @@ function PunchRoundBooking({
               style={{ padding: '10px', borderRadius: 9, border: '1.5px solid #e9e0d9', fontSize: 14 }}
             />
           </label>
-
-          <div style={{ display: 'flex', gap: 8 }}>
-            {(['child_over_walking', 'child_under_walking'] as const).map((t) => (
-              <button
-                key={t}
-                onClick={() => setTicketType(t)}
-                style={{
-                  flex: 1,
-                  border: `1.5px solid ${ticketType === t ? '#e7a33e' : '#e9e0d9'}`,
-                  background: ticketType === t ? '#fdf3e3' : '#fff',
-                  color: ticketType === t ? '#b9772a' : MUTED,
-                  borderRadius: 9,
-                  padding: '9px',
-                  fontSize: 13.5,
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                }}
-              >
-                {t === 'child_under_walking' ? 'תינוק/ת' : 'ילד/ה'}
-              </button>
-            ))}
-          </div>
 
           {date && rounds === null && (
             <div style={{ textAlign: 'center', color: MUTED, fontSize: 13 }}>טוען…</div>
@@ -1010,6 +994,7 @@ function PunchRoundBooking({
                 onClick={() => {
                   setChosen(r);
                   setError(null);
+                  setCount((c) => Math.min(c, Math.max(1, Math.min(remaining, r.available))));
                 }}
                 style={{
                   border: `1.5px solid ${chosen?.roundInstanceId === r.roundInstanceId ? '#e7a33e' : '#e9e0d9'}`,
@@ -1069,11 +1054,42 @@ function PunchRoundBooking({
 
           {chosen && (
             <div style={{ borderTop: '1px solid #f3efea', paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {maxCount > 1 && (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 14 }}>
+                  <span style={{ fontSize: 13.5 }}>כמה כניסות?</span>
+                  <button
+                    disabled={busy || count <= 1}
+                    onClick={() => setCount((c) => Math.max(1, c - 1))}
+                    style={{ ...stepBtn, opacity: count <= 1 ? 0.4 : 1 }}
+                  >
+                    −
+                  </button>
+                  <span style={{ fontSize: 18, fontWeight: 700, minWidth: 24, textAlign: 'center' }}>
+                    {count}
+                  </span>
+                  <button
+                    disabled={busy || count >= maxCount}
+                    onClick={() => setCount((c) => Math.min(maxCount, c + 1))}
+                    style={{ ...stepBtn, opacity: count >= maxCount ? 0.4 : 1 }}
+                  >
+                    +
+                  </button>
+                </div>
+              )}
+
               <div style={{ fontSize: 13.5, textAlign: 'center' }}>
-                כניסה לסבב {chosen.startTime}–{chosen.endTime}. ינוקב כרטיס אחד מתוך {remaining} שנותרו.
+                {count === 1
+                  ? `כניסה לסבב ${chosen.startTime}–${chosen.endTime}. ינוקב כרטיס אחד מתוך ${remaining} שנותרו.`
+                  : `${count} כניסות לסבב ${chosen.startTime}–${chosen.endTime}. ינוקבו ${count} כניסות מתוך ${remaining} שנותרו.`}
               </div>
 
-              {companionPrice !== null && companionPrice > 0 && (
+              {count > 1 && (
+                <div style={{ fontSize: 12.5, color: MUTED, textAlign: 'center' }}>
+                  מלווה אחד כלול בכל כניסה.
+                </div>
+              )}
+
+              {count === 1 && companionPrice !== null && companionPrice > 0 && (
                 <label
                   style={{
                     display: 'flex',
@@ -1110,7 +1126,7 @@ function PunchRoundBooking({
                 <button disabled={busy} onClick={() => void doBook()} style={{ ...primaryBtn, flex: 1 }}>
                   {busy
                     ? 'מזמין…'
-                    : addCompanion && companionPrice
+                    : count === 1 && addCompanion && companionPrice
                       ? `אישור, הזמנה ותשלום ₪${companionPrice}`
                       : 'אישור והזמנה'}
                 </button>

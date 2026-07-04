@@ -54,14 +54,17 @@ const swapSchema = z.object({
   targetRoundInstanceId: z.string().uuid(),
 });
 const cancelSchema = z.object({ bookingId: z.string().uuid() });
+// No ticketType — punch bookings are always child entries (owner decision,
+// 2026-07-04): the distinction affects neither price nor capacity here, and
+// the toggle only confused customers. Paid WC bookings keep the real one.
 const bookPunchSchema = z.object({
   roundInstanceId: z.string().uuid(),
   punchCardId: z.string().uuid(),
-  ticketType: z.enum(['child_under_walking', 'child_over_walking']),
+  count: z.number().int().min(1).max(12).default(1),
 });
 const waitlistJoinSchema = z.object({
   roundInstanceId: z.string().uuid(),
-  ticketType: z.enum(['child_under_walking', 'child_over_walking']),
+  ticketType: z.enum(['child_under_walking', 'child_over_walking']).default('child_over_walking'),
   additionalCompanions: z.number().int().min(0).max(1).optional(),
 });
 const waitlistLeaveSchema = z.object({ entryId: z.string().uuid() });
@@ -349,9 +352,10 @@ export const roundsBookingRoutes: FastifyPluginAsync = async (fastify) => {
     return { bookingId: result.bookingId, barcodeToken: result.barcodeToken };
   });
 
-  // Book a round seat by spending one punch-card entry (super-brief §3.4). No
-  // WooCommerce — the customer already paid for the card. Customer-gated;
-  // ownership of the card is enforced in the DB helper.
+  // Book round seats by spending punch-card entries (super-brief §3.4). No
+  // WooCommerce — the customer already paid for the card. `count` entries mint
+  // `count` bookings in one transaction. Customer-gated; ownership of the card
+  // is enforced in the DB helper.
   fastify.post('/rounds/book-punch', { preHandler: requireCustomer }, async (request, reply) => {
     const customerId = request.customer?.id;
     if (!customerId) return reply.code(401).send({ error: 'unauthorized' });
@@ -365,7 +369,8 @@ export const roundsBookingRoutes: FastifyPluginAsync = async (fastify) => {
         roundInstanceId: parsed.data.roundInstanceId,
         customerId,
         punchCardId: parsed.data.punchCardId,
-        ticketType: parsed.data.ticketType,
+        ticketType: 'child_over_walking',
+        count: parsed.data.count,
       },
       envKeyResolver,
     );
@@ -375,16 +380,20 @@ export const roundsBookingRoutes: FastifyPluginAsync = async (fastify) => {
           ? 404
           : result.error === 'card_forbidden'
             ? 403
-            : 409; // round_closed / round_full / card_inactive / card_expired / card_exhausted
+            : 409; // round_closed / round_full / card_* / not_enough_entries
       return reply.code(code).send({ error: result.error });
     }
     request.log.info(
-      { bookingId: result.bookingId, customerId, punchCardId: parsed.data.punchCardId },
+      {
+        bookingIds: result.bookings.map((b) => b.bookingId),
+        count: parsed.data.count,
+        customerId,
+        punchCardId: parsed.data.punchCardId,
+      },
       '[rounds book-punch] done',
     );
     return {
-      bookingId: result.bookingId,
-      barcodeToken: result.barcodeToken,
+      bookings: result.bookings,
       remaining: result.remaining,
     };
   });

@@ -247,7 +247,6 @@ test('POST /rounds/book-punch without a customer token returns 401', async () =>
     payload: {
       roundInstanceId: '00000000-0000-0000-0000-0000000000a1',
       punchCardId: '00000000-0000-0000-0000-0000000000c9',
-      ticketType: 'child_over_walking',
     },
   });
   assert.equal(res.statusCode, 401);
@@ -258,7 +257,22 @@ test('POST /rounds/book-punch with a bad body returns 400', async () => {
     method: 'POST',
     url: '/rounds/book-punch',
     headers: { authorization: `Bearer ${await customerToken()}` },
-    payload: { roundInstanceId: 'not-a-uuid', ticketType: 'child_over_walking' },
+    payload: { roundInstanceId: 'not-a-uuid' },
+  });
+  assert.equal(res.statusCode, 400);
+  assert.equal(res.json().error, 'invalid_body');
+});
+
+test('POST /rounds/book-punch with a count beyond the card size returns 400', async () => {
+  const res = await app.inject({
+    method: 'POST',
+    url: '/rounds/book-punch',
+    headers: { authorization: `Bearer ${await customerToken()}` },
+    payload: {
+      roundInstanceId: '00000000-0000-0000-0000-0000000000a1',
+      punchCardId: '00000000-0000-0000-0000-0000000000c9',
+      count: 13,
+    },
   });
   assert.equal(res.statusCode, 400);
   assert.equal(res.json().error, 'invalid_body');
@@ -272,7 +286,7 @@ test('POST /rounds/book-punch with a valid body reaches the punch-booking engine
     payload: {
       roundInstanceId: '00000000-0000-0000-0000-0000000000a1',
       punchCardId: '00000000-0000-0000-0000-0000000000c9',
-      ticketType: 'child_over_walking',
+      count: 2,
     },
   });
   // Auth + validation passed. No such round/card → 404 on a real DB, 500 on the

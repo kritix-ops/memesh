@@ -68,11 +68,13 @@ export const cancelRoundBooking = (
 export const bookRoundWithPunch = (
   punchCardId: string,
   roundInstanceId: string,
-  ticketType: 'child_under_walking' | 'child_over_walking',
-): Promise<ApiResult<{ bookingId: string; barcodeToken: string; remaining: number }>> =>
+  count: number,
+): Promise<
+  ApiResult<{ bookings: { bookingId: string; barcodeToken: string }[]; remaining: number }>
+> =>
   apiRequest('/rounds/book-punch', {
     method: 'POST',
-    body: { punchCardId, roundInstanceId, ticketType },
+    body: { punchCardId, roundInstanceId, count },
     audience: 'customer',
   });
 
@@ -114,11 +116,10 @@ export const getMyWaitlist = (): Promise<ApiResult<{ entries: CustomerWaitlistEn
 
 export const joinWaitlist = (
   roundInstanceId: string,
-  ticketType: 'child_under_walking' | 'child_over_walking',
 ): Promise<ApiResult<{ entryId: string; position: number; alreadyOnList: boolean }>> =>
   apiRequest('/rounds/waitlist/join', {
     method: 'POST',
-    body: { roundInstanceId, ticketType },
+    body: { roundInstanceId },
     audience: 'customer',
   });
 

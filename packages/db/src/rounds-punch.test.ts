@@ -51,11 +51,13 @@ test('bookRoundWithPunch confirms the booking, mints a barcode, and punches the 
   assert.equal(res.ok, true);
   if (!res.ok) return;
   assert.equal(res.remaining, 11);
+  assert.equal(res.bookings.length, 1);
+  const first = res.bookings[0]!;
 
-  const v = verifyBookingToken(res.barcodeToken, resolver);
-  assert.equal(v.ok && v.payload.bookingId, res.bookingId);
+  const v = verifyBookingToken(first.barcodeToken, resolver);
+  assert.equal(v.ok && v.payload.bookingId, first.bookingId);
 
-  const booking = (await db.select().from(bookings).where(eq(bookings.id, res.bookingId)).limit(1))[0];
+  const booking = (await db.select().from(bookings).where(eq(bookings.id, first.bookingId)).limit(1))[0];
   assert.equal(booking!.status, 'confirmed');
   assert.equal(booking!.source, 'punchcard');
   assert.equal(booking!.punchCardId, punchCardId);
@@ -63,9 +65,52 @@ test('bookRoundWithPunch confirms the booking, mints a barcode, and punches the 
   const cardRow = (await db.select().from(punchCards).where(eq(punchCards.id, punchCardId)).limit(1))[0];
   assert.equal(cardRow!.usedEntries, 1);
 
-  const entry = (await db.select().from(punchCardEntries).where(eq(punchCardEntries.idempotencyKey, res.bookingId)).limit(1))[0];
+  const entry = (await db.select().from(punchCardEntries).where(eq(punchCardEntries.idempotencyKey, first.bookingId)).limit(1))[0];
   assert.equal(entry!.method, 'online');
   assert.equal(entry!.entriesConsumed, 1);
+});
+
+test('bookRoundWithPunch with a count mints one booking and one punch per entry', async () => {
+  const db = await freshDb();
+  const { inst, customerId, punchCardId } = await setup(db);
+  const res = await bookRoundWithPunch(db, { roundInstanceId: inst, customerId, punchCardId, ticketType: 'child_over_walking', count: 3 }, resolver, NOW);
+  assert.equal(res.ok, true);
+  if (!res.ok) return;
+  assert.equal(res.bookings.length, 3);
+  assert.equal(res.remaining, 9);
+
+  const cardRow = (await db.select().from(punchCards).where(eq(punchCards.id, punchCardId)).limit(1))[0];
+  assert.equal(cardRow!.usedEntries, 3);
+
+  for (const b of res.bookings) {
+    const v = verifyBookingToken(b.barcodeToken, resolver);
+    assert.equal(v.ok && v.payload.bookingId, b.bookingId);
+    const booking = (await db.select().from(bookings).where(eq(bookings.id, b.bookingId)).limit(1))[0];
+    assert.equal(booking!.status, 'confirmed');
+    assert.equal(booking!.source, 'punchcard');
+    const entry = (await db.select().from(punchCardEntries).where(eq(punchCardEntries.idempotencyKey, b.bookingId)).limit(1))[0];
+    assert.equal(entry!.entriesConsumed, 1); // one punch row per booking — cancellation reverses exactly one
+  }
+});
+
+test('bookRoundWithPunch rejects a count above the seats left without punching', async () => {
+  const db = await freshDb();
+  const { inst, customerId, punchCardId } = await setup(db, 2);
+  const res = await bookRoundWithPunch(db, { roundInstanceId: inst, customerId, punchCardId, ticketType: 'child_over_walking', count: 3 }, resolver, NOW);
+  assert.equal(res.ok, false);
+  if (!res.ok) assert.equal(res.error, 'round_full');
+  const cardRow = (await db.select().from(punchCards).where(eq(punchCards.id, punchCardId)).limit(1))[0];
+  assert.equal(cardRow!.usedEntries, 0);
+});
+
+test('bookRoundWithPunch rejects a count above the entries left without booking', async () => {
+  const db = await freshDb();
+  const { inst, customerId, punchCardId } = await setup(db, 5, 2);
+  const res = await bookRoundWithPunch(db, { roundInstanceId: inst, customerId, punchCardId, ticketType: 'child_over_walking', count: 3 }, resolver, NOW);
+  assert.equal(res.ok, false);
+  if (!res.ok) assert.equal(res.error, 'not_enough_entries');
+  const booked = await db.select().from(bookings).where(eq(bookings.roundInstanceId, inst));
+  assert.equal(booked.length, 0);
 });
 
 test('bookRoundWithPunch rejects a card the customer does not own', async () => {
