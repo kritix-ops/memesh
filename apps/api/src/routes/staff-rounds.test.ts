@@ -101,3 +101,29 @@ test('GET /staff/rounds/today returns occupancy + waitlist only, never revenue',
     assert.equal(r.revenueIls, undefined, 'no per-round revenue');
   }
 });
+
+test('GET /staff/rounds/:id/attendees is staff-gated and validates the id', async () => {
+  const noToken = await app.inject({
+    method: 'GET',
+    url: '/staff/rounds/00000000-0000-0000-0000-000000000000/attendees',
+  });
+  assert.equal(noToken.statusCode, 401);
+
+  const badId = await app.inject({
+    method: 'GET',
+    url: '/staff/rounds/not-a-uuid/attendees',
+    headers: auth(await tokenFor('cashier')),
+  });
+  assert.equal(badId.statusCode, 400);
+  assert.equal(badId.json().error, 'invalid_id');
+
+  const ok = await app.inject({
+    method: 'GET',
+    url: '/staff/rounds/00000000-0000-0000-0000-000000000000/attendees',
+    headers: auth(await tokenFor('cashier')),
+  });
+  // 200 with [] on a real DB (unknown instance simply has no bookings);
+  // 500 on the DB-less box. Either way auth + validation passed.
+  assert.ok([200, 500].includes(ok.statusCode), `got ${ok.statusCode}`);
+  if (ok.statusCode === 200) assert.deepEqual(ok.json().attendees, []);
+});

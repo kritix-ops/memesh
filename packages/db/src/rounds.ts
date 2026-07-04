@@ -8,6 +8,7 @@ import { and, asc, count, eq, gte, inArray, lte, sql } from 'drizzle-orm';
 import type { PgDatabase } from 'drizzle-orm/pg-core';
 import {
   bookings,
+  customers,
   roundInstances,
   roundReminderLog,
   rounds,
@@ -444,6 +445,68 @@ export const listCustomerRoundBookings = async (
         r.source === 'punchcard' && r.wcOrderId !== null && r.additionalCompanions === 0,
     }))
     .sort((a, b) => `${a.date} ${a.startTime}`.localeCompare(`${b.date} ${b.startTime}`));
+};
+
+// ---------------------------------------------------------------------------
+// Shift floor — who's booked on a round and who already arrived
+// ---------------------------------------------------------------------------
+
+export interface RoundAttendee {
+  bookingId: string;
+  firstName: string;
+  lastName: string;
+  ticketType: 'child_under_walking' | 'child_over_walking';
+  additionalCompanions: number;
+  /** Checked in at the door (booking burned to 'used'). */
+  arrived: boolean;
+  /** ISO timestamp of the door scan; null until arrival. */
+  usedAt: string | null;
+}
+
+/**
+ * The booked customers of one round instance with arrival status, for the
+ * staff panel's "מי הגיע" list (Yanay 2026-07-04). Names only — the door
+ * check-in needs to match a person, not contact them, so no phone/email
+ * leaves the API. Arrived first (newest scan first), then waiting by name.
+ */
+export const listRoundAttendees = async (
+  db: AnyPgDatabase,
+  roundInstanceId: string,
+): Promise<RoundAttendee[]> => {
+  const rows = await db
+    .select({
+      bookingId: bookings.id,
+      firstName: customers.firstName,
+      lastName: customers.lastName,
+      ticketType: bookings.ticketType,
+      additionalCompanions: bookings.additionalCompanions,
+      status: bookings.status,
+      usedAt: bookings.usedAt,
+    })
+    .from(bookings)
+    .innerJoin(customers, eq(customers.id, bookings.customerId))
+    .where(
+      and(
+        eq(bookings.roundInstanceId, roundInstanceId),
+        sql`${bookings.status} IN ('confirmed','used')`,
+      ),
+    );
+
+  return rows
+    .map((r) => ({
+      bookingId: r.bookingId,
+      firstName: r.firstName,
+      lastName: r.lastName,
+      ticketType: r.ticketType as 'child_under_walking' | 'child_over_walking',
+      additionalCompanions: r.additionalCompanions,
+      arrived: r.status === 'used',
+      usedAt: r.usedAt ? r.usedAt.toISOString() : null,
+    }))
+    .sort((a, b) => {
+      if (a.arrived !== b.arrived) return a.arrived ? -1 : 1;
+      if (a.arrived && a.usedAt && b.usedAt) return b.usedAt.localeCompare(a.usedAt);
+      return `${a.firstName} ${a.lastName}`.localeCompare(`${b.firstName} ${b.lastName}`, 'he');
+    });
 };
 
 // ---------------------------------------------------------------------------

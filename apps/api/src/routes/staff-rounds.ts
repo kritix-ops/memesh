@@ -3,6 +3,7 @@ import {
   dashboardLiveWaitlist,
   db,
   getDashboardSettings,
+  listRoundAttendees,
 } from '@memesh/db';
 import type { FastifyPluginAsync } from 'fastify';
 import { requireRoleHook } from '../lib/auth-guards.js';
@@ -22,6 +23,10 @@ export type StaffRoundsRound = {
   capacity: number;
   /** confirmed + used + active holds */
   taken: number;
+  /** Real bookings: confirmed + used (holds excluded). */
+  bookedCount: number;
+  /** Checked in at the door — "כמה הגיעו". */
+  arrivedCount: number;
   /** 0..100, rounded. */
   pctFull: number;
   isClosed: boolean;
@@ -88,6 +93,8 @@ async function computeStaffRounds(dateIso: string, todayIso: string): Promise<St
       endTime: r.endTime,
       capacity: r.capacity,
       taken: r.taken,
+      bookedCount: r.bookedCount,
+      arrivedCount: r.arrivedCount,
       pctFull: r.pctFull,
       isClosed: r.isClosed,
     })),
@@ -134,6 +141,31 @@ export const staffRoundsRoutes: FastifyPluginAsync = async (fastify) => {
         '[staff rounds] served',
       );
       return data;
+    },
+  );
+
+  // Who's booked on a round + arrival status — the floor's "מי הגיע" list
+  // (Yanay 2026-07-04). Names only, never phone/email: check-in matches a
+  // person at the door, it doesn't contact them. All staff roles may read.
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  fastify.get(
+    '/staff/rounds/:roundInstanceId/attendees',
+    { preHandler: requireRoleHook(...STAFF) },
+    async (request, reply) => {
+      const { roundInstanceId } = request.params as { roundInstanceId: string };
+      if (!UUID_RE.test(roundInstanceId)) {
+        return reply.code(400).send({ error: 'invalid_id' });
+      }
+      const attendees = await listRoundAttendees(db, roundInstanceId);
+      request.log.info(
+        {
+          roundInstanceId,
+          attendees: attendees.length,
+          arrived: attendees.filter((a) => a.arrived).length,
+        },
+        '[staff rounds attendees] served',
+      );
+      return { attendees };
     },
   );
 };
