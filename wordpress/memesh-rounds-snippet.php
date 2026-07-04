@@ -18,6 +18,11 @@
 define('MEMESH_API_BASE',              'https://api.memesh.co.il');
 define('MEMESH_SHARED_KEY',            'PASTE_WP_HANDOFF_SHARED_SECRET_HERE');
 define('MEMESH_PUNCH_CARD_PRODUCT_ID', 306);
+// The ₪12 companion product. Must be PUBLISHED with catalog visibility
+// "hidden" and price 12 — the snippet adds it to the cart automatically as a
+// real line (the only thing every cart theme renders) and blocks buying it
+// on its own.
+define('MEMESH_COMPANION_PRODUCT_ID',  305);
 
 function memesh_ticket_type_for_product($product_id) {
     $map = [
@@ -274,30 +279,73 @@ add_filter('woocommerce_add_cart_item_data', function ($data, $product_id) {
 }, 10, 2);
 
 /**
- * The extra companion is charged as a FEE row, not a silent price bump, so
- * "מלווה נוסף +₪12" shows as its own line in the cart totals, checkout,
- * order, emails, and receipt (Yoav 2026-07-02). The ticket line keeps its
- * real product price.
+ * The extra companion is charged as a REAL cart line (product 305), because
+ * Yanay's cart-page template ignores WC fees, item meta, and name filters —
+ * actual line items are the only thing every template renders (Yoav
+ * 2026-07-04). The line is auto-managed: it enters with the ticket, leaves
+ * with the ticket, and cannot be bought on its own.
  */
-add_action('woocommerce_cart_calculate_fees', function ($cart) {
-    if (is_admin() && !defined('DOING_AJAX')) return;
-    $count = 0;
-    foreach ($cart->get_cart() as $item) {
-        if (!empty($item['memesh_extra_companion'])) $count += 1;
-    }
-    if ($count > 0) {
-        $label = $count > 1 ? sprintf('מלווה נוסף × %d', $count) : 'מלווה נוסף';
-        $cart->add_fee($label, 12 * $count, false);
-    }
-});
 
-/** Show the round + companion in cart / checkout. */
+// Guard flag so only this snippet can put the companion product in the cart.
+function memesh_companion_adding($set = null) {
+    static $adding = false;
+    if ($set !== null) $adding = $set;
+    return $adding;
+}
+
+// Block manual purchase of the companion product (direct URL, quick view…).
+add_filter('woocommerce_add_to_cart_validation', function ($passed, $product_id) {
+    if ((int) $product_id === MEMESH_COMPANION_PRODUCT_ID && !memesh_companion_adding()) {
+        wc_add_notice('מלווה נוסף מצטרף דרך כרטיס הכניסה — סמנו את התיבה בעמוד הכרטיס.', 'error');
+        return false;
+    }
+    return $passed;
+}, 9, 2);
+
+// An entry ticket added with the companion box ticked pulls the companion
+// product in as its own line, linked to the ticket's cart key.
+add_action('woocommerce_add_to_cart', function ($cart_item_key, $product_id, $qty, $variation_id, $variation, $cart_item_data) {
+    if (!memesh_is_round_product($product_id)) return;
+    if (empty($cart_item_data['memesh_extra_companion'])) return;
+    memesh_companion_adding(true);
+    WC()->cart->add_to_cart(MEMESH_COMPANION_PRODUCT_ID, 1, 0, [], ['memesh_companion_of' => $cart_item_key]);
+    memesh_companion_adding(false);
+}, 10, 6);
+
+// Keep the pair honest in both directions: removing the ticket removes its
+// companion line; removing the companion line stops the ticket from
+// reserving (and the API from counting) an extra companion.
+add_action('woocommerce_cart_item_removed', function ($removed_key, $cart) {
+    foreach ($cart->get_cart() as $key => $item) {
+        if (!empty($item['memesh_companion_of']) && $item['memesh_companion_of'] === $removed_key) {
+            $cart->remove_cart_item($key);
+        }
+    }
+    $removed = $cart->removed_cart_contents[$removed_key] ?? null;
+    if ($removed && !empty($removed['memesh_companion_of'])) {
+        $parent_key = $removed['memesh_companion_of'];
+        if (isset($cart->cart_contents[$parent_key])) {
+            $cart->cart_contents[$parent_key]['memesh_extra_companion'] = 0;
+        }
+    }
+}, 10, 2);
+
+/**
+ * Fold the round date into the ticket's line-item name — templates that apply
+ * the name filter (mini cart, emails) show it inline. The companion is NOT
+ * repeated here: it has its own cart line now.
+ */
+add_filter('woocommerce_cart_item_name', function ($name, $cart_item) {
+    if (!empty($cart_item['memesh_date'])) {
+        $name .= ' — סבב ' . $cart_item['memesh_date'];
+    }
+    return $name;
+}, 10, 2);
+
+/** Show the round date in cart / checkout item meta. */
 add_filter('woocommerce_get_item_data', function ($items, $cart_item) {
     if (!empty($cart_item['memesh_round_instance_id'])) {
         $items[] = ['name' => 'סבב', 'value' => esc_html($cart_item['memesh_date'])];
-    }
-    if (!empty($cart_item['memesh_extra_companion'])) {
-        $items[] = ['name' => 'מלווה נוסף', 'value' => 'כן (+₪12)'];
     }
     return $items;
 }, 10, 2);
