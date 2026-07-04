@@ -42,8 +42,9 @@ const baseInput: RoundInput = {
   defaultCapacity: 50,
 };
 
-// A fixed reference date so weekday math is deterministic.
-const NOW = new Date(2026, 6, 1, 10, 0, 0); // 2026-07-01, local
+// A fixed reference instant so weekday math is deterministic on any runner:
+// 07:00Z = 10:00 IDT, venue date 2026-07-01 (a Wednesday) in every machine TZ.
+const NOW = new Date('2026-07-01T07:00:00Z');
 
 async function countInstances(db: Awaited<ReturnType<typeof freshDb>>): Promise<number> {
   const rows = await db.select({ n: count() }).from(roundInstances);
@@ -141,6 +142,26 @@ test('ensureUpcomingInstances skips an inactive round', async () => {
   assert.equal(res.ok, true);
   if (!res.ok) return;
   assert.equal(await countInstances(db), 0);
+});
+
+test('materialization + upcoming count use the venue date, not the server date', async () => {
+  const db = await freshDb();
+  // 21:10Z Saturday Jul 4 is already 00:10 Sunday Jul 5 in Israel — the exact
+  // production moment the staff panel showed "no rounds today" (Yoav
+  // 2026-07-05). Sundays-only round: the 30-day window must start on the
+  // venue Sunday; a server-local window would have started on Saturday.
+  const lateNight = new Date('2026-07-04T21:10:00Z');
+  const res = await createRound(db, { ...baseInput, daysActive: 1 << 0 }, lateNight);
+  assert.equal(res.ok, true);
+  if (!res.ok) return;
+
+  const dates = (await db.select({ date: roundInstances.date }).from(roundInstances))
+    .map((r) => r.date)
+    .sort();
+  assert.deepEqual(dates, ['2026-07-05', '2026-07-12', '2026-07-19', '2026-07-26', '2026-08-02']);
+
+  const counts = await countUpcomingInstances(db, lateNight);
+  assert.equal(counts.get(res.round.id), 5, 'the count window matches the venue day');
 });
 
 // --- update -----------------------------------------------------------------

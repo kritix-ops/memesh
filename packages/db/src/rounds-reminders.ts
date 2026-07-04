@@ -12,7 +12,7 @@
 import { and, eq } from 'drizzle-orm';
 import type { PgDatabase } from 'drizzle-orm/pg-core';
 import { getRoundSettings } from './round-settings';
-import { roundStartWallMs, venueWallMs } from './round-time';
+import { roundStartWallMs, venueTodayIso, venueWallMs } from './round-time';
 import { bookings, customers, roundInstances, roundReminderLog, rounds } from './schema/index';
 
 type AnyPgDatabase = PgDatabase<any, any, any>;
@@ -53,7 +53,7 @@ export const claimDueReminders = async (
   if (settings.reminderOffsets.length === 0) return [];
 
   const nowWall = venueWallMs(now);
-  const todayIso = new Date(nowWall).toISOString().slice(0, 10);
+  const todayIso = venueTodayIso(now);
 
   const instances = await db
     .select({

@@ -93,7 +93,10 @@ export function RoundsView() {
   const isToday = date === todayIso;
 
   const load = useCallback(async () => {
-    const res = await getStaffRounds(date === localIsoDate(new Date()) ? undefined : date);
+    // Always send the explicit date — letting the server infer "today" once
+    // showed Saturday's (empty) rounds under a Sunday header, because the
+    // server clock runs on UTC (Yoav 2026-07-05).
+    const res = await getStaffRounds(date);
     if (res.ok) {
       setData(res.data);
       setError(null);
