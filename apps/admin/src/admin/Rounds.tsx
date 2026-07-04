@@ -47,6 +47,11 @@ const WEEKDAYS: { bit: number; label: string; full: string }[] = [
   { bit: 6, label: 'ש׳', full: 'שבת' },
 ];
 
+// The "30 days" here mirrors INSTANCE_HORIZON_DAYS (packages/db/src/rounds.ts),
+// the rolling window the server materializes instances for. Update both together.
+const UPCOMING_DATES_HINT =
+  'מספר הימים שבהם הסבב יתקיים ב-30 הימים הקרובים, לפי ימי הפעילות שנבחרו. מתעדכן אוטומטית.';
+
 function daysSummary(mask: number): string {
   if (mask === 127) return 'כל השבוע';
   const active = WEEKDAYS.filter((d) => (mask & (1 << d.bit)) !== 0).map((d) => d.label);
@@ -263,7 +268,19 @@ export function Rounds() {
                     {r.startTime}–{r.endTime} · {daysSummary(r.daysActive)} · קיבולת {r.defaultCapacity}
                   </div>
                   <div style={{ fontSize: 12.5, color: MUTED, marginTop: 2 }}>
-                    {r.upcomingInstances ?? 0} תאריכים קרובים · תווית: {r.label}
+                    <span
+                      title={UPCOMING_DATES_HINT}
+                      style={{
+                        textDecorationLine: 'underline',
+                        textDecorationStyle: 'dotted',
+                        textUnderlineOffset: 3,
+                        cursor: 'help',
+                      }}
+                    >
+                      {r.upcomingInstances ?? 0} תאריכים קרובים
+                    </span>
+                    {' · תווית: '}
+                    {r.label}
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
