@@ -55,6 +55,41 @@ test('searchCustomers passes q as a URL search param and unwraps results', async
   assert.ok(lastCall?.url.toLowerCase().includes('cohen'));
 });
 
+test('searchCustomers serializes directory params (sort/status/hasActiveCard/limit/offset)', async () => {
+  stubFetch({ status: 200, body: { results: [], total: 0 } });
+  await searchCustomers('', {
+    sort: 'lastPurchase',
+    status: 'vip',
+    hasActiveCard: true,
+    limit: 30,
+    offset: 60,
+  });
+  const url = lastCall?.url ?? '';
+  assert.ok(url.includes('sort=lastPurchase'), url);
+  assert.ok(url.includes('status=vip'), url);
+  assert.ok(url.includes('hasActiveCard=true'), url);
+  assert.ok(url.includes('limit=30'), url);
+  assert.ok(url.includes('offset=60'), url);
+  assert.ok(!url.includes('q='), 'empty q stays out of the query string');
+});
+
+test('searchCustomers omits directory params that were not set (legacy call shape)', async () => {
+  stubFetch({ status: 200, body: { results: [], total: 0 } });
+  await searchCustomers('נועה');
+  const url = lastCall?.url ?? '';
+  assert.ok(url.includes('q='), url);
+  for (const p of ['sort=', 'status=', 'hasActiveCard=', 'limit=', 'offset=']) {
+    assert.ok(!url.includes(p), `${p} should be absent: ${url}`);
+  }
+});
+
+test('searchCustomers unwraps the total alongside results', async () => {
+  stubFetch({ status: 200, body: { results: [], total: 137 } });
+  const res = await searchCustomers('', { limit: 30 });
+  assert.equal(res.ok, true);
+  if (res.ok) assert.equal(res.data.total, 137);
+});
+
 test('searchCustomers forwards an AbortSignal so callers can cancel', async () => {
   stubFetch({ status: 200, body: { results: [] } });
   const controller = new AbortController();
