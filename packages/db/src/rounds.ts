@@ -455,6 +455,9 @@ export interface RoundAttendee {
   bookingId: string;
   firstName: string;
   lastName: string;
+  /** Contact details for the floor (Yanay explicitly asked for them, 2026-07-04). */
+  phone: string;
+  email: string | null;
   ticketType: 'child_under_walking' | 'child_over_walking';
   additionalCompanions: number;
   /** Checked in at the door (booking burned to 'used'). */
@@ -464,10 +467,10 @@ export interface RoundAttendee {
 }
 
 /**
- * The booked customers of one round instance with arrival status, for the
- * staff panel's "מי הגיע" list (Yanay 2026-07-04). Names only — the door
- * check-in needs to match a person, not contact them, so no phone/email
- * leaves the API. Arrived first (newest scan first), then waiting by name.
+ * The booked customers of one round instance with arrival status + contact
+ * details, for the staff panel's "מי הגיע" list (Yanay 2026-07-04) — e.g.
+ * calling a no-show ten minutes into the round. Arrived first (newest scan
+ * first), then waiting by name.
  */
 export const listRoundAttendees = async (
   db: AnyPgDatabase,
@@ -478,6 +481,8 @@ export const listRoundAttendees = async (
       bookingId: bookings.id,
       firstName: customers.firstName,
       lastName: customers.lastName,
+      phone: customers.phone,
+      email: customers.email,
       ticketType: bookings.ticketType,
       additionalCompanions: bookings.additionalCompanions,
       status: bookings.status,
@@ -497,6 +502,8 @@ export const listRoundAttendees = async (
       bookingId: r.bookingId,
       firstName: r.firstName,
       lastName: r.lastName,
+      phone: r.phone,
+      email: r.email,
       ticketType: r.ticketType as 'child_under_walking' | 'child_over_walking',
       additionalCompanions: r.additionalCompanions,
       arrived: r.status === 'used',

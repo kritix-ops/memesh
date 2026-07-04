@@ -402,7 +402,7 @@ function AttendeesSection({ roundInstanceId }: { roundInstanceId: string }) {
   };
 
   const filtered = (attendees ?? []).filter((a) =>
-    `${a.firstName} ${a.lastName}`.includes(q.trim()),
+    `${a.firstName} ${a.lastName} ${a.phone}`.includes(q.trim()),
   );
 
   return (
@@ -436,7 +436,7 @@ function AttendeesSection({ roundInstanceId }: { roundInstanceId: string }) {
                   type="search"
                   value={q}
                   onChange={(e) => setQ(e.target.value)}
-                  placeholder="חיפוש לפי שם…"
+                  placeholder="חיפוש לפי שם או טלפון…"
                   style={{
                     width: '100%',
                     boxSizing: 'border-box',
@@ -468,11 +468,22 @@ function AttendeesSection({ roundInstanceId }: { roundInstanceId: string }) {
                         borderRadius: 8,
                       }}
                     >
-                      <span style={{ color: INK }}>
+                      <span style={{ color: INK, minWidth: 0 }}>
                         {a.firstName} {a.lastName}
                         <span style={{ color: MUTED, fontSize: 12.5, marginInlineStart: 6 }}>
                           {a.ticketType === 'child_under_walking' ? 'תינוק/ת' : 'ילד/ה'}
                           {a.additionalCompanions > 0 ? ' · +מלווה נוסף' : ''}
+                        </span>
+                        <span style={{ display: 'block', fontSize: 12.5, marginTop: 2 }}>
+                          <a href={`tel:${a.phone}`} style={{ color: MUTED, textDecoration: 'none' }} dir="ltr">
+                            {a.phone}
+                          </a>
+                          {a.email && (
+                            <span style={{ color: '#c9c9c9' }}>
+                              {' · '}
+                              <span style={{ color: MUTED }} dir="ltr">{a.email}</span>
+                            </span>
+                          )}
                         </span>
                       </span>
                       <span
