@@ -18,6 +18,7 @@
 import { and, count, desc, eq, gte, isNotNull, lt, sql } from 'drizzle-orm';
 import type { PgDatabase } from 'drizzle-orm/pg-core';
 import { getCardSettings } from './card-settings';
+import { addIsoDays, venueStartOfDay, venueTodayIso } from './round-time';
 import {
   bookings,
   punchCards,
@@ -29,14 +30,6 @@ import {
 type AnyPgDatabase = PgDatabase<any, any, any>;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-
-/** Returns 'YYYY-MM-DD' for a JS Date in the runtime's local TZ. */
-function toIsoDate(d: Date): string {
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
-  return `${yyyy}-${mm}-${dd}`;
-}
 
 /** Add days to a date, returning a new Date. */
 function addDays(d: Date, days: number): Date {
@@ -68,8 +61,9 @@ export interface RoundsTodayRow {
 }
 
 /**
- * All round_instances for today, joined with their parent round template
- * for display data, with live occupancy counts. Sorted by startTime ASC.
+ * All round_instances for today (the venue date, Asia/Jerusalem), joined with
+ * their parent round template for display data, with live occupancy counts.
+ * Sorted by startTime ASC.
  *
  * Occupancy includes confirmed + used + active holds. Held bookings whose
  * hold_expires_at has passed are treated as released (the lazy-expiry
@@ -79,7 +73,7 @@ export const dashboardLiveRoundsToday = async (
   db: AnyPgDatabase,
   now: Date = new Date(),
 ): Promise<RoundsTodayRow[]> => {
-  return dashboardLiveRoundsForDate(db, toIsoDate(now), now);
+  return dashboardLiveRoundsForDate(db, venueTodayIso(now), now);
 };
 
 /**
@@ -187,7 +181,7 @@ export const dashboardLiveStats = async (
   db: AnyPgDatabase,
   now: Date = new Date(),
 ): Promise<DashboardLiveStatsResult> => {
-  const todayStart = startOfDay(now);
+  const todayStart = venueStartOfDay(now);
   const yesterdayStart = addDays(todayStart, -1);
 
   // Read pricing once — used for both today's revenue and yesterday's baseline.
@@ -373,13 +367,6 @@ async function countPunchCardsInRange(
   return Number(rows[0]?.n ?? 0);
 }
 
-/** Local-time midnight for the day containing `d`. */
-function startOfDay(d: Date): Date {
-  const out = new Date(d);
-  out.setHours(0, 0, 0, 0);
-  return out;
-}
-
 // ---------------------------------------------------------------------------
 // Waitlist activity — live counts per round_instance with waiting entries
 // ---------------------------------------------------------------------------
@@ -399,7 +386,7 @@ export const dashboardLiveWaitlist = async (
   db: AnyPgDatabase,
   now: Date = new Date(),
 ): Promise<WaitlistActivityRow[]> => {
-  const todayIso = toIsoDate(now);
+  const todayIso = venueTodayIso(now);
 
   // Get today's round_instances first.
   const todayInstances = await db
@@ -501,11 +488,12 @@ export const dashboardLiveWeekAhead = async (
     return a.startTime.localeCompare(b.startTime);
   });
 
-  // Date range we care about. Inclusive of today, exclusive of today+days.
-  const todayStart = startOfDay(now);
+  // Date range we care about (venue dates). Inclusive of today, exclusive of
+  // today+days.
+  const todayIso = venueTodayIso(now);
   const dateList: string[] = [];
   for (let i = 0; i < days; i += 1) {
-    dateList.push(toIsoDate(addDays(todayStart, i)));
+    dateList.push(addIsoDays(todayIso, i));
   }
 
   // All round_instances in the date range, keyed by (date, round_id). One

@@ -5,6 +5,12 @@
 // time treated as UTC, so the fixed offset cancels in a difference — correct
 // except within a DST-transition hour (±1h), which we accept for v1 (a booking
 // isn't cancelled/swapped to the exact minute).
+//
+// The venue-calendar helpers below (venueTodayIso and friends) are the ONLY
+// correct way to ask "what date is today" on the server: the host runs on UTC,
+// so between 00:00 and 03:00 Israel time the server's local date is still
+// yesterday (Yoav 2026-07-05 — the staff panel said "no rounds today" on a
+// Sunday because it queried the server's Saturday).
 
 const VENUE_TZ = 'Asia/Jerusalem';
 
@@ -49,6 +55,36 @@ export function isWithinCancelWindow(
   now: Date,
 ): boolean {
   return roundStartWallMs(dateIso, startTimeHhmm) - venueWallMs(now) >= windowHours * 3_600_000;
+}
+
+/** The venue-local calendar date of `now`, as 'YYYY-MM-DD'. */
+export function venueTodayIso(now: Date = new Date()): string {
+  return new Date(venueWallMs(now)).toISOString().slice(0, 10);
+}
+
+/**
+ * The instant the venue's current calendar day began (venue midnight). Uses the
+ * venue's UTC offset at `now`, so within a DST-transition day it can be off by
+ * ±1h — the same accepted convention as the gates above.
+ */
+export function venueStartOfDay(now: Date = new Date()): Date {
+  // venueWallMs truncates to whole seconds; offsets are whole minutes, so round.
+  const offsetMs = Math.round((venueWallMs(now) - now.getTime()) / 60_000) * 60_000;
+  const dateIso = venueTodayIso(now);
+  return new Date(roundStartWallMs(dateIso, '00:00') - offsetMs);
+}
+
+/** 'YYYY-MM-DD' plus `days` (may be negative). Pure calendar math, timezone-free. */
+export function addIsoDays(dateIso: string, days: number): string {
+  const y = Number(dateIso.slice(0, 4));
+  const m = Number(dateIso.slice(5, 7));
+  const d = Number(dateIso.slice(8, 10));
+  return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
+}
+
+/** Weekday of an ISO date, 0 = Sunday … 6 = Saturday (matches the daysActive bitmask). */
+export function isoWeekday(dateIso: string): number {
+  return new Date(`${dateIso}T12:00:00Z`).getUTCDay();
 }
 
 /** The venue-local hour (0-23) of `now`. */

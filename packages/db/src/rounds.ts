@@ -6,6 +6,7 @@
 
 import { and, asc, count, eq, gte, inArray, lte, sql } from 'drizzle-orm';
 import type { PgDatabase } from 'drizzle-orm/pg-core';
+import { addIsoDays, isoWeekday, venueTodayIso } from './round-time';
 import {
   bookings,
   customers,
@@ -401,7 +402,7 @@ export const listCustomerRoundBookings = async (
   customerId: string,
   now: Date = new Date(),
 ): Promise<CustomerRoundBooking[]> => {
-  const todayIso = toIsoDate(now);
+  const todayIso = venueTodayIso(now);
   const rows = await db
     .select({
       bookingId: bookings.id,
@@ -522,9 +523,11 @@ export const listRoundAttendees = async (
 
 /**
  * Ensure `round_instances` exist for `round` on every matching weekday in
- * [today, today+horizon). Idempotent — relies on the (round_id, date) unique
- * index, so re-running never duplicates and never overwrites an existing
- * instance (per-date overrides survive). A non-active round is a no-op.
+ * [today, today+horizon), where "today" is the venue date (Asia/Jerusalem),
+ * never the server's local date. Idempotent — relies on the (round_id, date)
+ * unique index, so re-running never duplicates and never overwrites an
+ * existing instance (per-date overrides survive). A non-active round is a
+ * no-op.
  */
 export const ensureUpcomingInstances = async (
   db: AnyPgDatabase,
@@ -533,13 +536,13 @@ export const ensureUpcomingInstances = async (
   horizonDays: number = INSTANCE_HORIZON_DAYS,
 ): Promise<void> => {
   if (!round.isActive) return;
-  const base = startOfDay(now);
+  const todayIso = venueTodayIso(now);
   const values: NewRoundInstance[] = [];
   for (let i = 0; i < horizonDays; i += 1) {
-    const d = addDays(base, i);
-    // daysActive bit 0 = Sunday … matches Date.getDay().
-    if ((round.daysActive & (1 << d.getDay())) === 0) continue;
-    values.push({ roundId: round.id, date: toIsoDate(d), capacity: round.defaultCapacity });
+    const dateIso = addIsoDays(todayIso, i);
+    // daysActive bit 0 = Sunday … matches isoWeekday.
+    if ((round.daysActive & (1 << isoWeekday(dateIso))) === 0) continue;
+    values.push({ roundId: round.id, date: dateIso, capacity: round.defaultCapacity });
   }
   if (values.length === 0) return;
   await db
@@ -568,9 +571,8 @@ export const countUpcomingInstances = async (
   now: Date = new Date(),
   horizonDays: number = INSTANCE_HORIZON_DAYS,
 ): Promise<Map<string, number>> => {
-  const base = startOfDay(now);
-  const from = toIsoDate(base);
-  const to = toIsoDate(addDays(base, horizonDays - 1));
+  const from = venueTodayIso(now);
+  const to = addIsoDays(from, horizonDays - 1);
   const rows = await db
     .select({ roundId: roundInstances.roundId, date: roundInstances.date })
     .from(roundInstances)
@@ -581,27 +583,8 @@ export const countUpcomingInstances = async (
 };
 
 // ---------------------------------------------------------------------------
-// Local date helpers (mirrors rounds-dashboard.ts; kept private per file).
+// Local helpers (date math lives in round-time.ts, venue timezone).
 // ---------------------------------------------------------------------------
-
-const DAY_MS = 24 * 60 * 60 * 1000;
-
-function toIsoDate(d: Date): string {
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
-  return `${yyyy}-${mm}-${dd}`;
-}
-
-function addDays(d: Date, days: number): Date {
-  return new Date(d.getTime() + days * DAY_MS);
-}
-
-function startOfDay(d: Date): Date {
-  const out = new Date(d);
-  out.setHours(0, 0, 0, 0);
-  return out;
-}
 
 /** Postgres TIME 'HH:MM:SS' → 'HH:MM' for display + comparison. */
 function hhmm(t: string): string {
