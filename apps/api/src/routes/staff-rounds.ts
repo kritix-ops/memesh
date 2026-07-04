@@ -4,6 +4,7 @@ import {
   db,
   getDashboardSettings,
   listRoundAttendees,
+  venueTodayIso,
 } from '@memesh/db';
 import type { FastifyPluginAsync } from 'fastify';
 import { requireRoleHook } from '../lib/auth-guards.js';
@@ -66,13 +67,6 @@ const cache = new Map<string, Cached>();
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-function localIsoDate(d: Date): string {
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
-  return `${yyyy}-${mm}-${dd}`;
-}
-
 async function computeStaffRounds(dateIso: string, todayIso: string): Promise<StaffRoundsResponse> {
   const now = new Date();
   // Sequential — PGlite (test fixture) is single-connection; prod driver is
@@ -132,7 +126,9 @@ export const staffRoundsRoutes: FastifyPluginAsync = async (fastify) => {
     { preHandler: requireRoleHook(...STAFF) },
     async (request, reply): Promise<StaffRoundsResponse> => {
       const t0 = Date.now();
-      const todayIso = localIsoDate(new Date());
+      // Venue date, never the server's — the host runs on UTC, so around
+      // midnight Israel time the two disagree (Yoav 2026-07-05).
+      const todayIso = venueTodayIso(new Date());
       const requested = (request.query as { date?: string }).date;
       if (requested !== undefined && !DATE_RE.test(requested)) {
         return reply.code(400).send({ error: 'invalid_date' }) as never;

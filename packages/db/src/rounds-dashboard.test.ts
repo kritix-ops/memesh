@@ -16,6 +16,7 @@ import {
   dashboardLiveWaitlist,
   dashboardLiveWeekAhead,
 } from './rounds-dashboard';
+import { venueTodayIso } from './round-time';
 import {
   bookings,
   punchCards,
@@ -45,8 +46,10 @@ async function freshCustomer(db: Awaited<ReturnType<typeof freshDb>>) {
   });
 }
 
+// Seeds must land on the same calendar day the helpers query — the venue
+// (Israel) date, not the runner's local date.
 function isoDate(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  return venueTodayIso(d);
 }
 
 // ---------------------------------------------------------------------------
@@ -160,6 +163,33 @@ test('rounds-today: taken counts confirmed + used + active holds; expired holds 
   assert.equal(res[0]?.taken, 3, 'confirmed + used + active hold');
   assert.equal(res[0]?.heldCount, 1, 'just the active hold');
   assert.equal(res[0]?.pctFull, 30, '3/10 = 30%');
+});
+
+test('rounds-today: uses the venue date around midnight, not the server date', async () => {
+  const db = await freshDb();
+  // 21:10Z Saturday Jul 4 = 00:10 Sunday Jul 5 in Israel. The Sunday instance
+  // must be "today" at that instant — a server-local lookup missed it and the
+  // staff panel showed "no rounds today" (Yoav 2026-07-05).
+  const lateNight = new Date('2026-07-04T21:10:00Z');
+  const [round] = await db
+    .insert(rounds)
+    .values({
+      label: 'morning',
+      displayName: 'בוקר',
+      startTime: '09:00:00',
+      endTime: '14:00:00',
+      defaultCapacity: 60,
+    })
+    .returning();
+  await db.insert(roundInstances).values({
+    roundId: round!.id,
+    date: '2026-07-05',
+    capacity: 60,
+  });
+
+  const res = await dashboardLiveRoundsToday(db, lateNight);
+  assert.equal(res.length, 1, 'the venue-Sunday instance is today');
+  assert.equal(res[0]?.label, 'בוקר');
 });
 
 test('rounds-today: multiple rounds sorted by startTime ASC', async () => {

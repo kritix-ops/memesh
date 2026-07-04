@@ -355,25 +355,25 @@ add_action('woocommerce_cart_item_removed', function ($removed_key, $cart) {
 }, 10, 2);
 
 /**
- * Fold the round date + hours into the ticket's line-item name — templates
- * that apply the name filter (mini cart, the custom cart/checkout) show it
- * inline. The companion is NOT repeated here: it has its own cart line.
+ * Fold the round date + hours into the PRODUCT NAME of the cart-session item
+ * (set_name), not a display filter — Yanay's cart page ignores the
+ * woocommerce_cart_item_name filter and item meta, but every template prints
+ * the product's own name. Bonus: the order line item is created from this
+ * name, so emails/invoices carry it with zero extra hooks. Guarded against
+ * double-append (the totals hook can run several times per request).
  */
-add_filter('woocommerce_cart_item_name', function ($name, $cart_item) {
-    $display = memesh_round_display($cart_item);
-    if ($display !== '') {
-        $name .= ' — סבב ' . $display;
+add_action('woocommerce_before_calculate_totals', function ($cart) {
+    if (is_admin() && !defined('DOING_AJAX')) return;
+    foreach ($cart->get_cart() as $item) {
+        $display = memesh_round_display($item);
+        if ($display === '' || empty($item['data'])) continue;
+        $suffix = ' — סבב ' . $display;
+        $name = $item['data']->get_name();
+        if (mb_strpos($name, ' — סבב ') === false) {
+            $item['data']->set_name($name . $suffix);
+        }
     }
-    return $name;
-}, 10, 2);
-
-/** Show the round date + hours in cart / checkout item meta. */
-add_filter('woocommerce_get_item_data', function ($items, $cart_item) {
-    if (!empty($cart_item['memesh_round_instance_id'])) {
-        $items[] = ['name' => 'סבב', 'value' => esc_html(memesh_round_display($cart_item))];
-    }
-    return $items;
-}, 10, 2);
+}, 10, 1);
 
 /** Reserve the seat(s) at checkout — only when a round was chosen. */
 add_action('woocommerce_checkout_create_order_line_item', function ($item, $cart_item_key, $values, $order) {
