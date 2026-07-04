@@ -10,8 +10,22 @@ export interface StaffRoundsRound {
   endTime: string;
   capacity: number;
   taken: number;
+  /** Real bookings: confirmed + used (holds excluded). */
+  bookedCount: number;
+  /** Checked in at the door. */
+  arrivedCount: number;
   pctFull: number;
   isClosed: boolean;
+}
+
+export interface RoundAttendee {
+  bookingId: string;
+  firstName: string;
+  lastName: string;
+  ticketType: 'child_under_walking' | 'child_over_walking';
+  additionalCompanions: number;
+  arrived: boolean;
+  usedAt: string | null;
 }
 
 export interface StaffRoundsWaitlist {
@@ -39,3 +53,9 @@ export interface StaffRoundsResponse {
 /** No date = today. Any YYYY-MM-DD reads that day (floor verification of future bookings). */
 export const getStaffRounds = (date?: string): Promise<ApiResult<StaffRoundsResponse>> =>
   apiRequest(`/staff/rounds/today${date ? `?date=${encodeURIComponent(date)}` : ''}`);
+
+/** Booked customers of a round with arrival status — the "מי הגיע" list. */
+export const getRoundAttendees = (
+  roundInstanceId: string,
+): Promise<ApiResult<{ attendees: RoundAttendee[] }>> =>
+  apiRequest(`/staff/rounds/${roundInstanceId}/attendees`);

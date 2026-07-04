@@ -818,3 +818,102 @@ test('week-ahead: ignores inactive round templates', async () => {
     assert.deepEqual(day.rounds, [], 'inactive template not projected');
   }
 });
+
+test('rounds-today: bookedCount/arrivedCount split real bookings from holds and door check-ins', async () => {
+  const db = await freshDb();
+  const now = new Date();
+  const [round] = await db
+    .insert(rounds)
+    .values({
+      label: 'arrivals',
+      displayName: 'סבב הגעות',
+      startTime: '10:00:00',
+      endTime: '12:00:00',
+      defaultCapacity: 10,
+    })
+    .returning();
+  const [instance] = await db
+    .insert(roundInstances)
+    .values({ roundId: round!.id, date: isoDate(now), capacity: 10 })
+    .returning();
+
+  const mk = async (status: 'confirmed' | 'used' | 'cancelled' | 'held') => {
+    const c = await freshCustomer(db);
+    await db.insert(bookings).values({
+      roundInstanceId: instance!.id,
+      customerId: c.id,
+      ticketType: 'child_over_walking',
+      source: 'paid',
+      status,
+      ...(status === 'held' ? { holdExpiresAt: new Date(now.getTime() + 10 * 60_000) } : {}),
+      ...(status === 'used' ? { usedAt: now } : {}),
+    });
+  };
+  await mk('confirmed');
+  await mk('used');
+  await mk('cancelled'); // never counted
+  await mk('held'); // active hold
+
+  const res = await dashboardLiveRoundsToday(db, now);
+  const row = res.find((r) => r.label === 'סבב הגעות');
+  assert.equal(row?.bookedCount, 2); // confirmed + used
+  assert.equal(row?.arrivedCount, 1); // used only
+  assert.equal(row?.heldCount, 1);
+  assert.equal(row?.taken, 3); // booked + held
+});
+
+test('listRoundAttendees: names + arrival status, arrived first, cancelled excluded', async () => {
+  const { listRoundAttendees } = await import('./rounds');
+  const db = await freshDb();
+  const now = new Date();
+  const [round] = await db
+    .insert(rounds)
+    .values({
+      label: 'att',
+      displayName: 'סבב',
+      startTime: '10:00:00',
+      endTime: '12:00:00',
+      defaultCapacity: 10,
+    })
+    .returning();
+  const [instance] = await db
+    .insert(roundInstances)
+    .values({ roundId: round!.id, date: isoDate(now), capacity: 10 })
+    .returning();
+
+  const cWaiting = await createCustomer(db, { firstName: 'אורי', lastName: 'ממתין', phone: makePhone() });
+  const cArrived = await createCustomer(db, { firstName: 'גל', lastName: 'הגיע', phone: makePhone() });
+  const cCancelled = await createCustomer(db, { firstName: 'בוטל', lastName: 'לא', phone: makePhone() });
+  await db.insert(bookings).values({
+    roundInstanceId: instance!.id,
+    customerId: cWaiting.id,
+    ticketType: 'child_over_walking',
+    additionalCompanions: 1,
+    source: 'paid',
+    status: 'confirmed',
+  });
+  await db.insert(bookings).values({
+    roundInstanceId: instance!.id,
+    customerId: cArrived.id,
+    ticketType: 'child_under_walking',
+    source: 'punchcard',
+    status: 'used',
+    usedAt: now,
+  });
+  await db.insert(bookings).values({
+    roundInstanceId: instance!.id,
+    customerId: cCancelled.id,
+    ticketType: 'child_over_walking',
+    source: 'paid',
+    status: 'cancelled',
+  });
+
+  const list = await listRoundAttendees(db, instance!.id);
+  assert.equal(list.length, 2);
+  assert.equal(list[0]?.firstName, 'גל'); // arrived first
+  assert.equal(list[0]?.arrived, true);
+  assert.ok(list[0]?.usedAt);
+  assert.equal(list[1]?.firstName, 'אורי');
+  assert.equal(list[1]?.arrived, false);
+  assert.equal(list[1]?.additionalCompanions, 1);
+});

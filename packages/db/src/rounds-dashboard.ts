@@ -58,6 +58,10 @@ export interface RoundsTodayRow {
   taken: number;
   /** Just the active-hold portion of `taken`. */
   heldCount: number;
+  /** Real bookings: confirmed + used (holds excluded). */
+  bookedCount: number;
+  /** Checked in at the door (status = used) — "כמה הגיעו" (Yanay 2026-07-04). */
+  arrivedCount: number;
   /** 0..100, rounded. */
   pctFull: number;
   isClosed: boolean;
@@ -105,33 +109,22 @@ export const dashboardLiveRoundsForDate = async (
 
   if (instances.length === 0) return [];
 
-  // Per-instance counts — sequential to keep PGlite happy.
+  // Per-instance counts — sequential to keep PGlite happy. One grouped query
+  // per instance: filtered counts for holds / real bookings / door check-ins.
   const result: RoundsTodayRow[] = [];
   for (const inst of instances) {
-    // taken = confirmed + used + active holds
-    const takenRows = await db
-      .select({ n: count() })
+    const countRows = await db
+      .select({
+        held: sql<string>`count(*) FILTER (WHERE ${bookings.status} = 'held' AND ${bookings.holdExpiresAt} > ${now})`,
+        booked: sql<string>`count(*) FILTER (WHERE ${bookings.status} IN ('confirmed','used'))`,
+        arrived: sql<string>`count(*) FILTER (WHERE ${bookings.status} = 'used')`,
+      })
       .from(bookings)
-      .where(
-        and(
-          eq(bookings.roundInstanceId, inst.id),
-          sql`(${bookings.status} IN ('confirmed','used') OR (${bookings.status} = 'held' AND ${bookings.holdExpiresAt} > ${now}))`,
-        ),
-      );
-    const taken = Number(takenRows[0]?.n ?? 0);
-
-    // heldCount = just the active-hold subset of taken
-    const heldRows = await db
-      .select({ n: count() })
-      .from(bookings)
-      .where(
-        and(
-          eq(bookings.roundInstanceId, inst.id),
-          eq(bookings.status, 'held'),
-          gte(bookings.holdExpiresAt, now),
-        ),
-      );
-    const heldCount = Number(heldRows[0]?.n ?? 0);
+      .where(eq(bookings.roundInstanceId, inst.id));
+    const heldCount = Number(countRows[0]?.held ?? 0);
+    const bookedCount = Number(countRows[0]?.booked ?? 0);
+    const arrivedCount = Number(countRows[0]?.arrived ?? 0);
+    const taken = heldCount + bookedCount;
 
     const pctFull = inst.capacity === 0 ? 0 : Math.round((taken / inst.capacity) * 100);
 
@@ -143,6 +136,8 @@ export const dashboardLiveRoundsForDate = async (
       capacity: inst.capacity,
       taken,
       heldCount,
+      bookedCount,
+      arrivedCount,
       pctFull,
       isClosed: inst.isClosed,
     });

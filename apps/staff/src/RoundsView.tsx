@@ -1,5 +1,11 @@
 import { type CSSProperties, useCallback, useEffect, useState } from 'react';
-import { getStaffRounds, type StaffRoundsResponse, type StaffRoundsRound } from './lib/api/rounds';
+import {
+  getRoundAttendees,
+  getStaffRounds,
+  type RoundAttendee,
+  type StaffRoundsResponse,
+  type StaffRoundsRound,
+} from './lib/api/rounds';
 
 // Read-only rounds status for the shift floor. Mirrors the admin dashboard's
 // rounds zone in spirit, but built for a cashier standing at the counter: big
@@ -348,9 +354,145 @@ function RoundStatusCard({
         )}
       </div>
 
+      {round.bookedCount > 0 && (
+        <div style={{ marginTop: 8, fontSize: 14.5, color: INK }}>
+          <strong style={{ color: round.arrivedCount > 0 ? STATUS.green.fg : INK }}>
+            {round.arrivedCount}
+          </strong>{' '}
+          הגיעו מתוך {round.bookedCount} שהזמינו
+        </div>
+      )}
+
       <div style={{ marginTop: 8, fontSize: 14, color: action.tone, lineHeight: 1.5 }}>
         {action.text}
       </div>
+
+      {round.bookedCount > 0 && (
+        <AttendeesSection roundInstanceId={round.roundInstanceId} />
+      )}
+    </div>
+  );
+}
+
+// Lazy "מי הגיע?" list — fetched only when the cashier opens it, searchable
+// by name so a customer at the counter is found in a keystroke or two.
+function AttendeesSection({ roundInstanceId }: { roundInstanceId: string }) {
+  const [open, setOpen] = useState(false);
+  const [attendees, setAttendees] = useState<RoundAttendee[] | null>(null);
+  const [error, setError] = useState(false);
+  const [q, setQ] = useState('');
+
+  const toggle = async () => {
+    const next = !open;
+    setOpen(next);
+    if (next && attendees === null) {
+      console.info('[staff attendees] fetch', { roundInstanceId });
+      const res = await getRoundAttendees(roundInstanceId);
+      if (res.ok) {
+        setAttendees(res.data.attendees);
+        console.info('[staff attendees] ok', {
+          roundInstanceId,
+          count: res.data.attendees.length,
+        });
+      } else {
+        setError(true);
+        console.warn('[staff attendees] fail', { roundInstanceId, error: res.error });
+      }
+    }
+  };
+
+  const filtered = (attendees ?? []).filter((a) =>
+    `${a.firstName} ${a.lastName}`.includes(q.trim()),
+  );
+
+  return (
+    <div style={{ marginTop: 10, borderTop: `1px solid ${TRACK}`, paddingTop: 10 }}>
+      <button
+        type="button"
+        onClick={() => void toggle()}
+        style={{
+          border: 'none',
+          background: 'transparent',
+          color: MUTED,
+          fontSize: 13.5,
+          fontWeight: 600,
+          cursor: 'pointer',
+          padding: 0,
+        }}
+      >
+        {open ? 'הסתרת הרשימה ▲' : 'מי הגיע? הצגת הרשימה ▼'}
+      </button>
+
+      {open && (
+        <div style={{ marginTop: 10 }}>
+          {error ? (
+            <div style={{ fontSize: 13, color: '#a23a3a' }}>לא ניתן לטעון את הרשימה כרגע.</div>
+          ) : attendees === null ? (
+            <div style={{ fontSize: 13, color: MUTED }}>טוען…</div>
+          ) : (
+            <>
+              {attendees.length > 5 && (
+                <input
+                  type="search"
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
+                  placeholder="חיפוש לפי שם…"
+                  style={{
+                    width: '100%',
+                    boxSizing: 'border-box',
+                    padding: '8px 12px',
+                    borderRadius: 9,
+                    border: '1.5px solid #e9e0d9',
+                    fontSize: 13.5,
+                    marginBottom: 8,
+                  }}
+                />
+              )}
+              {filtered.length === 0 ? (
+                <div style={{ fontSize: 13, color: MUTED }}>
+                  {q ? 'אין תוצאות לחיפוש הזה.' : 'אין עדיין הזמנות לסבב הזה.'}
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {filtered.map((a) => (
+                    <div
+                      key={a.bookingId}
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        gap: 8,
+                        fontSize: 14,
+                        padding: '6px 10px',
+                        background: a.arrived ? 'rgba(15,157,88,0.07)' : '#faf8f6',
+                        borderRadius: 8,
+                      }}
+                    >
+                      <span style={{ color: INK }}>
+                        {a.firstName} {a.lastName}
+                        <span style={{ color: MUTED, fontSize: 12.5, marginInlineStart: 6 }}>
+                          {a.ticketType === 'child_under_walking' ? 'תינוק/ת' : 'ילד/ה'}
+                          {a.additionalCompanions > 0 ? ' · +מלווה נוסף' : ''}
+                        </span>
+                      </span>
+                      <span
+                        style={{
+                          fontSize: 12.5,
+                          fontWeight: 600,
+                          whiteSpace: 'nowrap',
+                          color: a.arrived ? STATUS.green.fg : MUTED,
+                        }}
+                      >
+                        {a.arrived ? '✓ הגיעו' : 'טרם הגיעו'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }
