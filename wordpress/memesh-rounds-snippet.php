@@ -355,25 +355,45 @@ add_action('woocommerce_cart_item_removed', function ($removed_key, $cart) {
 }, 10, 2);
 
 /**
- * Fold the round date + hours into the PRODUCT NAME of the cart-session item
- * (set_name), not a display filter — Yanay's cart page ignores the
- * woocommerce_cart_item_name filter and item meta, but every template prints
- * the product's own name. Bonus: the order line item is created from this
- * name, so emails/invoices carry it with zero extra hooks. Guarded against
- * double-append (the totals hook can run several times per request).
+ * Fold the round date + hours into the PRODUCT NAME of the cart item, at the
+ * earliest possible moments so EVERY renderer sees it:
+ *   - woocommerce_get_cart_item_from_session: cart items are rebuilt fresh
+ *     from the DB on every request; renaming here (before anything renders)
+ *     is what reaches templates that print the product's own name — the cart
+ *     page included. before_calculate_totals was too late for it.
+ *   - woocommerce_add_cart_item: covers the request that adds the item.
+ *   - woocommerce_cart_item_name filter: covers templates that print via the
+ *     filter (mini cart) — guarded so the suffix never doubles.
+ * The order line item is created from the renamed product, so emails and
+ * invoices inherit "— סבב 05/07/2026 · 09:00–14:00" automatically.
  */
-add_action('woocommerce_before_calculate_totals', function ($cart) {
-    if (is_admin() && !defined('DOING_AJAX')) return;
-    foreach ($cart->get_cart() as $item) {
-        $display = memesh_round_display($item);
-        if ($display === '' || empty($item['data'])) continue;
-        $suffix = ' — סבב ' . $display;
-        $name = $item['data']->get_name();
-        if (mb_strpos($name, ' — סבב ') === false) {
-            $item['data']->set_name($name . $suffix);
-        }
+function memesh_apply_round_name($item) {
+    $display = memesh_round_display($item);
+    if ($display === '' || empty($item['data']) || !is_object($item['data'])) return $item;
+    $name = $item['data']->get_name();
+    if (mb_strpos($name, ' — סבב ') === false) {
+        $item['data']->set_name($name . ' — סבב ' . $display);
     }
-}, 10, 1);
+    return $item;
+}
+
+add_filter('woocommerce_get_cart_item_from_session', function ($item, $values) {
+    // Session values carry our keys; the rebuilt item may not have them yet.
+    $item = array_merge($values, $item);
+    return memesh_apply_round_name($item);
+}, 20, 2);
+
+add_filter('woocommerce_add_cart_item', function ($item) {
+    return memesh_apply_round_name($item);
+}, 20, 1);
+
+add_filter('woocommerce_cart_item_name', function ($name, $cart_item) {
+    $display = memesh_round_display($cart_item);
+    if ($display !== '' && mb_strpos($name, ' — סבב ') === false) {
+        $name .= ' — סבב ' . $display;
+    }
+    return $name;
+}, 10, 2);
 
 /** Reserve the seat(s) at checkout — only when a round was chosen. */
 add_action('woocommerce_checkout_create_order_line_item', function ($item, $cart_item_key, $values, $order) {
