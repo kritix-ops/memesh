@@ -76,11 +76,16 @@ export interface StaffDayAvailability {
 export const getStaffRounds = (date?: string): Promise<ApiResult<StaffRoundsResponse>> =>
   apiRequest(`/staff/rounds/today${date ? `?date=${encodeURIComponent(date)}` : ''}`);
 
-/** Two weeks of per-day availability for the day-strip jumper (public endpoint). */
+/** Per-day availability for the day-strip jumper and the month calendar
+ *  (public endpoint). `from` defaults to venue today server-side; `maxDate`
+ *  is the last date of the booking window — the calendar stops there. */
 export const getRoundAvailabilityRange = (
   days = 14,
-): Promise<ApiResult<{ from: string; days: StaffDayAvailability[] }>> =>
-  apiRequest(`/rounds/availability-range?days=${days}`);
+  from?: string,
+): Promise<ApiResult<{ from: string; maxDate: string; days: StaffDayAvailability[] }>> =>
+  apiRequest(
+    `/rounds/availability-range?days=${days}${from ? `&from=${encodeURIComponent(from)}` : ''}`,
+  );
 
 /** Booked customers of a round with arrival status — the "מי הגיע" list. */
 export const getRoundAttendees = (

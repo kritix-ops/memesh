@@ -8,5 +8,14 @@ export {
   type ApiRequestInit,
   type ApiResult,
 } from './api';
+export {
+  addMonths,
+  daysInMonth,
+  firstOfMonth,
+  monthGrid,
+  monthLabelHe,
+  monthOfIso,
+  type MonthGrid,
+} from './calendar';
 export { type ChildRecord, type PreferredChannel, type PunchCard } from './customer-types';
 export { fmtDate, labelHasTime, roundTitle } from './formatting';
