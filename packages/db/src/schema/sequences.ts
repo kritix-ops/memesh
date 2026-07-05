@@ -13,3 +13,11 @@ export const customerNumberSeq = pgSequence('customer_number_seq', {
   startWith: 1,
   increment: 1,
 });
+
+// Monotonic counter embedded in the human-friendly booking number
+// R-YYYYMMDD-NNNN — the ticket's manual fallback at the door, same role the
+// card serial plays for punch cards (plan 2026-07-05-staff-manual-arrival).
+export const bookingNumberSeq = pgSequence('booking_number_seq', {
+  startWith: 1,
+  increment: 1,
+});

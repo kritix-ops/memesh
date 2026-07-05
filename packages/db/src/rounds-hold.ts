@@ -5,6 +5,7 @@
 
 import { and, count, eq, lte, sql } from 'drizzle-orm';
 import type { PgDatabase } from 'drizzle-orm/pg-core';
+import { allocateBookingNumber } from './cards';
 import { getRoundSettings } from './round-settings';
 import { isInstanceSchedulable } from './rounds-schedule';
 import { bookings, roundInstances } from './schema/index';
@@ -138,6 +139,9 @@ export const createHold = async (
         additionalCompanions: input.additionalCompanions ?? 0,
         source: input.source ?? 'paid',
         status: 'held',
+        // The ticket's manual door fallback, assigned at birth so it never
+        // changes across hold → confirmed → used.
+        bookingNumber: await allocateBookingNumber(tx, now),
         holdExpiresAt,
       })
       .returning({ id: bookings.id });

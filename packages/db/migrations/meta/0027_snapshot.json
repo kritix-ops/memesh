@@ -1,6 +1,6 @@
 {
-  "id": "3f8eb592-71bb-4884-bd83-381b045cdf33",
-  "prevId": "d6f9735f-01db-4513-b0f2-8e4d0bc8110d",
+  "id": "725c4eb0-c1fb-4e28-8afc-f64477e6f1cb",
+  "prevId": "3f8eb592-71bb-4884-bd83-381b045cdf33",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -2155,6 +2155,13 @@
           "type": "integer",
           "primaryKey": false,
           "notNull": true
+        },
+        "capacity_overridden": {
+          "name": "capacity_overridden",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
         },
         "is_closed": {
           "name": "is_closed",

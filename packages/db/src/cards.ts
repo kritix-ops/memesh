@@ -63,6 +63,23 @@ export const allocateCustomerNumber = async (db: AnyPgDatabase): Promise<string>
   return `L-${String(value).padStart(4, '0')}`;
 };
 
+/**
+ * Allocate the next human-friendly booking number: R-YYYYMMDD-NNNN. The
+ * ticket's manual fallback at the door, same role the M- serial plays for
+ * punch cards; the date part is display only, uniqueness comes from the
+ * sequence.
+ */
+export const allocateBookingNumber = async (
+  db: AnyPgDatabase,
+  date: Date = new Date(),
+): Promise<string> => {
+  const sequence = await nextSequenceValue(db, 'booking_number_seq');
+  const y = date.getUTCFullYear().toString().padStart(4, '0');
+  const m = (date.getUTCMonth() + 1).toString().padStart(2, '0');
+  const d = date.getUTCDate().toString().padStart(2, '0');
+  return `R-${y}${m}${d}-${String(sequence).padStart(4, '0')}`;
+};
+
 export interface CreateCustomerInput {
   firstName: string;
   lastName: string;

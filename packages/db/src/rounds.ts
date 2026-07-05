@@ -387,6 +387,8 @@ export const anyActiveRounds = async (db: AnyPgDatabase): Promise<boolean> => {
 
 export interface CustomerRoundBooking {
   bookingId: string;
+  /** Human-friendly ticket number (R-YYYYMMDD-NNNN) — the manual door fallback. */
+  bookingNumber: string | null;
   /** The round_instance this booking currently sits on (for the swap picker). */
   roundInstanceId: string;
   label: string;
@@ -424,6 +426,7 @@ export const listCustomerRoundBookings = async (
   const rows = await db
     .select({
       bookingId: bookings.id,
+      bookingNumber: bookings.bookingNumber,
       roundInstanceId: bookings.roundInstanceId,
       label: rounds.displayName,
       date: roundInstances.date,
@@ -450,6 +453,7 @@ export const listCustomerRoundBookings = async (
   return rows
     .map((r) => ({
       bookingId: r.bookingId,
+      bookingNumber: r.bookingNumber,
       roundInstanceId: r.roundInstanceId,
       label: r.label,
       date: r.date,
@@ -472,6 +476,8 @@ export const listCustomerRoundBookings = async (
 
 export interface RoundAttendee {
   bookingId: string;
+  /** Human-friendly ticket number — lets the floor cross-check a spoken number. */
+  bookingNumber: string | null;
   firstName: string;
   lastName: string;
   /** Contact details for the floor (Yanay explicitly asked for them, 2026-07-04). */
@@ -498,6 +504,7 @@ export const listRoundAttendees = async (
   const rows = await db
     .select({
       bookingId: bookings.id,
+      bookingNumber: bookings.bookingNumber,
       firstName: customers.firstName,
       lastName: customers.lastName,
       phone: customers.phone,
@@ -519,6 +526,7 @@ export const listRoundAttendees = async (
   return rows
     .map((r) => ({
       bookingId: r.bookingId,
+      bookingNumber: r.bookingNumber,
       firstName: r.firstName,
       lastName: r.lastName,
       phone: r.phone,

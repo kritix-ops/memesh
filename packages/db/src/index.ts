@@ -27,6 +27,7 @@ export * from './rounds-swap.js';
 export * from './rounds-punch.js';
 export * from './rounds-companion.js';
 export * from './rounds-availability-range.js';
+export * from './rounds-arrival.js';
 export * from './rounds-schedule.js';
 export * from './rounds-cancel.js';
 export * from './rounds-waitlist.js';
