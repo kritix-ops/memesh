@@ -210,6 +210,7 @@ export const roundsBookingRoutes: FastifyPluginAsync = async (fastify) => {
         days: range.map((d) => ({
           date: d.date,
           roundsRequired: d.roundsRequired,
+          closed: d.closed,
           rounds: d.rounds.map((r) => ({
             roundInstanceId: r.roundInstanceId,
             label: r.label,

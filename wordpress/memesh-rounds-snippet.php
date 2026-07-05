@@ -95,12 +95,6 @@ add_action('woocommerce_before_add_to_cart_button', function () {
     <div class="memesh-round-picker">
         <div class="memesh-field-label">בחירת יום וסבב</div>
         <div class="memesh-strip" id="memesh-strip"></div>
-        <div class="memesh-legend" id="memesh-legend" style="display:none">
-            <span><i class="memesh-dot memesh-dot-ok"></i> הרבה מקום</span>
-            <span><i class="memesh-dot memesh-dot-warn"></i> נשארו מעט</span>
-            <span><i class="memesh-dot memesh-dot-full"></i> מלא</span>
-            <span><i class="memesh-dot memesh-dot-free"></i> כניסה חופשית</span>
-        </div>
         <div class="memesh-rounds" id="memesh-rounds"></div>
 
         <div class="memesh-companion-card">
@@ -119,6 +113,13 @@ add_action('woocommerce_before_add_to_cart_button', function () {
         </div>
 
         <div id="memesh-round-msg" class="memesh-round-msg">טוען זמינות…</div>
+        <div class="memesh-legend" id="memesh-legend" style="display:none">
+            <span><i class="memesh-dot memesh-dot-ok"></i> הרבה מקום</span>
+            <span><i class="memesh-dot memesh-dot-warn"></i> נשארו מעט</span>
+            <span><i class="memesh-dot memesh-dot-full"></i> מלא</span>
+            <span><i class="memesh-dot memesh-dot-free"></i> כניסה חופשית</span>
+            <span><i class="memesh-dot memesh-dot-closed"></i> סגור</span>
+        </div>
         <input type="hidden" id="memesh-date" name="memesh_date" value="" />
         <input type="hidden" id="memesh-round" name="memesh_round_instance_id" value="" />
         <input type="hidden" id="memesh-round-times" name="memesh_round_times" value="" />
@@ -165,6 +166,7 @@ add_action('woocommerce_before_add_to_cart_button', function () {
         // Dot per day — same thresholds as the dashboard strip: red when
         // nothing is left, amber at a quarter or less, green otherwise.
         function dayDotClass(day) {
+            if (day.closed) return 'memesh-dot-closed';
             var open = (day.rounds || []).filter(function (x) { return !x.isClosed; });
             if (open.length === 0) return day.roundsRequired ? 'memesh-dot-none' : 'memesh-dot-free';
             var cap = 0, avail = 0;
@@ -190,14 +192,40 @@ add_action('woocommerce_before_add_to_cart_button', function () {
             var row = document.createElement('button');
             row.type = 'button'; // inside form.cart — default type would submit
             row.className = 'memesh-round-row';
+
+            var info = document.createElement('span');
+            info.className = 'memesh-round-info';
             var label = document.createElement('span');
             label.className = 'memesh-round-label';
-            label.textContent = x.label + ' ' + x.startTime + '–' + x.endTime;
-            var avail = document.createElement('span');
-            avail.className = 'memesh-round-avail';
-            avail.textContent = x.available + ' פנויים';
-            row.appendChild(label);
-            row.appendChild(avail);
+            label.textContent = x.label;
+            info.appendChild(label);
+            // Admins often embed the hours in the round name ("בוקר 9:00 - 14:00");
+            // add our own hours line only when the name doesn't carry them, so
+            // they never print twice.
+            if (!/\d{1,2}:\d{2}/.test(x.label)) {
+                var time = document.createElement('span');
+                time.className = 'memesh-round-time';
+                time.textContent = x.startTime + '–' + x.endTime;
+                info.appendChild(time);
+            }
+
+            var scarce = x.capacity > 0 && x.available / x.capacity <= 0.25;
+            var state = document.createElement('span');
+            state.className = 'memesh-round-state';
+            var pill = document.createElement('span');
+            pill.className = 'memesh-round-pill' + (scarce ? ' is-scarce' : '');
+            pill.textContent = x.available + ' פנויים';
+            var bar = document.createElement('span');
+            bar.className = 'memesh-round-bar';
+            var fill = document.createElement('span');
+            fill.className = 'memesh-round-bar-fill' + (scarce ? ' is-scarce' : '');
+            fill.style.width = (x.capacity > 0 ? Math.max(6, Math.round((x.available / x.capacity) * 100)) : 0) + '%';
+            bar.appendChild(fill);
+            state.appendChild(pill);
+            state.appendChild(bar);
+
+            row.appendChild(info);
+            row.appendChild(state);
             row.addEventListener('click', function () {
                 selectRound(row, x.roundInstanceId, x.startTime + '–' + x.endTime);
                 if (optional) setMsg('בתאריך זה אפשר גם להיכנס חופשי בלי סבב — לבחירתכם.', true);
@@ -212,6 +240,12 @@ add_action('woocommerce_before_add_to_cart_button', function () {
             timesEl.value = '';
             var open = openRounds(day);
             var optional = day.roundsRequired === false;
+
+            if (day.closed) {
+                setMsg('המקום סגור בתאריך זה — בחרו יום אחר.');
+                setCanBuy(false);
+                return;
+            }
 
             if (open.length === 0) {
                 if (optional) {
@@ -331,6 +365,7 @@ add_action('wp_head', function () {
     .memesh-dot-warn { background: #e7a33e; }
     .memesh-dot-full { background: #cf7a6b; }
     .memesh-dot-free { background: #a9bac6; }
+    .memesh-dot-closed { background: #8a7f76; }
     .memesh-dot-none { background: #d9d2c9; }
     .memesh-legend {
         display: flex; flex-wrap: wrap; gap: 4px 12px; justify-content: center;
@@ -346,8 +381,23 @@ add_action('wp_head', function () {
         text-align: right;
     }
     .memesh-round-row.is-selected { border-color: #e7a33e; background: #fdf3e3; }
+    .memesh-round-info { display: flex; flex-direction: column; gap: 2px; text-align: right; }
     .memesh-round-label { font-weight: 600; color: #2d3436; }
-    .memesh-round-avail { color: #636e72; font-size: 13px; white-space: nowrap; }
+    .memesh-round-time { color: #636e72; font-size: 12.5px; }
+    .memesh-round-state { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+    .memesh-round-pill {
+        font-size: 12px; font-weight: 700; border-radius: 999px; padding: 3px 9px;
+        white-space: nowrap; background: #eef4e2; color: #5b7a34;
+    }
+    .memesh-round-pill.is-scarce { background: #fdf3e3; color: #b9772a; }
+    .memesh-round-bar {
+        width: 64px; height: 5px; border-radius: 999px; background: #f0ebe4;
+        overflow: hidden; display: block;
+    }
+    .memesh-round-bar-fill {
+        display: block; height: 100%; border-radius: 999px; background: #8fae5d;
+    }
+    .memesh-round-bar-fill.is-scarce { background: #e7a33e; }
 
     .memesh-companion-card {
         margin: 4px 0; padding: 14px 16px;

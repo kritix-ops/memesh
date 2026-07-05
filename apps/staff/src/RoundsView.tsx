@@ -1,3 +1,4 @@
+import { labelHasTime } from '@memesh/web-shared';
 import { type CSSProperties, useCallback, useEffect, useState } from 'react';
 import {
   getRoundAttendees,
@@ -89,11 +90,13 @@ function fmtIsoDateHe(iso: string): string {
 
 // Day-strip dot for the two-week jumper (plan 2026-07-05-rounds-day-strip):
 // aggregated occupancy against the same warn/danger thresholds as the tiles,
-// so the strip and the tiles never disagree about a day. 'free' = free play
-// (nothing to book), 'none' = rounds required but none offered.
-type StripStatus = StatusLevel | 'free' | 'none';
+// so the strip and the tiles never disagree about a day. 'closed' = an admin
+// rule shut the day, 'free' = free play (nothing to book), 'none' = rounds
+// required but none offered.
+type StripStatus = StatusLevel | 'free' | 'closed' | 'none';
 
 function stripStatus(d: StaffDayAvailability, warnPct: number, dangerPct: number): StripStatus {
+  if (d.closed) return 'closed';
   const open = d.rounds.filter((r) => !r.isClosed);
   if (open.length === 0) return d.roundsRequired ? 'none' : 'free';
   const capacity = open.reduce((s, r) => s + r.capacity, 0);
@@ -108,6 +111,7 @@ const STRIP_DOT: Record<StripStatus, string> = {
   amber: STATUS.amber.fg,
   red: STATUS.red.fg,
   free: '#a9bac6',
+  closed: '#8a7f76',
   none: '#d9d2c9',
 };
 
@@ -343,6 +347,7 @@ export function RoundsView() {
                 ['amber', 'מתמלא'],
                 ['red', 'מלא'],
                 ['free', 'כניסה חופשית'],
+                ['closed', 'סגור'],
               ] as const
             ).map(([k, label]) => (
               <span key={k} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
@@ -367,7 +372,11 @@ export function RoundsView() {
         )
       ) : data.rounds.length === 0 ? (
         <div style={{ ...card, color: MUTED, textAlign: 'center' }}>
-          {isToday ? 'אין סבבים היום.' : 'אין סבבים בתאריך זה.'}
+          {strip?.find((d) => d.date === date)?.closed
+            ? 'המקום סגור בתאריך זה.'
+            : isToday
+              ? 'אין סבבים היום.'
+              : 'אין סבבים בתאריך זה.'}
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -432,9 +441,11 @@ function RoundStatusCard({
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
         <div style={{ fontWeight: 600, fontSize: 17, color: INK }}>
           {round.label}
-          <span style={{ color: MUTED, fontWeight: 400, fontSize: 14, marginInlineStart: 8 }}>
-            {round.startTime}–{round.endTime}
-          </span>
+          {!labelHasTime(round.label) && (
+            <span style={{ color: MUTED, fontWeight: 400, fontSize: 14, marginInlineStart: 8 }}>
+              {round.startTime}–{round.endTime}
+            </span>
+          )}
         </div>
         <span
           style={{

@@ -5,7 +5,7 @@ import {
   useCustomerSession,
   type CustomerProfile,
 } from '@memesh/customer-auth';
-import { fmtDate, type PunchCard as ApiPunchCard } from '@memesh/web-shared';
+import { fmtDate, labelHasTime, roundTitle, type PunchCard as ApiPunchCard } from '@memesh/web-shared';
 import {
   bookRoundWithPunch,
   cancelRoundBooking,
@@ -767,11 +767,12 @@ function Home({
 
 // Day-strip status for the punch-booking picker (plan 2026-07-05-rounds-day-strip,
 // Yanay's variant B pick): one dot per day, derived from the day's open rounds.
-// 'free' = free play (nothing to book), 'none' = rounds required but none offered
-// (past the materialized horizon or everything closed).
-type DayStatus = 'ok' | 'warn' | 'full' | 'free' | 'none';
+// 'closed' = an admin rule shut the day, 'free' = free play (nothing to book),
+// 'none' = rounds required but none offered (past the materialized horizon).
+type DayStatus = 'ok' | 'warn' | 'full' | 'free' | 'closed' | 'none';
 
 const dayStatus = (d: DayAvailability): DayStatus => {
+  if (d.closed) return 'closed';
   const openRounds = d.rounds.filter((r) => !r.isClosed);
   if (openRounds.length === 0) return d.roundsRequired ? 'none' : 'free';
   const capacity = openRounds.reduce((s, r) => s + r.capacity, 0);
@@ -786,6 +787,7 @@ const DAY_DOT: Record<DayStatus, string> = {
   warn: '#e7a33e',
   full: '#cf7a6b',
   free: '#a9bac6',
+  closed: '#8a7f76',
   none: '#d9d2c9',
 };
 
@@ -1081,82 +1083,98 @@ function PunchRoundBooking({
                   );
                 })}
               </div>
-              <div
-                style={{
-                  display: 'flex',
-                  flexWrap: 'wrap',
-                  gap: '4px 12px',
-                  justifyContent: 'center',
-                  fontSize: 11.5,
-                  color: MUTED,
-                }}
-              >
-                {(
-                  [
-                    ['ok', 'הרבה מקום'],
-                    ['warn', 'נשארו מעט'],
-                    ['full', 'מלא'],
-                    ['free', 'כניסה חופשית'],
-                  ] as const
-                ).map(([k, label]) => (
-                  <span key={k} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-                    <span
-                      style={{
-                        width: 7,
-                        height: 7,
-                        borderRadius: '50%',
-                        background: DAY_DOT[k],
-                      }}
-                    />
-                    {label}
-                  </span>
-                ))}
-              </div>
             </>
           )}
 
           {selectedDay && (
-            <div style={{ fontSize: 13, color: MUTED, textAlign: 'center' }}>
-              יום {dowLetter(selectedDay.date)}׳ · {fmtDate(selectedDay.date)}
+            <div style={{ fontSize: 14, fontWeight: 700 }}>
+              יום {dowLetter(selectedDay.date)}׳, {fmtDate(selectedDay.date)}
             </div>
           )}
           {selectedDay && openRounds.length === 0 && (
             <div style={{ textAlign: 'center', color: MUTED, fontSize: 13 }}>
-              {selectedDay.rounds.length === 0
-                ? roundsOff
-                  ? 'בתאריך זה הכניסה חופשית — אין צורך בהזמנת סבב, פשוט מגיעים.'
-                  : 'אין סבבים פנויים ביום זה.'
-                : fullRounds.length > 0
-                  ? 'כל הסבבים מלאים ביום זה — אפשר להצטרף לרשימת ההמתנה.'
-                  : 'אין סבבים פנויים ביום זה.'}
+              {selectedDay.closed
+                ? 'המקום סגור בתאריך זה.'
+                : selectedDay.rounds.length === 0
+                  ? roundsOff
+                    ? 'בתאריך זה הכניסה חופשית — אין צורך בהזמנת סבב, פשוט מגיעים.'
+                    : 'אין סבבים פנויים ביום זה.'
+                  : fullRounds.length > 0
+                    ? 'כל הסבבים מלאים ביום זה — אפשר להצטרף לרשימת ההמתנה.'
+                    : 'אין סבבים פנויים ביום זה.'}
             </div>
           )}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {openRounds.map((r) => (
-              <button
-                key={r.roundInstanceId}
-                onClick={() => {
-                  setChosen(r);
-                  setError(null);
-                  setCount((c) => Math.min(c, Math.max(1, Math.min(remaining, r.available))));
-                }}
-                style={{
-                  border: `1.5px solid ${chosen?.roundInstanceId === r.roundInstanceId ? '#e7a33e' : '#e9e0d9'}`,
-                  background: chosen?.roundInstanceId === r.roundInstanceId ? '#fdf3e3' : '#fff',
-                  borderRadius: 10,
-                  padding: '10px 14px',
-                  fontSize: 14,
-                  cursor: 'pointer',
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                }}
-              >
-                <span style={{ fontWeight: 600 }}>
-                  {r.label} {r.startTime}–{r.endTime}
-                </span>
-                <span style={{ color: MUTED, fontSize: 13 }}>{r.available} פנויים</span>
-              </button>
-            ))}
+            {openRounds.map((r) => {
+              const scarce = r.capacity > 0 && r.available / r.capacity <= 0.25;
+              const selected = chosen?.roundInstanceId === r.roundInstanceId;
+              return (
+                <button
+                  key={r.roundInstanceId}
+                  onClick={() => {
+                    setChosen(r);
+                    setError(null);
+                    setCount((c) => Math.min(c, Math.max(1, Math.min(remaining, r.available))));
+                  }}
+                  style={{
+                    border: `1.5px solid ${selected ? '#e7a33e' : '#e9e0d9'}`,
+                    background: selected ? '#fdf3e3' : '#fff',
+                    borderRadius: 10,
+                    padding: '10px 14px',
+                    fontSize: 14,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    gap: 10,
+                  }}
+                >
+                  <span style={{ display: 'flex', flexDirection: 'column', gap: 2, textAlign: 'start' }}>
+                    <span style={{ fontWeight: 600 }}>{r.label}</span>
+                    {!labelHasTime(r.label) && (
+                      <span style={{ color: MUTED, fontSize: 12.5 }}>
+                        {r.startTime}–{r.endTime}
+                      </span>
+                    )}
+                  </span>
+                  <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
+                    <span
+                      style={{
+                        fontSize: 12,
+                        fontWeight: 700,
+                        borderRadius: 999,
+                        padding: '3px 9px',
+                        whiteSpace: 'nowrap',
+                        background: scarce ? '#fdf3e3' : '#eef4e2',
+                        color: scarce ? '#b9772a' : '#5b7a34',
+                      }}
+                    >
+                      {r.available} פנויים
+                    </span>
+                    <span
+                      style={{
+                        width: 64,
+                        height: 5,
+                        borderRadius: 999,
+                        background: '#f0ebe4',
+                        overflow: 'hidden',
+                        display: 'block',
+                      }}
+                    >
+                      <span
+                        style={{
+                          display: 'block',
+                          height: '100%',
+                          borderRadius: 999,
+                          width: `${r.capacity > 0 ? Math.max(6, Math.round((r.available / r.capacity) * 100)) : 0}%`,
+                          background: scarce ? '#e7a33e' : '#8fae5d',
+                        }}
+                      />
+                    </span>
+                  </span>
+                </button>
+              );
+            })}
           </div>
 
           {fullRounds.length > 0 && (
@@ -1182,9 +1200,7 @@ function PunchRoundBooking({
                       color: MUTED,
                     }}
                   >
-                    <span style={{ fontWeight: 600 }}>
-                      {r.label} {r.startTime}–{r.endTime}
-                    </span>
+                    <span style={{ fontWeight: 600 }}>{roundTitle(r.label, r.startTime, r.endTime)}</span>
                     <span style={{ fontSize: 13 }}>רשימת המתנה</span>
                   </button>
                 ))}
@@ -1284,6 +1300,43 @@ function PunchRoundBooking({
           {error && (
             <div style={{ color: '#a23a3a', fontSize: 13, textAlign: 'center' }}>{error}</div>
           )}
+
+          {days && days.length > 0 && (
+            <div
+              style={{
+                display: 'flex',
+                flexWrap: 'wrap',
+                gap: '4px 12px',
+                justifyContent: 'center',
+                fontSize: 11.5,
+                color: MUTED,
+                borderTop: '1px solid #f3efea',
+                paddingTop: 10,
+              }}
+            >
+              {(
+                [
+                  ['ok', 'הרבה מקום'],
+                  ['warn', 'נשארו מעט'],
+                  ['full', 'מלא'],
+                  ['free', 'כניסה חופשית'],
+                  ['closed', 'סגור'],
+                ] as const
+              ).map(([k, label]) => (
+                <span key={k} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                  <span
+                    style={{
+                      width: 7,
+                      height: 7,
+                      borderRadius: '50%',
+                      background: DAY_DOT[k],
+                    }}
+                  />
+                  {label}
+                </span>
+              ))}
+            </div>
+          )}
         </>
       )}
     </div>
@@ -1334,7 +1387,9 @@ function WaitlistEntryCard({
       }}
     >
       <div style={{ fontWeight: 600, fontSize: 15 }}>
-        {entry.label} · {entry.startTime}–{entry.endTime}
+        {labelHasTime(entry.label)
+          ? entry.label
+          : `${entry.label} · ${entry.startTime}–${entry.endTime}`}
       </div>
       <div style={{ fontSize: 13, color: MUTED, marginTop: 2 }}>{fmtDate(entry.date)}</div>
       {notified ? (
@@ -1492,7 +1547,9 @@ function RoundBookingCard({
     >
       <div style={{ fontSize: 16, fontWeight: 600 }}>{booking.label}</div>
       <div style={{ fontSize: 13, color: MUTED }}>
-        {fmtDate(booking.date)} · {booking.startTime}–{booking.endTime}
+        {labelHasTime(booking.label)
+          ? fmtDate(booking.date)
+          : `${fmtDate(booking.date)} · ${booking.startTime}–${booking.endTime}`}
       </div>
       {booking.barcodeToken && (
         <MemeshQr value={booking.barcodeToken} size={180} title={`ברקוד — ${booking.label}`} />
@@ -1620,9 +1677,7 @@ function RoundBookingCard({
                   justifyContent: 'space-between',
                 }}
               >
-                <span style={{ fontWeight: 600 }}>
-                  {r.label} {r.startTime}–{r.endTime}
-                </span>
+                <span style={{ fontWeight: 600 }}>{roundTitle(r.label, r.startTime, r.endTime)}</span>
                 <span style={{ color: MUTED, fontSize: 13 }}>{r.available} פנויים</span>
               </button>
             ))}

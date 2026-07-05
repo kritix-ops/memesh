@@ -40,11 +40,26 @@ rounds) is unchanged. After a successful booking the range is refetched so the
 dots stay honest.
 
 Day dot derivation (client-side, from the day's rounds):
+- day marked `closed` by the API → dark gray "סגור" (detail: "המקום סגור בתאריך זה")
 - no rounds offered and not required → free-play (dashed gray, detail shows the
   existing "כניסה חופשית" notice)
 - no rounds offered but required → gray (detail shows "אין סבבים פנויים")
 - else by total remaining across open rounds: 0 → red; ≤25% of capacity → amber;
   otherwise green.
+
+**Closed days** (Yoav 2026-07-05): `DayAvailability.closed` is true only when a
+schedule rule with outside=closed leaves nothing bookable on the day — an
+explicit admin decision, distinct from "no rounds happen to exist" (no rule /
+past the horizon), which stays gray "אין סבבים". The admin rule form now shows
+the day-behavior toggle even with zero time windows (it was hidden before, so
+an all-day closed rule was impossible to create): scope the days, leave windows
+empty, pick "המקום סגור — אין מכירה".
+
+**Round titles** (Yoav 2026-07-05): admins name rounds with the hours embedded
+("בוקר 9:00 - 14:00"), and screens that appended startTime–endTime printed the
+hours twice. `labelHasTime`/`roundTitle` in web-shared now gate every
+label+hours render (staff tiles, customer rows/waitlist/booking cards, WP rows,
+swap picker): the hours line appears only when the name doesn't carry one.
 
 **WordPress** (`wordpress/memesh-rounds-snippet.php`, Yanay 2026-07-05): the
 entry-product picker becomes the same day strip - one availability-range call

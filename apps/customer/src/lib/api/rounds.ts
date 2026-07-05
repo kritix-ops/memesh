@@ -51,6 +51,8 @@ export interface DayAvailability {
   date: string;
   /** false = free play on this date — rounds (if any) are optional. */
   roundsRequired: boolean;
+  /** An admin rule shut this day — nothing bookable, no free play. */
+  closed: boolean;
   rounds: AvailabilityRound[];
 }
 

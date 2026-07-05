@@ -9,4 +9,4 @@ export {
   type ApiResult,
 } from './api';
 export { type ChildRecord, type PreferredChannel, type PunchCard } from './customer-types';
-export { fmtDate } from './formatting';
+export { fmtDate, labelHasTime, roundTitle } from './formatting';

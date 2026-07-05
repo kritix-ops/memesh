@@ -9,7 +9,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --test --import tsx src/api.test.ts"
+    "test": "node --test --import tsx src/api.test.ts src/formatting.test.ts"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
