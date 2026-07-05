@@ -154,6 +154,23 @@ const specificity = (rule: RoundScheduleRule): number => {
 };
 
 /**
+ * The winning rule for a date out of an already-loaded rule set — pure, so a
+ * range query can resolve many dates from one rules read.
+ */
+export const resolveScheduleFromRules = (
+  rules: RoundScheduleRule[],
+  dateIso: string,
+): ResolvedSchedule | null => {
+  const matching = rules.filter((r) => ruleMatches(r, dateIso));
+  if (matching.length === 0) return null;
+  matching.sort(
+    (a, b) => specificity(a) - specificity(b) || b.updatedAt.getTime() - a.updatedAt.getTime(),
+  );
+  const winner = matching[0]!;
+  return { windows: winner.windows, outside: winner.outside, ruleId: winner.id };
+};
+
+/**
  * The winning rule for a date, or null when no rule matches (default: all
  * rounds, mandatory). Loads all rules — the table is admin-curated and tiny.
  */
@@ -162,13 +179,7 @@ export const resolveScheduleForDate = async (
   dateIso: string,
 ): Promise<ResolvedSchedule | null> => {
   const rules = await db.select().from(roundScheduleRules);
-  const matching = rules.filter((r) => ruleMatches(r, dateIso));
-  if (matching.length === 0) return null;
-  matching.sort(
-    (a, b) => specificity(a) - specificity(b) || b.updatedAt.getTime() - a.updatedAt.getTime(),
-  );
-  const winner = matching[0]!;
-  return { windows: winner.windows, outside: winner.outside, ruleId: winner.id };
+  return resolveScheduleFromRules(rules, dateIso);
 };
 
 /** Does [start, end] (HH:MM or HH:MM:SS) fit ENTIRELY inside one window? */
