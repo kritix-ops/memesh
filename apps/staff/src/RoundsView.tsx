@@ -1,4 +1,11 @@
-import { labelHasTime } from '@memesh/web-shared';
+import {
+  addMonths,
+  firstOfMonth,
+  labelHasTime,
+  monthGrid,
+  monthLabelHe,
+  monthOfIso,
+} from '@memesh/web-shared';
 import { type CSSProperties, useCallback, useEffect, useState } from 'react';
 import {
   getRoundAttendees,
@@ -125,6 +132,141 @@ const STRIP_DOT: Record<StripStatus, string> = {
   none: '#d9d2c9',
 };
 
+// Month calendar over the whole booking window (plan
+// 2026-07-05-booking-window-365): the native date input jumps anywhere, but
+// only this shows the availability dots, so a shift lead can eyeball a far
+// month the way customers see it. Pure presentation — the parent owns the day
+// cache and the fetching; cells outside [todayIso, maxDate] are disabled.
+function StaffMonthCalendar({
+  month,
+  todayIso,
+  maxDate,
+  selectedDate,
+  loading,
+  dotFor,
+  onMonthChange,
+  onPick,
+}: {
+  month: string;
+  todayIso: string;
+  maxDate: string | null;
+  selectedDate: string;
+  loading: boolean;
+  dotFor: (dateIso: string) => string | undefined;
+  onMonthChange: (ym: string) => void;
+  onPick: (dateIso: string) => void;
+}) {
+  const { leadingBlanks, dates } = monthGrid(month);
+  const canPrev = month > monthOfIso(todayIso);
+  const canNext = maxDate !== null && month < monthOfIso(maxDate);
+  return (
+    <div
+      style={{
+        border: '1.5px solid #e9e0d9',
+        borderRadius: 12,
+        padding: 12,
+        marginTop: 8,
+        background: '#fff',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 10,
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        {/* RTL: the past sits to the right, so the right-hand button walks back. */}
+        <button
+          type="button"
+          aria-label="חודש קודם"
+          disabled={!canPrev}
+          onClick={() => canPrev && onMonthChange(addMonths(month, -1))}
+          style={{
+            ...navBtn,
+            color: canPrev ? INK : '#d9d2c9',
+            cursor: canPrev ? 'pointer' : 'default',
+          }}
+        >
+          ›
+        </button>
+        <div style={{ fontSize: 14.5, fontWeight: 700, color: INK }}>{monthLabelHe(month)}</div>
+        <button
+          type="button"
+          aria-label="חודש הבא"
+          disabled={!canNext}
+          onClick={() => canNext && onMonthChange(addMonths(month, 1))}
+          style={{
+            ...navBtn,
+            color: canNext ? INK : '#d9d2c9',
+            cursor: canNext ? 'pointer' : 'default',
+          }}
+        >
+          ‹
+        </button>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 4 }}>
+        {WEEKDAY_HE_SHORT.map((l) => (
+          <span
+            key={l}
+            style={{ textAlign: 'center', fontSize: 10.5, color: MUTED, fontWeight: 600 }}
+          >
+            {l}׳
+          </span>
+        ))}
+        {Array.from({ length: leadingBlanks }, (_, i) => (
+          <span key={`blank-${i}`} />
+        ))}
+        {dates.map((dateIso) => {
+          const dot = dotFor(dateIso);
+          const inWindow =
+            dateIso >= todayIso && (maxDate === null || dateIso <= maxDate) && dot !== undefined;
+          const active = selectedDate === dateIso;
+          return (
+            <button
+              key={dateIso}
+              type="button"
+              disabled={!inWindow}
+              aria-label={fmtIsoDateHe(dateIso)}
+              onClick={() => inWindow && onPick(dateIso)}
+              style={{
+                border: `1.5px solid ${active ? ORANGE : 'transparent'}`,
+                background: active ? '#fff4ec' : 'transparent',
+                borderRadius: 9,
+                padding: '5px 0 4px',
+                cursor: inWindow ? 'pointer' : 'default',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                gap: 3,
+              }}
+            >
+              <span
+                style={{
+                  fontSize: 13.5,
+                  fontWeight: active ? 700 : 500,
+                  color: inWindow ? INK : '#d9d2c9',
+                }}
+              >
+                {Number(dateIso.slice(8, 10))}
+              </span>
+              <span
+                aria-hidden
+                style={{
+                  width: 6,
+                  height: 6,
+                  borderRadius: '50%',
+                  background: inWindow && dot ? dot : 'transparent',
+                }}
+              />
+            </button>
+          );
+        })}
+      </div>
+      {loading && (
+        <div style={{ textAlign: 'center', color: MUTED, fontSize: 12.5 }}>טוען חודש…</div>
+      )}
+    </div>
+  );
+}
+
 export function RoundsView() {
   const todayIso = localIsoDate(new Date());
   const [date, setDate] = useState(todayIso);
@@ -132,6 +274,13 @@ export function RoundsView() {
   const [strip, setStrip] = useState<StaffDayAvailability[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [paused, setPaused] = useState(false);
+  // Month calendar over the whole booking window; every fetched day lands in
+  // dayCache so revisited months render instantly.
+  const [calOpen, setCalOpen] = useState(false);
+  const [calMonth, setCalMonth] = useState<string | null>(null);
+  const [calLoading, setCalLoading] = useState(false);
+  const [maxDate, setMaxDate] = useState<string | null>(null);
+  const [dayCache, setDayCache] = useState<Map<string, StaffDayAvailability>>(new Map());
   const isToday = date === todayIso;
 
   const load = useCallback(async () => {
@@ -154,6 +303,12 @@ export function RoundsView() {
     const res = await getRoundAvailabilityRange();
     if (res.ok) {
       setStrip(res.data.days);
+      setMaxDate(res.data.maxDate);
+      setDayCache((cur) => {
+        const next = new Map(cur);
+        for (const d of res.data.days) next.set(d.date, d);
+        return next;
+      });
       console.info('[staff rounds] strip ok', { days: res.data.days.length });
     } else {
       console.warn('[staff rounds] strip fail', { error: res.error });
@@ -168,6 +323,37 @@ export function RoundsView() {
   useEffect(() => {
     void loadStrip();
   }, [loadStrip]);
+
+  // The calendar pages the booking window one month per fetch; each month is
+  // remembered until the page reloads.
+  useEffect(() => {
+    if (!calOpen || !calMonth) return;
+    const { dates } = monthGrid(calMonth);
+    if (!dates.some((d) => !dayCache.has(d))) return;
+    let cancelled = false;
+    setCalLoading(true);
+    void (async () => {
+      const res = await getRoundAvailabilityRange(dates.length, firstOfMonth(calMonth));
+      console.info('[staff rounds] calendar month', {
+        month: calMonth,
+        ok: res.ok,
+        days: res.ok ? res.data.days.length : 0,
+        error: res.ok ? undefined : res.error,
+      });
+      if (cancelled) return;
+      setCalLoading(false);
+      if (!res.ok) return;
+      setDayCache((cur) => {
+        const next = new Map(cur);
+        for (const d of res.data.days) next.set(d.date, d);
+        return next;
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [calOpen, calMonth]);
 
   const refreshSeconds = data?.settings.refreshIntervalSeconds ?? 30;
 
@@ -293,53 +479,114 @@ export function RoundsView() {
 
       {strip && strip.length > 0 && (
         <div style={{ marginBottom: 14 }}>
-          <div style={{ display: 'flex', gap: 6, overflowX: 'auto', padding: '2px 2px 4px' }}>
-            {strip.map((d, i) => {
-              const active = date === d.date;
-              const warnPct = data?.settings.capacityWarningPct ?? 70;
-              const dangerPct = data?.settings.capacityDangerPct ?? 90;
-              const status = stripStatus(d, warnPct, dangerPct);
-              return (
-                <button
-                  key={d.date}
-                  type="button"
-                  onClick={() => setDate(d.date)}
-                  aria-label={fmtIsoDateHe(d.date)}
-                  style={{
-                    flex: '0 0 auto',
-                    minWidth: 52,
-                    border: `1.5px solid ${active ? ORANGE : '#e9e0d9'}`,
-                    background: active ? '#fff4ec' : '#fff',
-                    borderRadius: 12,
-                    padding: '8px 6px',
-                    cursor: 'pointer',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'center',
-                    gap: 4,
-                  }}
-                >
-                  <span style={{ fontSize: 10.5, color: MUTED, fontWeight: 600 }}>
-                    {i === 0
-                      ? 'היום'
-                      : `${WEEKDAY_HE_SHORT[new Date(`${d.date}T12:00:00`).getDay()]}׳`}
-                  </span>
-                  <span style={{ fontSize: 15, fontWeight: 700, color: INK }}>
-                    {Number(d.date.slice(8, 10))}
-                  </span>
-                  <span
-                    aria-hidden
+          <div style={{ display: 'flex', gap: 6, alignItems: 'stretch' }}>
+            {/* Fixed beside the strip: opens the month calendar with the same
+                availability dots, out to the end of the booking window. */}
+            <button
+              type="button"
+              title="לוח שנה עם זמינות"
+              onClick={() => {
+                setCalMonth((m) => m ?? monthOfIso(date >= todayIso ? date : todayIso));
+                setCalOpen((v) => !v);
+                console.info('[staff rounds] calendar toggle', { open: !calOpen });
+              }}
+              style={{
+                flex: '0 0 auto',
+                minWidth: 52,
+                border: `1.5px solid ${calOpen ? ORANGE : '#e9e0d9'}`,
+                background: calOpen ? '#fff4ec' : '#fff',
+                borderRadius: 12,
+                padding: '8px 6px',
+                cursor: 'pointer',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 4,
+              }}
+            >
+              <span style={{ fontSize: 17, lineHeight: 1 }}>📅</span>
+              <span style={{ fontSize: 9.5, color: MUTED, fontWeight: 600 }}>לוח שנה</span>
+            </button>
+            <div
+              style={{
+                display: 'flex',
+                gap: 6,
+                overflowX: 'auto',
+                padding: '2px 2px 4px',
+                flex: 1,
+                minWidth: 0,
+              }}
+            >
+              {strip.map((d, i) => {
+                const active = date === d.date;
+                const warnPct = data?.settings.capacityWarningPct ?? 70;
+                const dangerPct = data?.settings.capacityDangerPct ?? 90;
+                const status = stripStatus(d, warnPct, dangerPct);
+                return (
+                  <button
+                    key={d.date}
+                    type="button"
+                    onClick={() => setDate(d.date)}
+                    aria-label={fmtIsoDateHe(d.date)}
                     style={{
-                      width: 7,
-                      height: 7,
-                      borderRadius: '50%',
-                      background: STRIP_DOT[status],
+                      flex: '0 0 auto',
+                      minWidth: 52,
+                      border: `1.5px solid ${active ? ORANGE : '#e9e0d9'}`,
+                      background: active ? '#fff4ec' : '#fff',
+                      borderRadius: 12,
+                      padding: '8px 6px',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      gap: 4,
                     }}
-                  />
-                </button>
-              );
-            })}
+                  >
+                    <span style={{ fontSize: 10.5, color: MUTED, fontWeight: 600 }}>
+                      {i === 0
+                        ? 'היום'
+                        : `${WEEKDAY_HE_SHORT[new Date(`${d.date}T12:00:00`).getDay()]}׳`}
+                    </span>
+                    <span style={{ fontSize: 15, fontWeight: 700, color: INK }}>
+                      {Number(d.date.slice(8, 10))}
+                    </span>
+                    <span
+                      aria-hidden
+                      style={{
+                        width: 7,
+                        height: 7,
+                        borderRadius: '50%',
+                        background: STRIP_DOT[status],
+                      }}
+                    />
+                  </button>
+                );
+              })}
+            </div>
           </div>
+          {calOpen && calMonth && (
+            <StaffMonthCalendar
+              month={calMonth}
+              todayIso={todayIso}
+              maxDate={maxDate}
+              selectedDate={date}
+              loading={calLoading}
+              dotFor={(dateIso) => {
+                const day = dayCache.get(dateIso);
+                if (!day) return undefined;
+                const warnPct = data?.settings.capacityWarningPct ?? 70;
+                const dangerPct = data?.settings.capacityDangerPct ?? 90;
+                return STRIP_DOT[stripStatus(day, warnPct, dangerPct)];
+              }}
+              onMonthChange={setCalMonth}
+              onPick={(dateIso) => {
+                console.info('[staff rounds] calendar pick', { date: dateIso });
+                setDate(dateIso);
+                setCalOpen(false);
+              }}
+            />
+          )}
           <div
             style={{
               display: 'flex',
@@ -448,14 +695,19 @@ function RoundStatusCard({
       tone: STATUS.red.fg,
     };
   } else if (level === 'amber' || level === 'red') {
-    action = { text: `כמעט מלא — נותרו ${free} מקומות. אפשר עוד כניסה במקום.`, tone: STATUS.amber.fg };
+    action = {
+      text: `כמעט מלא — נותרו ${free} מקומות. אפשר עוד כניסה במקום.`,
+      tone: STATUS.amber.fg,
+    };
   } else {
     action = { text: `יש מקום — ${free} פנויים. אפשר למכור כניסה במקום.`, tone: STATUS.green.fg };
   }
 
   return (
     <div style={card}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+      <div
+        style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}
+      >
         <div style={{ fontWeight: 600, fontSize: 17, color: INK }}>
           {round.label}
           {!labelHasTime(round.label) && (
@@ -479,7 +731,9 @@ function RoundStatusCard({
         </span>
       </div>
 
-      <div style={{ marginTop: 12, height: 8, borderRadius: 5, background: TRACK, overflow: 'hidden' }}>
+      <div
+        style={{ marginTop: 12, height: 8, borderRadius: 5, background: TRACK, overflow: 'hidden' }}
+      >
         <div
           style={{
             width: `${Math.min(100, round.pctFull)}%`,
@@ -685,13 +939,19 @@ function AttendeesSection({
                               {' · '}
                             </span>
                           )}
-                          <a href={`tel:${a.phone}`} style={{ color: MUTED, textDecoration: 'none' }} dir="ltr">
+                          <a
+                            href={`tel:${a.phone}`}
+                            style={{ color: MUTED, textDecoration: 'none' }}
+                            dir="ltr"
+                          >
                             {a.phone}
                           </a>
                           {a.email && (
                             <span style={{ color: '#c9c9c9' }}>
                               {' · '}
-                              <span style={{ color: MUTED }} dir="ltr">{a.email}</span>
+                              <span style={{ color: MUTED }} dir="ltr">
+                                {a.email}
+                              </span>
                             </span>
                           )}
                         </span>

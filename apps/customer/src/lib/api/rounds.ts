@@ -58,11 +58,19 @@ export interface DayAvailability {
   rounds: AvailabilityRound[];
 }
 
-/** Upcoming days for the day-strip picker. `from` defaults to venue today server-side. */
+/** Upcoming days for the day-strip picker and the month calendar. `from`
+ *  defaults to venue today server-side; `maxDate` is the last date of the
+ *  booking window — the calendar stops paging there. */
 export const getRoundAvailabilityRange = (
   days = 14,
-): Promise<ApiResult<{ from: string; companionPriceIls: number; days: DayAvailability[] }>> =>
-  apiRequest(`/rounds/availability-range?days=${days}`, { audience: 'customer' });
+  from?: string,
+): Promise<
+  ApiResult<{ from: string; maxDate: string; companionPriceIls: number; days: DayAvailability[] }>
+> =>
+  apiRequest(
+    `/rounds/availability-range?days=${days}${from ? `&from=${encodeURIComponent(from)}` : ''}`,
+    { audience: 'customer' },
+  );
 
 export const swapRoundBooking = (
   bookingId: string,
@@ -76,7 +84,9 @@ export const swapRoundBooking = (
 
 export const cancelRoundBooking = (
   bookingId: string,
-): Promise<ApiResult<{ ok: true; refunded: boolean; punchReturned: boolean; refundAmountIls: number }>> =>
+): Promise<
+  ApiResult<{ ok: true; refunded: boolean; punchReturned: boolean; refundAmountIls: number }>
+> =>
   apiRequest('/rounds/cancel', {
     method: 'POST',
     body: { bookingId },

@@ -106,8 +106,9 @@ export const roundsAdminRoutes: FastifyPluginAsync = async (fastify) => {
     return { round: serializeRound(result.round) };
   });
 
-  // Edit a template. Re-materializes so a newly-added weekday or reactivation
-  // starts appearing immediately.
+  // Edit a template. Propagates capacity/weekday changes to future instances
+  // and re-materializes so a newly-added weekday or reactivation starts
+  // appearing immediately.
   fastify.patch('/admin/rounds/:id', { preHandler: requireRoleHook('admin') }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const parsed = patchSchema.safeParse(request.body);
@@ -134,8 +135,13 @@ export const roundsAdminRoutes: FastifyPluginAsync = async (fastify) => {
       request.log.info({ error: result.error }, '[rounds admin update] rejected');
       return reply.code(400).send({ error: result.error.code });
     }
-    request.log.info({ id: result.round.id }, '[rounds admin update]');
-    return { round: serializeRound(result.round) };
+    // The propagation report rides back to the SPA so booked dates that kept
+    // their old capacity (or survived a weekday removal) are never silent.
+    request.log.info(
+      { id: result.round.id, propagation: result.propagation },
+      '[rounds admin update]',
+    );
+    return { round: serializeRound(result.round), propagation: result.propagation };
   });
 
   // Schedule rules — when the rounds system applies (windows per date/range/

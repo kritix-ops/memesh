@@ -91,8 +91,8 @@ test('createRound persists the template and materializes instances', async () =>
   assert.equal(res.ok, true);
   if (!res.ok) return;
   assert.equal(res.round.displayName, 'סבב אחר הצהריים');
-  // Default horizon (30) with daysActive=all → 30 instances.
-  assert.equal(await countInstances(db), 30);
+  // Default horizon (365) with daysActive=all → 365 instances.
+  assert.equal(await countInstances(db), 365);
 });
 
 test('createRound returns a validation error without inserting', async () => {
@@ -128,12 +128,13 @@ test('ensureUpcomingInstances respects daysActive and horizon', async () => {
 
 test('ensureUpcomingInstances is idempotent', async () => {
   const db = await freshDb();
-  const res = await createRound(db, baseInput, NOW); // 30 already
+  const res = await createRound(db, baseInput, NOW); // 365 already
   assert.equal(res.ok, true);
   if (!res.ok) return;
-  await ensureUpcomingInstances(db, res.round, NOW); // run again
+  const again = await ensureUpcomingInstances(db, res.round, NOW); // run again
   await ensureUpcomingInstances(db, res.round, NOW); // and again
-  assert.equal(await countInstances(db), 30, 'no duplicates on re-run');
+  assert.equal(again, 0, 'a re-run creates nothing');
+  assert.equal(await countInstances(db), 365, 'no duplicates on re-run');
 });
 
 test('ensureUpcomingInstances skips an inactive round', async () => {
@@ -148,8 +149,8 @@ test('materialization + upcoming count use the venue date, not the server date',
   const db = await freshDb();
   // 21:10Z Saturday Jul 4 is already 00:10 Sunday Jul 5 in Israel — the exact
   // production moment the staff panel showed "no rounds today" (Yoav
-  // 2026-07-05). Sundays-only round: the 30-day window must start on the
-  // venue Sunday; a server-local window would have started on Saturday.
+  // 2026-07-05). Sundays-only round: the year window must start on the venue
+  // Sunday; a server-local window would have started on Saturday.
   const lateNight = new Date('2026-07-04T21:10:00Z');
   const res = await createRound(db, { ...baseInput, daysActive: 1 << 0 }, lateNight);
   assert.equal(res.ok, true);
@@ -158,10 +159,14 @@ test('materialization + upcoming count use the venue date, not the server date',
   const dates = (await db.select({ date: roundInstances.date }).from(roundInstances))
     .map((r) => r.date)
     .sort();
-  assert.deepEqual(dates, ['2026-07-05', '2026-07-12', '2026-07-19', '2026-07-26', '2026-08-02']);
+  // Day 0 of the 365-day window is the venue Sunday → Sundays at indices
+  // 0, 7, …, 364 = 53 of them.
+  assert.equal(dates.length, 53);
+  assert.equal(dates[0], '2026-07-05');
+  assert.equal(dates[1], '2026-07-12');
 
   const counts = await countUpcomingInstances(db, lateNight);
-  assert.equal(counts.get(res.round.id), 5, 'the count window matches the venue day');
+  assert.equal(counts.get(res.round.id), 53, 'the count window matches the venue day');
 });
 
 // --- update -----------------------------------------------------------------
@@ -288,8 +293,8 @@ test('countUpcomingInstances buckets by round', async () => {
   assert.equal(a.ok && b.ok, true);
   if (!a.ok || !b.ok) return;
   const counts = await countUpcomingInstances(db, NOW);
-  assert.equal(counts.get(a.round.id), 30);
-  assert.equal(counts.get(b.round.id), 30);
+  assert.equal(counts.get(a.round.id), 365);
+  assert.equal(counts.get(b.round.id), 365);
 });
 
 // --- delete + duplicate (Yoav 2026-07-02) ------------------------------------
@@ -299,7 +304,7 @@ test('deleteRound removes a never-booked template with its instances', async () 
   const created = await createRound(db, baseInput, NOW);
   assert.equal(created.ok, true);
   if (!created.ok) return;
-  assert.equal(await countInstances(db), 30);
+  assert.equal(await countInstances(db), 365);
 
   const res = await deleteRound(db, created.round.id);
   assert.equal(res.ok, true);
@@ -348,8 +353,8 @@ test('duplicateRound copies the template inactive with a copy-suffixed name', as
   assert.equal(res.round.isActive, false);
   assert.equal(res.round.startTime, created.round.startTime);
   assert.equal(res.round.defaultCapacity, created.round.defaultCapacity);
-  // Inactive copy materializes nothing — only the original's 30 instances exist.
-  assert.equal(await countInstances(db), 30);
+  // Inactive copy materializes nothing — only the original's 365 instances exist.
+  assert.equal(await countInstances(db), 365);
 });
 
 // --- master toggle ------------------------------------------------------------

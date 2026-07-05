@@ -47,10 +47,10 @@ const WEEKDAYS: { bit: number; label: string; full: string }[] = [
   { bit: 6, label: 'ש׳', full: 'שבת' },
 ];
 
-// The "30 days" here mirrors INSTANCE_HORIZON_DAYS (packages/db/src/rounds.ts),
+// The "year" here mirrors INSTANCE_HORIZON_DAYS (packages/db/src/rounds.ts),
 // the rolling window the server materializes instances for. Update both together.
 const UPCOMING_DATES_HINT =
-  'מספר הימים שבהם הסבב יתקיים ב-30 הימים הקרובים, לפי ימי הפעילות שנבחרו. מתעדכן אוטומטית.';
+  'מספר הימים שבהם הסבב יתקיים בשנה הקרובה, לפי ימי הפעילות שנבחרו. מתעדכן אוטומטית.';
 
 function daysSummary(mask: number): string {
   if (mask === 127) return 'כל השבוע';
@@ -744,6 +744,9 @@ function RoundForm({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
+  // Future dates the server left untouched (bookings there) after this edit —
+  // the form stays open until the admin acknowledges the list.
+  const [keptDates, setKeptDates] = useState<string[] | null>(null);
 
   const toggleDay = (bit: number) => setDays((prev) => prev ^ (1 << bit));
 
@@ -805,6 +808,17 @@ function RoundForm({
     if (!res.ok) {
       console.warn('[web admin rounds] save failed', { error: res.error });
       setError(humanizeRoundError(res.error));
+      return;
+    }
+    // Booked dates kept their old capacity (or survived a weekday removal) —
+    // hold the form open until the admin has seen the list.
+    const prop = res.data.propagation;
+    const kept = prop
+      ? [...new Set([...prop.capacityKeptDates, ...prop.removedDayKeptDates])].sort()
+      : [];
+    if (kept.length > 0) {
+      console.info('[web admin rounds] propagation kept dates', { kept });
+      setKeptDates(kept);
       return;
     }
     setFlash('הסבב נשמר');
@@ -907,7 +921,7 @@ function RoundForm({
               onChange={setCapacity}
               disabled={submitting}
               suffix="ילדים"
-              hint="מספר הילדים המרבי בסבב. חל על תאריכים חדשים; לתאריך קיים ערכו את הקיבולת פר-תאריך."
+              hint="מספר הילדים המרבי בסבב. חל על כל התאריכים העתידיים; תאריך שכבר יש בו הזמנות שומר על הקיבולת הקודמת ותקבלו על כך הודעה."
             />
             <NumberField
               label="סדר מיון"
@@ -927,13 +941,41 @@ function RoundForm({
           />
         </div>
 
-        <SaveBar
-          dirty={dirty && canSave}
-          submitting={submitting}
-          error={error}
-          flash={flash}
-          onSubmit={submit}
-        />
+        {keptDates ? (
+          <div
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 10,
+              padding: '14px 16px',
+              background: '#fdf3e3',
+              border: '1px solid #e7a33e',
+              borderRadius: 8,
+              fontSize: 14,
+              color: INK,
+            }}
+          >
+            <div style={{ fontWeight: 600 }}>הסבב נשמר, אבל שימו לב</div>
+            <div style={{ lineHeight: 1.6 }}>
+              בתאריכים הבאים כבר יש הזמנות, ולכן הם שמרו על ההגדרות הקודמות:{' '}
+              {keptDates.map(fmtIsoDate).join(', ')}. אם צריך לשנות גם אותם, טפלו בהם דרך לוח
+              הסבבים וצרו קשר עם הלקוחות שהזמינו.
+            </div>
+            <div>
+              <button type="button" style={ghostBtn} onClick={onSaved}>
+                הבנתי, חזרה לרשימה
+              </button>
+            </div>
+          </div>
+        ) : (
+          <SaveBar
+            dirty={dirty && canSave}
+            submitting={submitting}
+            error={error}
+            flash={flash}
+            onSubmit={submit}
+          />
+        )}
       </div>
     </div>
   );

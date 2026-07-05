@@ -10,8 +10,14 @@
 //   - Injects a day-strip round picker + paid-companion checkbox on the entry
 //     products: a month of days with availability dots (same look as the
 //     customer dashboard, Yanay 2026-07-05), then the chosen day's rounds as
-//     tappable rows. One /rounds/availability-range call feeds the whole
-//     picker.
+//     tappable rows. A calendar button beside the strip opens a month grid
+//     that pages the whole booking window (a year — Yanay 2026-07-05), so
+//     customers reach far dates themselves.
+//   - [memesh_round_picker product_id="300"] renders the same picker with its
+//     own add-to-cart form — made for the price-list page, where each ticket
+//     card gets a buy button that opens an Elementor popup with this
+//     shortcode. The form posts to the product page, so errors and notices
+//     render exactly like a product-page purchase.
 //   - Punch-card upsell notice when a 2nd entry ticket is added.
 //   - Holds the seat at checkout via /rounds/hold/wc and tags the order.
 //   - Rounds mandatory ONLY when the rounds system is on: global switch via
@@ -86,20 +92,40 @@ add_filter('woocommerce_is_sold_individually', function ($sold, $product) {
     return memesh_is_round_product($product->get_id()) ? true : $sold;
 }, 10, 2);
 
-/** Round picker + companion card on the product page. */
-add_action('woocommerce_before_add_to_cart_button', function () {
-    global $product;
-    if (!$product || !memesh_is_round_product($product->get_id())) return;
-    if (!memesh_rounds_enabled()) return; // rounds off — plain product
+/** Set/read whether any picker rendered on this page — the behavior script
+ *  prints once in wp_footer only when at least one did. */
+function memesh_picker_script_needed($set = null) {
+    static $needed = false;
+    if ($set !== null) $needed = $set;
+    return $needed;
+}
+
+/**
+ * The shared picker markup: day strip + calendar button + month grid + the
+ * chosen day's rounds + companion card + hidden fields. Used by the product
+ * page hook AND the [memesh_round_picker] shortcode so every purchase surface
+ * stays identical. No element ids — everything is class-scoped inside the
+ * [data-memesh-picker] root, so several pickers coexist on one page (the
+ * price list has two).
+ */
+function memesh_render_round_picker() {
+    memesh_picker_script_needed(true);
     ?>
-    <div class="memesh-round-picker">
+    <div class="memesh-round-picker" data-memesh-picker data-api="<?php echo esc_attr(MEMESH_API_BASE); ?>">
         <div class="memesh-field-label">בחירת יום וסבב</div>
-        <div class="memesh-strip" id="memesh-strip"></div>
-        <div class="memesh-rounds" id="memesh-rounds"></div>
+        <div class="memesh-strip-row">
+            <button type="button" class="memesh-cal-toggle" style="display:none">
+                <span class="memesh-cal-toggle-icon">📅</span>
+                <span class="memesh-cal-toggle-label">לוח שנה</span>
+            </button>
+            <div class="memesh-strip"></div>
+        </div>
+        <div class="memesh-cal" style="display:none"></div>
+        <div class="memesh-rounds"></div>
 
         <div class="memesh-companion-card">
             <label class="memesh-companion-label">
-                <input type="checkbox" id="memesh-extra-companion" name="memesh_extra_companion" value="1" />
+                <input type="checkbox" name="memesh_extra_companion" value="1" />
                 <div class="memesh-companion-content">
                     <div class="memesh-companion-header">
                         <strong>הוסף מלווה נוסף</strong>
@@ -112,225 +138,434 @@ add_action('woocommerce_before_add_to_cart_button', function () {
             </label>
         </div>
 
-        <div id="memesh-round-msg" class="memesh-round-msg">טוען זמינות…</div>
-        <div class="memesh-legend" id="memesh-legend" style="display:none">
+        <div class="memesh-round-msg">טוען זמינות…</div>
+        <div class="memesh-legend" style="display:none">
             <span><i class="memesh-dot memesh-dot-ok"></i> הרבה מקום</span>
             <span><i class="memesh-dot memesh-dot-warn"></i> נשארו מעט</span>
             <span><i class="memesh-dot memesh-dot-full"></i> מלא</span>
             <span><i class="memesh-dot memesh-dot-free"></i> כניסה חופשית</span>
             <span><i class="memesh-dot memesh-dot-closed"></i> סגור</span>
         </div>
-        <input type="hidden" id="memesh-date" name="memesh_date" value="" />
-        <input type="hidden" id="memesh-round" name="memesh_round_instance_id" value="" />
-        <input type="hidden" id="memesh-round-times" name="memesh_round_times" value="" />
+        <input type="hidden" name="memesh_date" value="" />
+        <input type="hidden" name="memesh_round_instance_id" value="" />
+        <input type="hidden" name="memesh_round_times" value="" />
     </div>
-    <script>
-    // Day-strip picker (Yanay 2026-07-05): same look and logic as the customer
-    // dashboard. One availability-range call renders a month of day chips with
-    // status dots; tapping a day lists its rounds as rows; tapping a row fills
-    // the hidden form fields the checkout hold already reads. All DOM is built
-    // with createElement — nothing from the API is ever concatenated into HTML.
-    (function () {
-        var api = <?php echo json_encode(MEMESH_API_BASE); ?>;
-        var stripEl = document.getElementById('memesh-strip');
-        var legendEl = document.getElementById('memesh-legend');
-        var roundsEl = document.getElementById('memesh-rounds');
-        var msgEl = document.getElementById('memesh-round-msg');
-        var dateEl = document.getElementById('memesh-date');
-        var roundEl = document.getElementById('memesh-round');
-        var timesEl = document.getElementById('memesh-round-times');
-        if (!stripEl) return;
+    <?php
+}
 
+/** Round picker + companion card on the product page. */
+add_action('woocommerce_before_add_to_cart_button', function () {
+    global $product;
+    if (!$product || !memesh_is_round_product($product->get_id())) return;
+    if (!memesh_rounds_enabled()) return; // rounds off — plain product
+    memesh_render_round_picker();
+});
+
+/**
+ * [memesh_round_picker product_id="300"] — the product-page picker wrapped in
+ * its own add-to-cart form, for the price-list page (Yanay 2026-07-05: buy
+ * straight from the price cards). The form posts to the PRODUCT page, so a
+ * validation error or the added-to-cart notice renders exactly like a
+ * product-page purchase — nothing gets lost on a page without WC templates.
+ */
+add_shortcode('memesh_round_picker', function ($atts) {
+    $atts = shortcode_atts(['product_id' => ''], $atts, 'memesh_round_picker');
+    $product_id = (int) $atts['product_id'];
+    if (!memesh_is_round_product($product_id)) return '';
+    $product = wc_get_product($product_id);
+    if (!$product || !$product->is_purchasable()) return '';
+    $rounds_on = memesh_rounds_enabled();
+
+    ob_start();
+    ?>
+    <form class="cart memesh-shortcode-cart" action="<?php echo esc_url(get_permalink($product_id)); ?>" method="post">
+        <div class="memesh-shortcode-head">
+            <span class="memesh-shortcode-title"><?php echo esc_html($product->get_name()); ?></span>
+            <span class="memesh-shortcode-price"><?php echo wp_kses_post($product->get_price_html()); ?></span>
+        </div>
+        <?php if ($rounds_on) memesh_render_round_picker(); ?>
+        <button type="submit" name="add-to-cart" value="<?php echo esc_attr($product_id); ?>"
+                class="single_add_to_cart_button memesh-shortcode-buy" <?php echo $rounds_on ? 'disabled' : ''; ?>>
+            הוספה לסל
+        </button>
+    </form>
+    <?php
+    return ob_get_clean();
+});
+
+/** Picker behavior — printed once per page, initializes every picker root. */
+add_action('wp_footer', function () {
+    if (!memesh_picker_script_needed()) return;
+    ?>
+    <script>
+    // Day-strip + month-calendar picker (Yanay 2026-07-05): one
+    // availability-range call renders a month of day chips with status dots;
+    // the calendar button opens a month grid that pages the rest of the
+    // booking window (up to the API's maxDate), one fetch per month, cached.
+    // Tapping a day lists its rounds; tapping a row fills the hidden fields
+    // the checkout hold reads. All DOM is built with createElement — nothing
+    // from the API is ever concatenated into HTML. Lookups are class-scoped
+    // inside each [data-memesh-picker] root so several pickers share a page.
+    (function () {
+        var HE_MONTHS = ['ינואר', 'פברואר', 'מרץ', 'אפריל', 'מאי', 'יוני',
+                         'יולי', 'אוגוסט', 'ספטמבר', 'אוקטובר', 'נובמבר', 'דצמבר'];
         var DOW = ['א', 'ב', 'ג', 'ד', 'ה', 'ו', 'ש'];
 
-        // The add-to-cart button stays disabled until the selection is valid —
-        // the browser "required" guard went away with the old <select>, and a
-        // reload-with-error beats nothing, but not-clickable beats both.
-        function cartBtn() {
-            var form = stripEl.closest ? stripEl.closest('form.cart') : null;
-            return (form && form.querySelector('.single_add_to_cart_button')) ||
-                   document.querySelector('.single_add_to_cart_button');
+        function ymOf(iso) { return iso.slice(0, 7); }
+        function daysInMonth(ym) {
+            return new Date(Number(ym.slice(0, 4)), Number(ym.slice(5, 7)), 0).getDate();
         }
-        function setCanBuy(ok) {
-            var btn = cartBtn();
-            if (btn) btn.disabled = !ok;
+        function addMonths(ym, delta) {
+            var total = Number(ym.slice(0, 4)) * 12 + (Number(ym.slice(5, 7)) - 1) + delta;
+            var m = (total % 12) + 1;
+            return Math.floor(total / 12) + '-' + (m < 10 ? '0' + m : String(m));
         }
-        function setMsg(text, good) {
-            msgEl.textContent = text || '';
-            msgEl.style.color = good ? '#5a7a3a' : '#a23a3a';
+        function monthLabel(ym) {
+            return HE_MONTHS[Number(ym.slice(5, 7)) - 1] + ' ' + ym.slice(0, 4);
         }
 
-        function openRounds(day) {
-            return (day.rounds || []).filter(function (x) { return x.available > 0 && !x.isClosed; });
-        }
-        // Dot per day — same thresholds as the dashboard strip: red when
-        // nothing is left, amber at a quarter or less, green otherwise.
-        function dayDotClass(day) {
-            if (day.closed) return 'memesh-dot-closed';
-            var open = (day.rounds || []).filter(function (x) { return !x.isClosed; });
-            if (open.length === 0) return day.roundsRequired ? 'memesh-dot-none' : 'memesh-dot-free';
-            var cap = 0, avail = 0;
-            open.forEach(function (x) { cap += x.capacity; avail += x.available; });
-            if (avail === 0) return 'memesh-dot-full';
-            if (cap > 0 && avail / cap <= 0.25) return 'memesh-dot-warn';
-            return 'memesh-dot-ok';
-        }
+        function initPicker(root) {
+            var api = root.getAttribute('data-api');
+            var form = root.closest ? root.closest('form.cart') : null;
+            var stripEl = root.querySelector('.memesh-strip');
+            var roundsEl = root.querySelector('.memesh-rounds');
+            var msgEl = root.querySelector('.memesh-round-msg');
+            var legendEl = root.querySelector('.memesh-legend');
+            var calToggle = root.querySelector('.memesh-cal-toggle');
+            var calEl = root.querySelector('.memesh-cal');
+            var dateEl = root.querySelector('input[name="memesh_date"]');
+            var roundEl = root.querySelector('input[name="memesh_round_instance_id"]');
+            var timesEl = root.querySelector('input[name="memesh_round_times"]');
+            if (!stripEl || !dateEl) return;
 
-        function selectRound(row, id, times) {
-            var rows = roundsEl.querySelectorAll('.memesh-round-row');
-            for (var i = 0; i < rows.length; i += 1) rows[i].classList.remove('is-selected');
-            row.classList.add('is-selected');
-            roundEl.value = id;
-            // The round's hours ride along so the cart / checkout / receipt can
-            // show "סבב 05/07/2026 · 09:00–14:00", not just the date.
-            timesEl.value = times;
-            setMsg('');
-            setCanBuy(true);
-        }
+            var dayCache = {};       // date → day, every fetch lands here
+            var todayIso = null;     // venue today = first day of the initial fetch
+            var maxDate = null;      // end of the booking window (API maxDate)
+            var selectedDate = null;
+            var calMonth = null;
+            var calLoading = false;
 
-        function roundRow(x, optional) {
-            var row = document.createElement('button');
-            row.type = 'button'; // inside form.cart — default type would submit
-            row.className = 'memesh-round-row';
-
-            var info = document.createElement('span');
-            info.className = 'memesh-round-info';
-            var label = document.createElement('span');
-            label.className = 'memesh-round-label';
-            label.textContent = x.label;
-            info.appendChild(label);
-            // Admins often embed the hours in the round name ("בוקר 9:00 - 14:00");
-            // add our own hours line only when the name doesn't carry them, so
-            // they never print twice.
-            if (!/\d{1,2}:\d{2}/.test(x.label)) {
-                var time = document.createElement('span');
-                time.className = 'memesh-round-time';
-                time.textContent = x.startTime + '–' + x.endTime;
-                info.appendChild(time);
+            // The add-to-cart button stays disabled until the selection is
+            // valid — not-clickable beats a reload-with-error.
+            function cartBtn() {
+                return (form && form.querySelector('.single_add_to_cart_button')) ||
+                       document.querySelector('.single_add_to_cart_button');
+            }
+            function setCanBuy(ok) {
+                var btn = cartBtn();
+                if (btn) btn.disabled = !ok;
+            }
+            function setMsg(text, good) {
+                msgEl.textContent = text || '';
+                msgEl.style.color = good ? '#5a7a3a' : '#a23a3a';
             }
 
-            var scarce = x.capacity > 0 && x.available / x.capacity <= 0.25;
-            var state = document.createElement('span');
-            state.className = 'memesh-round-state';
-            var pill = document.createElement('span');
-            pill.className = 'memesh-round-pill' + (scarce ? ' is-scarce' : '');
-            pill.textContent = x.available + ' פנויים';
-            var bar = document.createElement('span');
-            bar.className = 'memesh-round-bar';
-            var fill = document.createElement('span');
-            fill.className = 'memesh-round-bar-fill' + (scarce ? ' is-scarce' : '');
-            fill.style.width = (x.capacity > 0 ? Math.max(6, Math.round((x.available / x.capacity) * 100)) : 0) + '%';
-            bar.appendChild(fill);
-            state.appendChild(pill);
-            state.appendChild(bar);
-
-            row.appendChild(info);
-            row.appendChild(state);
-            row.addEventListener('click', function () {
-                selectRound(row, x.roundInstanceId, x.startTime + '–' + x.endTime);
-                if (optional) setMsg('בתאריך זה אפשר גם להיכנס חופשי בלי סבב — לבחירתכם.', true);
-            });
-            return row;
-        }
-
-        function renderDay(day) {
-            roundsEl.textContent = '';
-            dateEl.value = day.date;
-            roundEl.value = '';
-            timesEl.value = '';
-            var open = openRounds(day);
-            var optional = day.roundsRequired === false;
-
-            if (day.closed) {
-                setMsg('המקום סגור בתאריך זה — בחרו יום אחר.');
-                setCanBuy(false);
-                return;
+            function openRounds(day) {
+                return (day.rounds || []).filter(function (x) { return x.available > 0 && !x.isClosed; });
+            }
+            // Dot per day — same thresholds as the dashboard strip: red when
+            // nothing is left, amber at a quarter or less, green otherwise.
+            function dayDotClass(day) {
+                if (day.closed) return 'memesh-dot-closed';
+                var open = (day.rounds || []).filter(function (x) { return !x.isClosed; });
+                if (open.length === 0) return day.roundsRequired ? 'memesh-dot-none' : 'memesh-dot-free';
+                var cap = 0, avail = 0;
+                open.forEach(function (x) { cap += x.capacity; avail += x.available; });
+                if (avail === 0) return 'memesh-dot-full';
+                if (cap > 0 && avail / cap <= 0.25) return 'memesh-dot-warn';
+                return 'memesh-dot-ok';
             }
 
-            if (open.length === 0) {
-                if (optional) {
-                    setMsg('בתאריך זה הכניסה חופשית — אין צורך בבחירת סבב.', true);
-                    setCanBuy(true); // server-side validation lets off-dates through
-                } else {
-                    setMsg('אין סבבים פנויים ביום זה — בחרו יום אחר.');
-                    setCanBuy(false);
-                }
-                return;
-            }
-
-            if (optional) {
-                // Free-play day with round windows: a round is a choice, not a
-                // requirement — an explicit "no round" row keeps that obvious.
-                var freeRow = document.createElement('button');
-                freeRow.type = 'button';
-                freeRow.className = 'memesh-round-row is-selected';
-                var freeLabel = document.createElement('span');
-                freeLabel.className = 'memesh-round-label';
-                freeLabel.textContent = 'בלי סבב — כניסה חופשית';
-                freeRow.appendChild(freeLabel);
-                freeRow.addEventListener('click', function () {
-                    selectRound(freeRow, '', '');
-                    setMsg('בתאריך זה אפשר להיכנס חופשי או לשריין סבב — לבחירתכם.', true);
-                });
-                roundsEl.appendChild(freeRow);
-                setMsg('בתאריך זה אפשר להיכנס חופשי או לשריין סבב — לבחירתכם.', true);
+            function selectRound(row, id, times) {
+                var rows = roundsEl.querySelectorAll('.memesh-round-row');
+                for (var i = 0; i < rows.length; i += 1) rows[i].classList.remove('is-selected');
+                row.classList.add('is-selected');
+                roundEl.value = id;
+                // The round's hours ride along so the cart / checkout / receipt
+                // can show "סבב 05/07/2026 · 09:00–14:00", not just the date.
+                timesEl.value = times;
+                setMsg('');
                 setCanBuy(true);
-            } else {
-                setMsg('בחרו סבב כדי להמשיך.');
-                setCanBuy(false);
             }
-            open.forEach(function (x) { roundsEl.appendChild(roundRow(x, optional)); });
-        }
 
-        function dayChip(day, index) {
-            var chip = document.createElement('button');
-            chip.type = 'button';
-            chip.className = 'memesh-day-chip';
-            var dow = document.createElement('span');
-            dow.className = 'memesh-chip-dow';
-            dow.textContent = index === 0 ? 'היום' : DOW[new Date(day.date + 'T12:00:00').getDay()] + '׳';
-            var num = document.createElement('span');
-            num.className = 'memesh-chip-num';
-            num.textContent = String(Number(day.date.slice(8, 10)));
-            var dot = document.createElement('i');
-            dot.className = 'memesh-dot ' + dayDotClass(day);
-            chip.appendChild(dow);
-            chip.appendChild(num);
-            chip.appendChild(dot);
-            chip.addEventListener('click', function () {
-                var chips = stripEl.querySelectorAll('.memesh-day-chip');
-                for (var i = 0; i < chips.length; i += 1) chips[i].classList.remove('is-active');
-                chip.classList.add('is-active');
-                renderDay(day);
-            });
-            return chip;
-        }
+            function roundRow(x, optional) {
+                var row = document.createElement('button');
+                row.type = 'button'; // inside form.cart — default type would submit
+                row.className = 'memesh-round-row';
 
-        setCanBuy(false); // nothing valid until the strip loads and a day is picked
-        // 31 days = the API's max, covering the whole instance horizon — the
-        // same reach the old free date input had.
-        fetch(api + '/rounds/availability-range?days=31')
-            .then(function (r) { return r.json(); })
-            .then(function (data) {
-                var days = data.days || [];
-                if (days.length === 0) {
-                    setMsg('אין סבבים פנויים כרגע. נסו שוב מאוחר יותר.');
+                var info = document.createElement('span');
+                info.className = 'memesh-round-info';
+                var label = document.createElement('span');
+                label.className = 'memesh-round-label';
+                label.textContent = x.label;
+                info.appendChild(label);
+                // Admins often embed the hours in the round name ("בוקר 9:00 - 14:00");
+                // add our own hours line only when the name doesn't carry them, so
+                // they never print twice.
+                if (!/\d{1,2}:\d{2}/.test(x.label)) {
+                    var time = document.createElement('span');
+                    time.className = 'memesh-round-time';
+                    time.textContent = x.startTime + '–' + x.endTime;
+                    info.appendChild(time);
+                }
+
+                var scarce = x.capacity > 0 && x.available / x.capacity <= 0.25;
+                var state = document.createElement('span');
+                state.className = 'memesh-round-state';
+                var pill = document.createElement('span');
+                pill.className = 'memesh-round-pill' + (scarce ? ' is-scarce' : '');
+                pill.textContent = x.available + ' פנויים';
+                var bar = document.createElement('span');
+                bar.className = 'memesh-round-bar';
+                var fill = document.createElement('span');
+                fill.className = 'memesh-round-bar-fill' + (scarce ? ' is-scarce' : '');
+                fill.style.width = (x.capacity > 0 ? Math.max(6, Math.round((x.available / x.capacity) * 100)) : 0) + '%';
+                bar.appendChild(fill);
+                state.appendChild(pill);
+                state.appendChild(bar);
+
+                row.appendChild(info);
+                row.appendChild(state);
+                row.addEventListener('click', function () {
+                    selectRound(row, x.roundInstanceId, x.startTime + '–' + x.endTime);
+                    if (optional) setMsg('בתאריך זה אפשר גם להיכנס חופשי בלי סבב — לבחירתכם.', true);
+                });
+                return row;
+            }
+
+            function renderDay(day) {
+                roundsEl.textContent = '';
+                dateEl.value = day.date;
+                roundEl.value = '';
+                timesEl.value = '';
+                var open = openRounds(day);
+                var optional = day.roundsRequired === false;
+
+                if (day.closed) {
+                    setMsg('המקום סגור בתאריך זה — בחרו יום אחר.');
+                    setCanBuy(false);
                     return;
                 }
-                days.forEach(function (day, index) { stripEl.appendChild(dayChip(day, index)); });
-                legendEl.style.display = '';
-                var first = stripEl.querySelector('.memesh-day-chip');
-                if (first) first.click(); // today preselected, its rounds visible
-            })
-            .catch(function () {
-                setMsg('לא ניתן לטעון סבבים כרגע. רעננו את העמוד ונסו שוב.');
-            });
+
+                if (open.length === 0) {
+                    if (optional) {
+                        setMsg('בתאריך זה הכניסה חופשית — אין צורך בבחירת סבב.', true);
+                        setCanBuy(true); // server-side validation lets off-dates through
+                    } else {
+                        setMsg('אין סבבים פנויים ביום זה — בחרו יום אחר.');
+                        setCanBuy(false);
+                    }
+                    return;
+                }
+
+                if (optional) {
+                    // Free-play day with round windows: a round is a choice, not a
+                    // requirement — an explicit "no round" row keeps that obvious.
+                    var freeRow = document.createElement('button');
+                    freeRow.type = 'button';
+                    freeRow.className = 'memesh-round-row is-selected';
+                    var freeLabel = document.createElement('span');
+                    freeLabel.className = 'memesh-round-label';
+                    freeLabel.textContent = 'בלי סבב — כניסה חופשית';
+                    freeRow.appendChild(freeLabel);
+                    freeRow.addEventListener('click', function () {
+                        selectRound(freeRow, '', '');
+                        setMsg('בתאריך זה אפשר להיכנס חופשי או לשריין סבב — לבחירתכם.', true);
+                    });
+                    roundsEl.appendChild(freeRow);
+                    setMsg('בתאריך זה אפשר להיכנס חופשי או לשריין סבב — לבחירתכם.', true);
+                    setCanBuy(true);
+                } else {
+                    setMsg('בחרו סבב כדי להמשיך.');
+                    setCanBuy(false);
+                }
+                open.forEach(function (x) { roundsEl.appendChild(roundRow(x, optional)); });
+            }
+
+            // Single entry point for picking a day (strip chip OR calendar
+            // cell) so highlight + rounds + calendar always agree.
+            function setSelectedDate(dateIso) {
+                selectedDate = dateIso;
+                var chips = stripEl.querySelectorAll('.memesh-day-chip');
+                for (var i = 0; i < chips.length; i += 1) {
+                    chips[i].classList.toggle('is-active', chips[i].getAttribute('data-date') === dateIso);
+                }
+                var day = dayCache[dateIso];
+                if (day) renderDay(day);
+                if (calEl.style.display !== 'none') renderCalendar();
+            }
+
+            function dayChip(day, index) {
+                var chip = document.createElement('button');
+                chip.type = 'button';
+                chip.className = 'memesh-day-chip';
+                chip.setAttribute('data-date', day.date);
+                var dow = document.createElement('span');
+                dow.className = 'memesh-chip-dow';
+                dow.textContent = index === 0 ? 'היום' : DOW[new Date(day.date + 'T12:00:00').getDay()] + '׳';
+                var num = document.createElement('span');
+                num.className = 'memesh-chip-num';
+                num.textContent = String(Number(day.date.slice(8, 10)));
+                var dot = document.createElement('i');
+                dot.className = 'memesh-dot ' + dayDotClass(day);
+                chip.appendChild(dow);
+                chip.appendChild(num);
+                chip.appendChild(dot);
+                chip.addEventListener('click', function () { setSelectedDate(day.date); });
+                return chip;
+            }
+
+            // ---- month calendar (Yanay 2026-07-05: next month, next year) ----
+            function navBtn(glyph, enabled, delta) {
+                var b = document.createElement('button');
+                b.type = 'button';
+                b.className = 'memesh-cal-nav';
+                b.textContent = glyph;
+                b.disabled = !enabled;
+                if (enabled) b.addEventListener('click', function () { setCalMonth(addMonths(calMonth, delta)); });
+                return b;
+            }
+
+            function calCell(iso, num) {
+                var day = dayCache[iso];
+                var inWindow = !!todayIso && iso >= todayIso && !!maxDate && iso <= maxDate && !!day;
+                var cell = document.createElement('button');
+                cell.type = 'button';
+                cell.className = 'memesh-cal-cell' + (selectedDate === iso ? ' is-active' : '');
+                cell.disabled = !inWindow;
+                var n = document.createElement('span');
+                n.className = 'memesh-cal-num';
+                n.textContent = String(num);
+                var dot = document.createElement('i');
+                dot.className = 'memesh-dot ' + (inWindow ? dayDotClass(day) : 'memesh-dot-blank');
+                cell.appendChild(n);
+                cell.appendChild(dot);
+                if (inWindow) {
+                    cell.addEventListener('click', function () {
+                        setSelectedDate(iso);
+                        toggleCal(false);
+                    });
+                }
+                return cell;
+            }
+
+            function renderCalendar() {
+                calEl.textContent = '';
+                var head = document.createElement('div');
+                head.className = 'memesh-cal-head';
+                // RTL: the past sits to the right, so the right-hand button walks back.
+                head.appendChild(navBtn('›', !!todayIso && calMonth > ymOf(todayIso), -1));
+                var title = document.createElement('span');
+                title.className = 'memesh-cal-title';
+                title.textContent = monthLabel(calMonth);
+                head.appendChild(title);
+                head.appendChild(navBtn('‹', !!maxDate && calMonth < ymOf(maxDate), 1));
+                calEl.appendChild(head);
+
+                var grid = document.createElement('div');
+                grid.className = 'memesh-cal-grid';
+                DOW.forEach(function (l) {
+                    var c = document.createElement('span');
+                    c.className = 'memesh-cal-dow';
+                    c.textContent = l + '׳';
+                    grid.appendChild(c);
+                });
+                var blanks = new Date(calMonth + '-01T12:00:00').getDay();
+                for (var b = 0; b < blanks; b += 1) grid.appendChild(document.createElement('span'));
+                var count = daysInMonth(calMonth);
+                for (var d = 1; d <= count; d += 1) {
+                    grid.appendChild(calCell(calMonth + '-' + (d < 10 ? '0' + d : String(d)), d));
+                }
+                calEl.appendChild(grid);
+
+                if (calLoading) {
+                    var loading = document.createElement('div');
+                    loading.className = 'memesh-cal-loading';
+                    loading.textContent = 'טוען חודש…';
+                    calEl.appendChild(loading);
+                }
+            }
+
+            // One fetch per month, remembered for the life of the page.
+            function setCalMonth(ym) {
+                calMonth = ym;
+                var count = daysInMonth(ym);
+                var missing = false;
+                for (var d = 1; d <= count; d += 1) {
+                    if (!dayCache[ym + '-' + (d < 10 ? '0' + d : String(d))]) { missing = true; break; }
+                }
+                if (!missing) { renderCalendar(); return; }
+                calLoading = true;
+                renderCalendar();
+                fetch(api + '/rounds/availability-range?days=' + count + '&from=' + ym + '-01')
+                    .then(function (r) { return r.json(); })
+                    .then(function (data) {
+                        (data.days || []).forEach(function (day) { dayCache[day.date] = day; });
+                        calLoading = false;
+                        if (calMonth === ym) renderCalendar();
+                    })
+                    .catch(function () {
+                        calLoading = false;
+                        if (calMonth === ym) renderCalendar();
+                    });
+            }
+
+            function toggleCal(show) {
+                var open = show === undefined ? calEl.style.display === 'none' : show;
+                calEl.style.display = open ? '' : 'none';
+                calToggle.classList.toggle('is-active', open);
+                if (open) setCalMonth(calMonth || ymOf(selectedDate || todayIso));
+            }
+
+            if (calToggle) {
+                calToggle.addEventListener('click', function () {
+                    if (todayIso) toggleCal();
+                });
+            }
+
+            setCanBuy(false); // nothing valid until the strip loads and a day is picked
+            // 31 days feed the strip; the calendar pages the rest of the window.
+            fetch(api + '/rounds/availability-range?days=31')
+                .then(function (r) { return r.json(); })
+                .then(function (data) {
+                    var days = data.days || [];
+                    if (days.length === 0) {
+                        setMsg('אין סבבים פנויים כרגע. נסו שוב מאוחר יותר.');
+                        return;
+                    }
+                    todayIso = days[0].date;
+                    // Older API without maxDate → calendar limited to the strip's reach.
+                    maxDate = data.maxDate || days[days.length - 1].date;
+                    days.forEach(function (day, index) {
+                        dayCache[day.date] = day;
+                        stripEl.appendChild(dayChip(day, index));
+                    });
+                    legendEl.style.display = '';
+                    if (calToggle) calToggle.style.display = '';
+                    setSelectedDate(days[0].date); // today preselected, its rounds visible
+                })
+                .catch(function () {
+                    setMsg('לא ניתן לטעון סבבים כרגע. רעננו את העמוד ונסו שוב.');
+                });
+        }
+
+        function initAll() {
+            var roots = document.querySelectorAll('[data-memesh-picker]');
+            for (var i = 0; i < roots.length; i += 1) {
+                if (roots[i].getAttribute('data-memesh-init')) continue;
+                roots[i].setAttribute('data-memesh-init', '1');
+                initPicker(roots[i]);
+            }
+        }
+        if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initAll);
+        else initAll();
     })();
     </script>
     <?php
-});
+}, 50);
 
-/** Styling for the picker, the companion card, and the upsell notice. */
+/** Styling for the picker, the calendar, the companion card, the shortcode
+ *  form, and the upsell notice. */
 add_action('wp_head', function () {
     ?>
     <style>
@@ -338,15 +573,20 @@ add_action('wp_head', function () {
     .memesh-field-label { font-size: 14px; font-weight: 500; color: #333; }
     .memesh-round-msg { font-size: 13px; color: #a23a3a; min-height: 16px; }
 
-    /* Day strip — same look as the customer dashboard picker. The chip and
-       row buttons reset theme button styling hard: WP themes love to paint
-       every <button>. */
+    /* Day strip — same look as the customer dashboard picker. The chip, row,
+       and calendar buttons reset theme button styling hard: WP themes love to
+       paint every <button>. */
+    .memesh-strip-row { display: flex; gap: 6px; align-items: stretch; }
     .memesh-strip {
         display: flex; gap: 6px; overflow-x: auto; padding: 2px 2px 4px;
+        flex: 1; min-width: 0;
         -webkit-overflow-scrolling: touch;
     }
     .memesh-strip .memesh-day-chip,
-    .memesh-rounds .memesh-round-row {
+    .memesh-rounds .memesh-round-row,
+    .memesh-cal-toggle,
+    .memesh-cal-nav,
+    .memesh-cal-cell {
         appearance: none; -webkit-appearance: none; box-shadow: none;
         margin: 0; text-transform: none; line-height: 1.3;
         font-family: inherit; cursor: pointer;
@@ -367,6 +607,7 @@ add_action('wp_head', function () {
     .memesh-dot-free { background: #a9bac6; }
     .memesh-dot-closed { background: #8a7f76; }
     .memesh-dot-none { background: #d9d2c9; }
+    .memesh-dot-blank { background: transparent; }
     .memesh-legend {
         display: flex; flex-wrap: wrap; gap: 4px 12px; justify-content: center;
         font-size: 11.5px; color: #636e72;
@@ -399,32 +640,55 @@ add_action('wp_head', function () {
     }
     .memesh-round-bar-fill.is-scarce { background: #e7a33e; }
 
-    .memesh-companion-card {
-        margin: 4px 0; padding: 14px 16px;
-        background: #fbf7f0; border: 1px solid #d9c8a8; border-radius: 8px;
-        transition: background 0.15s;
+    /* Calendar button + month grid (Yanay 2026-07-05). */
+    .memesh-cal-toggle {
+        flex: 0 0 auto; min-width: 52px; padding: 8px 6px;
+        border: 1.5px solid #e9e0d9; background: #fff; border-radius: 12px;
+        display: flex; flex-direction: column; align-items: center;
+        justify-content: center; gap: 4px;
     }
-    .memesh-companion-card:hover { background: #f7f1e5; }
-    .memesh-companion-label {
-        display: flex; align-items: flex-start; gap: 12px;
-        cursor: pointer; margin: 0;
+    .memesh-cal-toggle.is-active { border-color: #e7a33e; background: #fdf3e3; }
+    .memesh-cal-toggle-icon { font-size: 17px; line-height: 1; }
+    .memesh-cal-toggle-label { font-size: 9.5px; color: #636e72; font-weight: 600; }
+    .memesh-cal {
+        border: 1.5px solid #e9e0d9; border-radius: 12px; padding: 12px;
+        display: flex; flex-direction: column; gap: 10px; background: #fff;
     }
-    .memesh-companion-label input[type="checkbox"] {
-        margin-top: 3px; flex-shrink: 0;
-        width: 18px; height: 18px; cursor: pointer;
+    .memesh-cal-head { display: flex; align-items: center; justify-content: space-between; }
+    .memesh-cal-title { font-size: 14.5px; font-weight: 700; color: #2d3436; }
+    .memesh-cal-nav {
+        width: 34px; height: 34px; border: 1.5px solid #e9e0d9; background: #fff;
+        border-radius: 10px; font-size: 18px; color: #2d3436;
+        display: inline-flex; align-items: center; justify-content: center;
     }
-    .memesh-companion-content { flex: 1; min-width: 0; }
-    .memesh-companion-header {
-        display: flex; justify-content: space-between;
-        align-items: baseline; gap: 8px;
+    .memesh-cal-nav:disabled { color: #d9d2c9; cursor: default; }
+    .memesh-cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+    .memesh-cal-dow { text-align: center; font-size: 10.5px; color: #636e72; font-weight: 600; }
+    .memesh-cal-cell {
+        border: 1.5px solid transparent; background: transparent; border-radius: 9px;
+        padding: 5px 0 4px; display: flex; flex-direction: column;
+        align-items: center; gap: 3px;
     }
-    .memesh-companion-header strong { font-size: 15px; color: #333; }
-    .memesh-companion-price {
-        font-size: 15px; font-weight: 600; color: #a25a1c; white-space: nowrap;
+    .memesh-cal-cell.is-active { border-color: #e7a33e; background: #fdf3e3; }
+    .memesh-cal-cell:disabled { cursor: default; }
+    .memesh-cal-num { font-size: 13.5px; font-weight: 500; color: #2d3436; }
+    .memesh-cal-cell.is-active .memesh-cal-num { color: #b9772a; font-weight: 700; }
+    .memesh-cal-cell:disabled .memesh-cal-num { color: #d9d2c9; }
+    .memesh-cal-loading { text-align: center; color: #636e72; font-size: 12.5px; }
+
+    /* The shortcode's own add-to-cart form (price-list popups). */
+    .memesh-shortcode-cart { display: flex; flex-direction: column; gap: 12px; margin: 0; }
+    .memesh-shortcode-head {
+        display: flex; justify-content: space-between; align-items: baseline; gap: 8px;
     }
-    .memesh-companion-note {
-        color: #666; font-size: 13px; margin-top: 6px; line-height: 1.5;
+    .memesh-shortcode-title { font-size: 17px; font-weight: 700; color: #2d3436; }
+    .memesh-shortcode-price { font-size: 16px; font-weight: 600; color: #a25a1c; white-space: nowrap; }
+    .memesh-shortcode-buy {
+        border: none; background: #b18a5a; color: #fff; border-radius: 8px;
+        padding: 12px 18px; font-size: 15px; font-weight: 600; cursor: pointer;
     }
+    .memesh-shortcode-buy:hover { background: #9a7449; }
+    .memesh-shortcode-buy:disabled { opacity: 0.5; cursor: default; }
 
     .woocommerce-message .memesh-upsell,
     .woocommerce-info    .memesh-upsell,

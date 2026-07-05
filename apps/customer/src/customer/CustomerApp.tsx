@@ -5,7 +5,17 @@ import {
   useCustomerSession,
   type CustomerProfile,
 } from '@memesh/customer-auth';
-import { fmtDate, labelHasTime, roundTitle, type PunchCard as ApiPunchCard } from '@memesh/web-shared';
+import {
+  addMonths,
+  firstOfMonth,
+  fmtDate,
+  labelHasTime,
+  monthGrid,
+  monthLabelHe,
+  monthOfIso,
+  roundTitle,
+  type PunchCard as ApiPunchCard,
+} from '@memesh/web-shared';
 import {
   bookRoundWithPunch,
   cancelRoundBooking,
@@ -742,9 +752,7 @@ function Home({
             <MemeshQr value={c.qrToken} size={180} title={`קוד QR — ${c.serialNumber}`} />
             <div style={{ fontSize: 13, color: MUTED }}>{c.serialNumber}</div>
             <div style={{ fontSize: 13, color: MUTED }}>
-              {c.expiresAt === null
-                ? 'ללא תפוגה'
-                : `תוקף עד ${fmtDate(yyyyMmDd(c.expiresAt))}`}
+              {c.expiresAt === null ? 'ללא תפוגה' : `תוקף עד ${fmtDate(yyyyMmDd(c.expiresAt))}`}
             </div>
             {c.isActive && c.usedEntries < c.totalEntries && (
               <PunchRoundBooking
@@ -796,6 +804,140 @@ const dowLetter = (dateIso: string): string =>
   DOW_LETTERS[new Date(`${dateIso}T12:00:00`).getDay()] ?? '';
 const dayOfMonth = (dateIso: string): number => Number(dateIso.slice(8, 10));
 
+// Month calendar for booking beyond the strip (Yanay 2026-07-05: customers
+// should reach next month and next year themselves instead of phoning). Pure
+// presentation — the parent owns the day cache and the fetching. Cells outside
+// [todayIso, maxDate] are disabled; a loaded day shows the same status dot as
+// its strip chip, so the two views never disagree.
+function MonthCalendar({
+  month,
+  todayIso,
+  maxDate,
+  selectedDate,
+  loading,
+  dayFor,
+  onMonthChange,
+  onPick,
+}: {
+  month: string;
+  todayIso: string;
+  maxDate: string | null;
+  selectedDate: string | null;
+  loading: boolean;
+  dayFor: (dateIso: string) => DayAvailability | undefined;
+  onMonthChange: (ym: string) => void;
+  onPick: (dateIso: string) => void;
+}) {
+  const { leadingBlanks, dates } = monthGrid(month);
+  const canPrev = month > monthOfIso(todayIso);
+  const canNext = maxDate !== null && month < monthOfIso(maxDate);
+  const navBtn = (enabled: boolean): CSSProperties => ({
+    border: '1.5px solid #e9e0d9',
+    background: '#fff',
+    color: enabled ? '#2d3436' : '#d9d2c9',
+    borderRadius: 10,
+    width: 34,
+    height: 34,
+    fontSize: 18,
+    lineHeight: '30px',
+    cursor: enabled ? 'pointer' : 'default',
+  });
+  return (
+    <div
+      style={{
+        border: '1.5px solid #e9e0d9',
+        borderRadius: 12,
+        padding: 12,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 10,
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        {/* RTL: the past sits to the right, so the right-hand button walks back. */}
+        <button
+          type="button"
+          title="חודש קודם"
+          disabled={!canPrev}
+          onClick={() => canPrev && onMonthChange(addMonths(month, -1))}
+          style={navBtn(canPrev)}
+        >
+          ›
+        </button>
+        <div style={{ fontSize: 14.5, fontWeight: 700 }}>{monthLabelHe(month)}</div>
+        <button
+          type="button"
+          title="חודש הבא"
+          disabled={!canNext}
+          onClick={() => canNext && onMonthChange(addMonths(month, 1))}
+          style={navBtn(canNext)}
+        >
+          ‹
+        </button>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 4 }}>
+        {DOW_LETTERS.map((l) => (
+          <span
+            key={l}
+            style={{ textAlign: 'center', fontSize: 10.5, color: MUTED, fontWeight: 600 }}
+          >
+            {l}׳
+          </span>
+        ))}
+        {Array.from({ length: leadingBlanks }, (_, i) => (
+          <span key={`blank-${i}`} />
+        ))}
+        {dates.map((dateIso) => {
+          const day = dayFor(dateIso);
+          const inWindow =
+            dateIso >= todayIso && (maxDate === null || dateIso <= maxDate) && day !== undefined;
+          const active = selectedDate === dateIso;
+          return (
+            <button
+              key={dateIso}
+              type="button"
+              disabled={!inWindow}
+              onClick={() => inWindow && onPick(dateIso)}
+              style={{
+                border: `1.5px solid ${active ? '#e7a33e' : 'transparent'}`,
+                background: active ? '#fdf3e3' : 'transparent',
+                borderRadius: 9,
+                padding: '5px 0 4px',
+                cursor: inWindow ? 'pointer' : 'default',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                gap: 3,
+              }}
+            >
+              <span
+                style={{
+                  fontSize: 13.5,
+                  fontWeight: active ? 700 : 500,
+                  color: inWindow ? (active ? '#b9772a' : '#2d3436') : '#d9d2c9',
+                }}
+              >
+                {dayOfMonth(dateIso)}
+              </span>
+              <span
+                style={{
+                  width: 6,
+                  height: 6,
+                  borderRadius: '50%',
+                  background: inWindow && day ? DAY_DOT[dayStatus(day)] : 'transparent',
+                }}
+              />
+            </button>
+          );
+        })}
+      </div>
+      {loading && (
+        <div style={{ textAlign: 'center', color: MUTED, fontSize: 12.5 }}>טוען חודש…</div>
+      )}
+    </div>
+  );
+}
+
 // Book a round using this card's entries (super-brief §3.4). No WooCommerce — the
 // customer already paid for the card. Lives inside the punch-card card so the
 // "this card → book with it" link is obvious (Yanay feedback, 2026-07-04). The
@@ -827,14 +969,27 @@ function PunchRoundBooking({
   // Set when the booking succeeded but the companion payment couldn't start —
   // the done screen tells the customer to retry from the booking card.
   const [companionNote, setCompanionNote] = useState<string | null>(null);
+  // Month calendar (Yanay 2026-07-05): the strip shows the next month; the
+  // calendar pages the whole booking window. Every fetched day lands in
+  // dayCache so a picked far date renders through the same selectedDay path.
+  const [calOpen, setCalOpen] = useState(false);
+  const [calMonth, setCalMonth] = useState<string | null>(null);
+  const [calLoading, setCalLoading] = useState(false);
+  const [maxDate, setMaxDate] = useState<string | null>(null);
+  const [dayCache, setDayCache] = useState<Map<string, DayAvailability>>(new Map());
 
   const remaining = punchCard.totalEntries - punchCard.usedEntries;
   // The stepper can never promise more than the card holds or the round seats.
   const maxCount = chosen ? Math.max(1, Math.min(remaining, chosen.available)) : remaining;
 
-  // Everything below the strip derives from the selected day — one range fetch
-  // on open covers the dots AND the per-day round lists, no second request.
-  const selectedDay = days?.find((d) => d.date === selectedDate) ?? null;
+  // Everything below the strip derives from the selected day. The cache holds
+  // every fetched day (strip + calendar months), so a far date picked in the
+  // calendar renders exactly like a strip chip.
+  const todayIso = days?.[0]?.date ?? null;
+  const selectedDay =
+    (selectedDate ? dayCache.get(selectedDate) : undefined) ??
+    days?.find((d) => d.date === selectedDate) ??
+    null;
   const openRounds = selectedDay
     ? selectedDay.rounds.filter((r) => r.available > 0 && !r.isClosed)
     : [];
@@ -878,7 +1033,8 @@ function PunchRoundBooking({
     setChosen(null);
     setError(null);
     setJoinMsg(null);
-    // 30 days = the full instance horizon, same reach the old date input had.
+    // The strip keeps a month of chips; the calendar pages the rest of the
+    // booking window (up to maxDate) month by month.
     const res = await getRoundAvailabilityRange(30);
     console.info('[customer punch-booking] range loaded', {
       ok: res.ok,
@@ -891,6 +1047,10 @@ function PunchRoundBooking({
       return;
     }
     setDays(res.data.days);
+    setMaxDate(res.data.maxDate);
+    setDayCache(new Map(res.data.days.map((d) => [d.date, d])));
+    setCalOpen(false);
+    setCalMonth(null);
     setCompanionPrice(res.data.companionPriceIls);
     // Keep the current selection only while it's still in the window;
     // otherwise fall back to the first day (today).
@@ -904,6 +1064,37 @@ function PunchRoundBooking({
     if (open) void loadRange();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+
+  // The calendar pages the booking window one month per fetch; each month is
+  // remembered for as long as the form stays open.
+  useEffect(() => {
+    if (!calOpen || !calMonth) return;
+    const { dates } = monthGrid(calMonth);
+    if (!dates.some((d) => !dayCache.has(d))) return;
+    let cancelled = false;
+    setCalLoading(true);
+    void (async () => {
+      const res = await getRoundAvailabilityRange(dates.length, firstOfMonth(calMonth));
+      console.info('[customer punch-booking] calendar month', {
+        month: calMonth,
+        ok: res.ok,
+        days: res.ok ? res.data.days.length : 0,
+        error: res.ok ? undefined : res.error,
+      });
+      if (cancelled) return;
+      setCalLoading(false);
+      if (!res.ok) return;
+      setDayCache((cur) => {
+        const next = new Map(cur);
+        for (const d of res.data.days) next.set(d.date, d);
+        return next;
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [calOpen, calMonth]);
 
   const doJoin = async (r: AvailabilityRound) => {
     setBusy(true);
@@ -1004,7 +1195,13 @@ function PunchRoundBooking({
             setChosen(null);
             setError(null);
           }}
-          style={{ border: 'none', background: 'transparent', color: MUTED, fontSize: 13, cursor: 'pointer' }}
+          style={{
+            border: 'none',
+            background: 'transparent',
+            color: MUTED,
+            fontSize: 13,
+            cursor: 'pointer',
+          }}
         >
           סגירה
         </button>
@@ -1033,56 +1230,114 @@ function PunchRoundBooking({
           )}
           {days && days.length > 0 && (
             <>
-              <div style={{ display: 'flex', gap: 6, overflowX: 'auto', padding: '2px 2px 4px' }}>
-                {days.map((d, i) => {
-                  const active = selectedDate === d.date;
-                  return (
-                    <button
-                      key={d.date}
-                      onClick={() => {
-                        setSelectedDate(d.date);
-                        setChosen(null);
-                        setError(null);
-                        setJoinMsg(null);
-                      }}
-                      style={{
-                        flex: '0 0 auto',
-                        minWidth: 52,
-                        border: `1.5px solid ${active ? '#e7a33e' : '#e9e0d9'}`,
-                        background: active ? '#fdf3e3' : '#fff',
-                        borderRadius: 12,
-                        padding: '8px 6px',
-                        cursor: 'pointer',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        alignItems: 'center',
-                        gap: 4,
-                      }}
-                    >
-                      <span style={{ fontSize: 10.5, color: MUTED, fontWeight: 600 }}>
-                        {i === 0 ? 'היום' : `${dowLetter(d.date)}׳`}
-                      </span>
-                      <span
+              <div style={{ display: 'flex', gap: 6, alignItems: 'stretch' }}>
+                {/* Fixed beside the strip so far-future dates are one tap away
+                    without scrolling (Yanay 2026-07-05). */}
+                <button
+                  onClick={() => {
+                    if (!todayIso) return;
+                    setCalMonth((m) => m ?? monthOfIso(selectedDate ?? todayIso));
+                    setCalOpen((v) => !v);
+                    console.info('[customer punch-booking] calendar toggle', { open: !calOpen });
+                  }}
+                  title="בחירת תאריך מלוח שנה"
+                  style={{
+                    flex: '0 0 auto',
+                    minWidth: 52,
+                    border: `1.5px solid ${calOpen ? '#e7a33e' : '#e9e0d9'}`,
+                    background: calOpen ? '#fdf3e3' : '#fff',
+                    borderRadius: 12,
+                    padding: '8px 6px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 4,
+                  }}
+                >
+                  <span style={{ fontSize: 17, lineHeight: 1 }}>📅</span>
+                  <span style={{ fontSize: 9.5, color: MUTED, fontWeight: 600 }}>לוח שנה</span>
+                </button>
+                <div
+                  style={{
+                    display: 'flex',
+                    gap: 6,
+                    overflowX: 'auto',
+                    padding: '2px 2px 4px',
+                    flex: 1,
+                    minWidth: 0,
+                  }}
+                >
+                  {days.map((d, i) => {
+                    const active = selectedDate === d.date;
+                    return (
+                      <button
+                        key={d.date}
+                        onClick={() => {
+                          setSelectedDate(d.date);
+                          setChosen(null);
+                          setError(null);
+                          setJoinMsg(null);
+                        }}
                         style={{
-                          fontSize: 15,
-                          fontWeight: 700,
-                          color: active ? '#b9772a' : '#2d3436',
+                          flex: '0 0 auto',
+                          minWidth: 52,
+                          border: `1.5px solid ${active ? '#e7a33e' : '#e9e0d9'}`,
+                          background: active ? '#fdf3e3' : '#fff',
+                          borderRadius: 12,
+                          padding: '8px 6px',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          alignItems: 'center',
+                          gap: 4,
                         }}
                       >
-                        {dayOfMonth(d.date)}
-                      </span>
-                      <span
-                        style={{
-                          width: 7,
-                          height: 7,
-                          borderRadius: '50%',
-                          background: DAY_DOT[dayStatus(d)],
-                        }}
-                      />
-                    </button>
-                  );
-                })}
+                        <span style={{ fontSize: 10.5, color: MUTED, fontWeight: 600 }}>
+                          {i === 0 ? 'היום' : `${dowLetter(d.date)}׳`}
+                        </span>
+                        <span
+                          style={{
+                            fontSize: 15,
+                            fontWeight: 700,
+                            color: active ? '#b9772a' : '#2d3436',
+                          }}
+                        >
+                          {dayOfMonth(d.date)}
+                        </span>
+                        <span
+                          style={{
+                            width: 7,
+                            height: 7,
+                            borderRadius: '50%',
+                            background: DAY_DOT[dayStatus(d)],
+                          }}
+                        />
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
+              {calOpen && calMonth && todayIso && (
+                <MonthCalendar
+                  month={calMonth}
+                  todayIso={todayIso}
+                  maxDate={maxDate}
+                  selectedDate={selectedDate}
+                  loading={calLoading}
+                  dayFor={(d) => dayCache.get(d)}
+                  onMonthChange={setCalMonth}
+                  onPick={(d) => {
+                    console.info('[customer punch-booking] calendar pick', { date: d });
+                    setSelectedDate(d);
+                    setChosen(null);
+                    setError(null);
+                    setJoinMsg(null);
+                    setCalOpen(false);
+                  }}
+                />
+              )}
             </>
           )}
 
@@ -1129,7 +1384,9 @@ function PunchRoundBooking({
                     gap: 10,
                   }}
                 >
-                  <span style={{ display: 'flex', flexDirection: 'column', gap: 2, textAlign: 'start' }}>
+                  <span
+                    style={{ display: 'flex', flexDirection: 'column', gap: 2, textAlign: 'start' }}
+                  >
                     <span style={{ fontWeight: 600 }}>{r.label}</span>
                     {!labelHasTime(r.label) && (
                       <span style={{ color: MUTED, fontSize: 12.5 }}>
@@ -1137,7 +1394,14 @@ function PunchRoundBooking({
                       </span>
                     )}
                   </span>
-                  <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
+                  <span
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'flex-end',
+                      gap: 6,
+                    }}
+                  >
                     <span
                       style={{
                         fontSize: 12,
@@ -1200,7 +1464,9 @@ function PunchRoundBooking({
                       color: MUTED,
                     }}
                   >
-                    <span style={{ fontWeight: 600 }}>{roundTitle(r.label, r.startTime, r.endTime)}</span>
+                    <span style={{ fontWeight: 600 }}>
+                      {roundTitle(r.label, r.startTime, r.endTime)}
+                    </span>
                     <span style={{ fontSize: 13 }}>רשימת המתנה</span>
                   </button>
                 ))}
@@ -1213,9 +1479,24 @@ function PunchRoundBooking({
           )}
 
           {chosen && (
-            <div style={{ borderTop: '1px solid #f3efea', paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div
+              style={{
+                borderTop: '1px solid #f3efea',
+                paddingTop: 12,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 10,
+              }}
+            >
               {maxCount > 1 && (
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 14 }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 14,
+                  }}
+                >
                   <span style={{ fontSize: 13.5 }}>כמה כניסות?</span>
                   <button
                     disabled={busy || count <= 1}
@@ -1224,7 +1505,9 @@ function PunchRoundBooking({
                   >
                     −
                   </button>
-                  <span style={{ fontSize: 18, fontWeight: 700, minWidth: 24, textAlign: 'center' }}>
+                  <span
+                    style={{ fontSize: 18, fontWeight: 700, minWidth: 24, textAlign: 'center' }}
+                  >
                     {count}
                   </span>
                   <button
@@ -1283,14 +1566,22 @@ function PunchRoundBooking({
               )}
 
               <div style={{ display: 'flex', gap: 8 }}>
-                <button disabled={busy} onClick={() => void doBook()} style={{ ...primaryBtn, flex: 1 }}>
+                <button
+                  disabled={busy}
+                  onClick={() => void doBook()}
+                  style={{ ...primaryBtn, flex: 1 }}
+                >
                   {busy
                     ? 'מזמין…'
                     : count === 1 && addCompanion && companionPrice
                       ? `אישור, הזמנה ותשלום ₪${companionPrice}`
                       : 'אישור והזמנה'}
                 </button>
-                <button disabled={busy} onClick={() => setChosen(null)} style={{ ...ghostBtn, flex: 1 }}>
+                <button
+                  disabled={busy}
+                  onClick={() => setChosen(null)}
+                  style={{ ...ghostBtn, flex: 1 }}
+                >
                   חזרה
                 </button>
               </div>
@@ -1394,7 +1685,8 @@ function WaitlistEntryCard({
       <div style={{ fontSize: 13, color: MUTED, marginTop: 2 }}>{fmtDate(entry.date)}</div>
       {notified ? (
         <div style={{ marginTop: 10, color: '#5f7d2e', fontSize: 13.5, fontWeight: 600 }}>
-          התפנה מקום! הזמינו כניסה{claimTime ? ` עד השעה ${claimTime}` : ''} לפני שהמקום יעבור לבא/ה בתור.
+          התפנה מקום! הזמינו כניסה{claimTime ? ` עד השעה ${claimTime}` : ''} לפני שהמקום יעבור לבא/ה
+          בתור.
         </div>
       ) : (
         <div style={{ marginTop: 10, color: MUTED, fontSize: 13 }}>
@@ -1628,7 +1920,11 @@ function RoundBookingCard({
               : 'הזיכוי יוחזר אוטומטית לאמצעי התשלום שלכם.'}
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
-            <button disabled={busy} onClick={() => void doCancel()} style={{ ...dangerBtn, flex: 1 }}>
+            <button
+              disabled={busy}
+              onClick={() => void doCancel()}
+              style={{ ...dangerBtn, flex: 1 }}
+            >
               {busy ? 'מבטל…' : 'כן, בטלו וזכו אותי'}
             </button>
             <button
@@ -1680,7 +1976,9 @@ function RoundBookingCard({
                   justifyContent: 'space-between',
                 }}
               >
-                <span style={{ fontWeight: 600 }}>{roundTitle(r.label, r.startTime, r.endTime)}</span>
+                <span style={{ fontWeight: 600 }}>
+                  {roundTitle(r.label, r.startTime, r.endTime)}
+                </span>
                 <span style={{ color: MUTED, fontSize: 13 }}>{r.available} פנויים</span>
               </button>
             ))}

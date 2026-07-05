@@ -20,10 +20,12 @@ import {
 
 type AnyPgDatabase = PgDatabase<any, any, any>;
 
-// Rolling window of days for which instances are kept materialized. On-view
-// top-up (see ensureAllActiveInstances) keeps it rolling as the admin uses the
-// screen; a daily cron can replace that later.
-export const INSTANCE_HORIZON_DAYS = 30;
+// Rolling window of days for which instances are kept materialized — the
+// booking window customers can reach (Yanay 2026-07-05: "a month and a year
+// ahead, otherwise they nag us all day"). The daily top-up cron
+// (/cron/rounds-instances-topup) keeps it rolling; the on-view top-up in the
+// admin list read stays as a fallback.
+export const INSTANCE_HORIZON_DAYS = 365;
 
 const CAPACITY_MIN = 1;
 const CAPACITY_MAX = 100_000;
@@ -143,13 +145,28 @@ export const createRound = async (
   return { ok: true, round };
 };
 
+/** What a template edit did to the round's future instances — returned to the
+ *  admin UI so nothing about the sweep is silent. */
+export type RoundPropagation = {
+  /** Future instances whose capacity followed the template edit. */
+  capacityUpdated: number;
+  /** Future dates that kept their old capacity because seats are taken there. */
+  capacityKeptDates: string[];
+  /** Future instances deleted because their weekday left daysActive. */
+  instancesRemoved: number;
+  /** Future dates on removed weekdays kept because bookings anchor them. */
+  removedDayKeptDates: string[];
+};
+
 export type UpdateRoundResult =
-  | { ok: true; round: Round }
+  | { ok: true; round: Round; propagation: RoundPropagation }
   | { ok: false; error: RoundValidationError }
   | { ok: false; notFound: true };
 
-/** Edit a round template (partial). Re-materializes upcoming instances so a
- *  newly-added weekday or a re-activation starts appearing immediately. */
+/** Edit a round template (partial). Propagates capacity/weekday changes to
+ *  the round's future instances (see propagateRoundTemplateChange), then
+ *  re-materializes so a newly-added weekday or a re-activation starts
+ *  appearing immediately. */
 export const updateRound = async (
   db: AnyPgDatabase,
   id: string,
@@ -176,8 +193,9 @@ export const updateRound = async (
   const updated = await db.update(rounds).set(next).where(eq(rounds.id, id)).returning();
   const round = updated[0];
   if (!round) throw new Error('[rounds] update returned no row');
+  const propagation = await propagateRoundTemplateChange(db, current, round, now);
   await ensureUpcomingInstances(db, round, now);
-  return { ok: true, round };
+  return { ok: true, round, propagation };
 };
 
 /** All round templates, ordered for the admin list (sort_order, then start). */
@@ -530,20 +548,126 @@ export const listRoundAttendees = async (
 // ---------------------------------------------------------------------------
 
 /**
+ * Push a template edit out to the round's future instances, deterministically
+ * (plan 2026-07-05-booking-window-365): with the horizon at a full year,
+ * "existing instances are never touched" would freeze a capacity edit out of
+ * the whole booking window.
+ *   - defaultCapacity change → every instance from venue-today on takes the
+ *     new capacity, EXCEPT dates the admin set by hand (capacity_overridden)
+ *     and dates where seats are already taken — changing those is a human
+ *     decision, so they come back in the report instead.
+ *   - weekday removed from daysActive → its future instances are deleted,
+ *     EXCEPT dates any booking ever touched (bookings are the audit trail,
+ *     same stance as deleteRound) — those also come back in the report.
+ * Weekday additions and reactivation are ensureUpcomingInstances' job, and
+ * label/time edits live on the template, so they propagate by themselves.
+ */
+export const propagateRoundTemplateChange = async (
+  db: AnyPgDatabase,
+  before: Round,
+  after: Round,
+  now: Date = new Date(),
+): Promise<RoundPropagation> => {
+  const todayIso = venueTodayIso(now);
+  const result: RoundPropagation = {
+    capacityUpdated: 0,
+    capacityKeptDates: [],
+    instancesRemoved: 0,
+    removedDayKeptDates: [],
+  };
+
+  // Same seats-taken predicate as availability: confirmed + used + unexpired
+  // holds. A date with only cancelled/expired bookings has no seats to
+  // protect, so it follows the template like any empty date.
+  const seatsTaken = sql`EXISTS (
+    SELECT 1 FROM ${bookings}
+    WHERE ${bookings.roundInstanceId} = ${roundInstances.id}
+      AND (${bookings.status} IN ('confirmed','used')
+        OR (${bookings.status} = 'held' AND ${bookings.holdExpiresAt} > ${now}))
+  )`;
+
+  if (after.defaultCapacity !== before.defaultCapacity) {
+    const kept = await db
+      .select({ date: roundInstances.date })
+      .from(roundInstances)
+      .where(
+        and(
+          eq(roundInstances.roundId, after.id),
+          gte(roundInstances.date, todayIso),
+          eq(roundInstances.capacityOverridden, false),
+          sql`${roundInstances.capacity} <> ${after.defaultCapacity}`,
+          seatsTaken,
+        ),
+      );
+    result.capacityKeptDates = kept.map((r) => r.date).sort();
+
+    const updatedRows = await db
+      .update(roundInstances)
+      .set({ capacity: after.defaultCapacity, updatedAt: now })
+      .where(
+        and(
+          eq(roundInstances.roundId, after.id),
+          gte(roundInstances.date, todayIso),
+          eq(roundInstances.capacityOverridden, false),
+          sql`NOT (${seatsTaken})`,
+        ),
+      )
+      .returning({ id: roundInstances.id });
+    result.capacityUpdated = updatedRows.length;
+  }
+
+  const removedMask = before.daysActive & ~after.daysActive;
+  if (removedMask !== 0) {
+    const future = await db
+      .select({ id: roundInstances.id, date: roundInstances.date })
+      .from(roundInstances)
+      .where(and(eq(roundInstances.roundId, after.id), gte(roundInstances.date, todayIso)));
+    const onRemovedDays = future.filter((r) => (removedMask & (1 << isoWeekday(r.date))) !== 0);
+    if (onRemovedDays.length > 0) {
+      const ids = onRemovedDays.map((r) => r.id);
+      // Any booking row (any status) anchors history to its instance — the FK
+      // forbids deleting it anyway. Those dates survive, reported.
+      const anchored = await db
+        .select({ id: bookings.roundInstanceId })
+        .from(bookings)
+        .where(inArray(bookings.roundInstanceId, ids))
+        .groupBy(bookings.roundInstanceId);
+      const anchoredIds = new Set(anchored.map((r) => r.id));
+      result.removedDayKeptDates = onRemovedDays
+        .filter((r) => anchoredIds.has(r.id))
+        .map((r) => r.date)
+        .sort();
+
+      const deletable = ids.filter((instId) => !anchoredIds.has(instId));
+      if (deletable.length > 0) {
+        await db
+          .delete(roundReminderLog)
+          .where(inArray(roundReminderLog.roundInstanceId, deletable));
+        await db.delete(waitlistEntries).where(inArray(waitlistEntries.roundInstanceId, deletable));
+        await db.delete(roundInstances).where(inArray(roundInstances.id, deletable));
+        result.instancesRemoved = deletable.length;
+      }
+    }
+  }
+
+  return result;
+};
+
+/**
  * Ensure `round_instances` exist for `round` on every matching weekday in
  * [today, today+horizon), where "today" is the venue date (Asia/Jerusalem),
  * never the server's local date. Idempotent — relies on the (round_id, date)
  * unique index, so re-running never duplicates and never overwrites an
  * existing instance (per-date overrides survive). A non-active round is a
- * no-op.
+ * no-op. Returns how many instances were actually created.
  */
 export const ensureUpcomingInstances = async (
   db: AnyPgDatabase,
   round: Round,
   now: Date = new Date(),
   horizonDays: number = INSTANCE_HORIZON_DAYS,
-): Promise<void> => {
-  if (!round.isActive) return;
+): Promise<number> => {
+  if (!round.isActive) return 0;
   const todayIso = venueTodayIso(now);
   const values: NewRoundInstance[] = [];
   for (let i = 0; i < horizonDays; i += 1) {
@@ -552,24 +676,29 @@ export const ensureUpcomingInstances = async (
     if ((round.daysActive & (1 << isoWeekday(dateIso))) === 0) continue;
     values.push({ roundId: round.id, date: dateIso, capacity: round.defaultCapacity });
   }
-  if (values.length === 0) return;
-  await db
+  if (values.length === 0) return 0;
+  const inserted = await db
     .insert(roundInstances)
     .values(values)
-    .onConflictDoNothing({ target: [roundInstances.roundId, roundInstances.date] });
+    .onConflictDoNothing({ target: [roundInstances.roundId, roundInstances.date] })
+    .returning({ id: roundInstances.id });
+  return inserted.length;
 };
 
-/** Top up instances for every active round — used by the admin list read so
- *  the rolling window stays fresh without a separate job. */
+/** Top up instances for every active round — run daily by the top-up cron,
+ *  and by the admin list read as a fallback so the window never depends on
+ *  the cron alone. Returns how many instances were created in total. */
 export const ensureAllActiveInstances = async (
   db: AnyPgDatabase,
   now: Date = new Date(),
   horizonDays: number = INSTANCE_HORIZON_DAYS,
-): Promise<void> => {
+): Promise<number> => {
   const active = await db.select().from(rounds).where(eq(rounds.isActive, true));
+  let created = 0;
   for (const round of active) {
-    await ensureUpcomingInstances(db, round, now, horizonDays);
+    created += await ensureUpcomingInstances(db, round, now, horizonDays);
   }
+  return created;
 };
 
 /** Count of materialized instances per round in [today, today+horizon) — a
