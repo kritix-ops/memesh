@@ -1,6 +1,6 @@
 import { MemeshQr, PunchCard, Sun } from '@memesh/brand';
 import { useStaffSession } from '@memesh/staff-auth';
-import { fmtDate } from '@memesh/web-shared';
+import { fmtDate, roundTitle } from '@memesh/web-shared';
 import { Scanner, type IDetectedBarcode, type IScannerError } from '@yudiel/react-qr-scanner';
 import { type CSSProperties, useEffect, useRef, useState } from 'react';
 import {
@@ -33,6 +33,11 @@ import {
   punchByToken,
   type ScanLookupResponse,
 } from '../lib/api/punch';
+import {
+  getCustomerRoundsToday,
+  setBookingArrival,
+  type CustomerDayBooking,
+} from '../lib/api/rounds';
 import { getMyPinStatus, setMyPin } from '../lib/api/staff';
 import { entriesLabel } from '../mock';
 import { MarkEntryAtSale, type MarkEntryTile } from './MarkEntryAtSale';
@@ -1575,6 +1580,144 @@ type CustomerPunchStatus =
   | { kind: 'success'; remaining: number }
   | { kind: 'error'; message: string };
 
+// Today's round bookings of the open customer — the "found them in לקוחות, mark
+// them in" path (plan 2026-07-05-staff-manual-arrival). Self-contained: fetches
+// on mount, renders nothing when the customer has no bookings today, and lets
+// the cashier mark arrival (or undo a mistaken tap) without leaving the screen.
+function CustomerRoundsToday({ customerId }: { customerId: string }) {
+  const GREEN = '#0f9d58';
+  const [bookings, setBookings] = useState<CustomerDayBooking[] | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    setBookings(null);
+    void getCustomerRoundsToday(customerId).then((res) => {
+      if (!alive) return;
+      console.info('[pos customer rounds] loaded', {
+        customerId,
+        ok: res.ok,
+        bookings: res.ok ? res.data.bookings.length : 0,
+      });
+      setBookings(res.ok ? res.data.bookings : []);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [customerId]);
+
+  const mark = async (b: CustomerDayBooking, arrived: boolean) => {
+    setBusyId(b.bookingId);
+    setError(null);
+    console.info('[pos customer rounds] mark', { bookingId: b.bookingId, arrived });
+    const res = await setBookingArrival(b.bookingId, arrived);
+    setBusyId(null);
+    if (!res.ok) {
+      console.warn('[pos customer rounds] mark fail', { bookingId: b.bookingId, error: res.error });
+      setError('לא ניתן לעדכן כרגע. נסו שוב.');
+      return;
+    }
+    setBookings(
+      (prev) =>
+        prev?.map((x) =>
+          x.bookingId === b.bookingId
+            ? { ...x, arrived: res.data.arrived, usedAt: res.data.usedAt }
+            : x,
+        ) ?? prev,
+    );
+  };
+
+  if (!bookings || bookings.length === 0) return null;
+
+  return (
+    <div style={{ ...card, marginBottom: 16 }}>
+      <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 10 }}>סבבים להיום</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {bookings.map((b) => (
+          <div
+            key={b.bookingId}
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              gap: 10,
+              padding: '8px 12px',
+              background: b.arrived ? 'rgba(15,157,88,0.07)' : '#faf8f6',
+              borderRadius: 10,
+            }}
+          >
+            <span style={{ minWidth: 0 }}>
+              <span style={{ fontWeight: 600, fontSize: 14.5 }}>
+                {roundTitle(b.label, b.startTime, b.endTime)}
+              </span>
+              <span style={{ display: 'block', fontSize: 12.5, color: MUTED, marginTop: 2 }}>
+                {b.source === 'punchcard' ? 'כרטיסייה' : b.source === 'gift' ? 'מתנה' : 'כרטיס'}
+                {b.additionalCompanions > 0 ? ' · +מלווה נוסף' : ''}
+              </span>
+            </span>
+            {b.arrived ? (
+              <span
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'flex-end',
+                  gap: 2,
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                <span style={{ fontSize: 12.5, fontWeight: 600, color: GREEN }}>
+                  ✓ הגיעו
+                  {b.usedAt
+                    ? ` · ${new Date(b.usedAt).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jerusalem' })}`
+                    : ''}
+                </span>
+                <button
+                  type="button"
+                  disabled={busyId === b.bookingId}
+                  onClick={() => void mark(b, false)}
+                  style={{
+                    border: 'none',
+                    background: 'transparent',
+                    color: MUTED,
+                    fontSize: 11.5,
+                    cursor: 'pointer',
+                    padding: 0,
+                    textDecoration: 'underline',
+                  }}
+                >
+                  ביטול
+                </button>
+              </span>
+            ) : (
+              <button
+                type="button"
+                disabled={busyId === b.bookingId}
+                onClick={() => void mark(b, true)}
+                style={{
+                  border: 'none',
+                  background: GREEN,
+                  color: '#fff',
+                  borderRadius: 999,
+                  padding: '7px 14px',
+                  fontSize: 12.5,
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap',
+                  opacity: busyId === b.bookingId ? 0.6 : 1,
+                }}
+              >
+                סמן הגעה
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+      {error && <div style={{ fontSize: 12.5, color: '#a23a3a', marginTop: 8 }}>{error}</div>}
+    </div>
+  );
+}
+
 function Customer({
   detailLoading,
   detail,
@@ -1667,6 +1810,8 @@ function Customer({
           </div>
         </div>
       </div>
+
+      <CustomerRoundsToday customerId={cust.id} />
 
       {activeCard ? (
         <div

@@ -87,3 +87,33 @@ export const getRoundAttendees = (
   roundInstanceId: string,
 ): Promise<ApiResult<{ attendees: RoundAttendee[] }>> =>
   apiRequest(`/staff/rounds/${roundInstanceId}/attendees`);
+
+/** Mark a booked customer in (or undo a mistaken tap). Venue-today only. */
+export const setBookingArrival = (
+  bookingId: string,
+  arrived: boolean,
+): Promise<ApiResult<{ arrived: boolean; usedAt: string | null; changed: boolean }>> =>
+  apiRequest(`/staff/rounds/bookings/${bookingId}/arrival`, {
+    method: 'POST',
+    body: { arrived },
+  });
+
+export interface CustomerDayBooking {
+  bookingId: string;
+  roundInstanceId: string;
+  label: string;
+  /** "HH:MM" */
+  startTime: string;
+  endTime: string;
+  ticketType: 'child_under_walking' | 'child_over_walking';
+  additionalCompanions: number;
+  source: 'paid' | 'punchcard' | 'gift' | 'manual';
+  arrived: boolean;
+  usedAt: string | null;
+}
+
+/** A customer's bookings for the venue-local today — the POS mark-them-in path. */
+export const getCustomerRoundsToday = (
+  customerId: string,
+): Promise<ApiResult<{ date: string; bookings: CustomerDayBooking[] }>> =>
+  apiRequest(`/staff/customers/${customerId}/rounds-today`);

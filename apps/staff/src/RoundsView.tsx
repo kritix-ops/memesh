@@ -4,6 +4,7 @@ import {
   getRoundAttendees,
   getRoundAvailabilityRange,
   getStaffRounds,
+  setBookingArrival,
   type RoundAttendee,
   type StaffDayAvailability,
   type StaffRoundsResponse,
@@ -57,6 +58,15 @@ const navBtn: CSSProperties = {
   fontSize: 18,
   cursor: 'pointer',
 };
+
+/** ISO timestamp → venue-local "HH:MM" (check-in times on the attendee list). */
+function fmtTimeHe(iso: string): string {
+  return new Date(iso).toLocaleTimeString('he-IL', {
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: 'Asia/Jerusalem',
+  });
+}
 
 function fmtRelative(iso: string): string {
   const m = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
@@ -393,6 +403,8 @@ export function RoundsView() {
                   warnPct={data.settings.capacityWarningPct}
                   dangerPct={data.settings.capacityDangerPct}
                   waitingCount={waiting}
+                  canMark={isToday}
+                  onArrivalChanged={() => void load()}
                 />
               );
             })}
@@ -407,11 +419,16 @@ function RoundStatusCard({
   warnPct,
   dangerPct,
   waitingCount,
+  canMark,
+  onArrivalChanged,
 }: {
   round: StaffRoundsRound;
   warnPct: number;
   dangerPct: number;
   waitingCount: number;
+  /** Arrival controls only make sense when the page shows today. */
+  canMark: boolean;
+  onArrivalChanged: () => void;
 }) {
   const level = statusLevel(round.pctFull, warnPct, dangerPct);
   const free = Math.max(0, round.capacity - round.taken);
@@ -512,19 +529,62 @@ function RoundStatusCard({
       </div>
 
       {round.bookedCount > 0 && (
-        <AttendeesSection roundInstanceId={round.roundInstanceId} />
+        <AttendeesSection
+          roundInstanceId={round.roundInstanceId}
+          canMark={canMark}
+          onArrivalChanged={onArrivalChanged}
+        />
       )}
     </div>
   );
 }
 
 // Lazy "מי הגיע?" list — fetched only when the cashier opens it, searchable
-// by name so a customer at the counter is found in a keystroke or two.
-function AttendeesSection({ roundInstanceId }: { roundInstanceId: string }) {
+// by name so a customer at the counter is found in a keystroke or two. On
+// today's rounds every row carries the manual check-in control: the floor
+// often doesn't scan (Yanay 2026-07-05), so arrival is marked by tap.
+function AttendeesSection({
+  roundInstanceId,
+  canMark,
+  onArrivalChanged,
+}: {
+  roundInstanceId: string;
+  canMark: boolean;
+  onArrivalChanged: () => void;
+}) {
   const [open, setOpen] = useState(false);
   const [attendees, setAttendees] = useState<RoundAttendee[] | null>(null);
   const [error, setError] = useState(false);
   const [q, setQ] = useState('');
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [markError, setMarkError] = useState<string | null>(null);
+
+  const mark = async (a: RoundAttendee, arrived: boolean) => {
+    setBusyId(a.bookingId);
+    setMarkError(null);
+    console.info('[staff attendees] mark', { bookingId: a.bookingId, arrived });
+    const res = await setBookingArrival(a.bookingId, arrived);
+    setBusyId(null);
+    if (!res.ok) {
+      console.warn('[staff attendees] mark fail', { bookingId: a.bookingId, error: res.error });
+      setMarkError(
+        res.error === 'not_today'
+          ? 'אפשר לסמן הגעה רק ביום הסבב עצמו.'
+          : 'לא ניתן לעדכן כרגע. נסו שוב.',
+      );
+      return;
+    }
+    setAttendees(
+      (prev) =>
+        prev?.map((x) =>
+          x.bookingId === a.bookingId
+            ? { ...x, arrived: res.data.arrived, usedAt: res.data.usedAt }
+            : x,
+        ) ?? prev,
+    );
+    // Refresh the tiles so "הגיעו X" moves with the tap.
+    onArrivalChanged();
+  };
 
   const toggle = async () => {
     const next = !open;
@@ -630,19 +690,74 @@ function AttendeesSection({ roundInstanceId }: { roundInstanceId: string }) {
                           )}
                         </span>
                       </span>
-                      <span
-                        style={{
-                          fontSize: 12.5,
-                          fontWeight: 600,
-                          whiteSpace: 'nowrap',
-                          color: a.arrived ? STATUS.green.fg : MUTED,
-                        }}
-                      >
-                        {a.arrived ? '✓ הגיעו' : 'טרם הגיעו'}
-                      </span>
+                      {!canMark ? (
+                        <span
+                          style={{
+                            fontSize: 12.5,
+                            fontWeight: 600,
+                            whiteSpace: 'nowrap',
+                            color: a.arrived ? STATUS.green.fg : MUTED,
+                          }}
+                        >
+                          {a.arrived ? '✓ הגיעו' : 'טרם הגיעו'}
+                        </span>
+                      ) : a.arrived ? (
+                        <span
+                          style={{
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: 'flex-end',
+                            gap: 2,
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          <span style={{ fontSize: 12.5, fontWeight: 600, color: STATUS.green.fg }}>
+                            ✓ הגיעו{a.usedAt ? ` · ${fmtTimeHe(a.usedAt)}` : ''}
+                          </span>
+                          <button
+                            type="button"
+                            disabled={busyId === a.bookingId}
+                            onClick={() => void mark(a, false)}
+                            style={{
+                              border: 'none',
+                              background: 'transparent',
+                              color: MUTED,
+                              fontSize: 11.5,
+                              cursor: 'pointer',
+                              padding: 0,
+                              textDecoration: 'underline',
+                            }}
+                          >
+                            ביטול
+                          </button>
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          disabled={busyId === a.bookingId}
+                          onClick={() => void mark(a, true)}
+                          style={{
+                            border: 'none',
+                            background: STATUS.green.fg,
+                            color: '#fff',
+                            borderRadius: 999,
+                            padding: '7px 14px',
+                            fontSize: 12.5,
+                            fontWeight: 600,
+                            cursor: 'pointer',
+                            whiteSpace: 'nowrap',
+                            opacity: busyId === a.bookingId ? 0.6 : 1,
+                          }}
+                        >
+                          סמן הגעה
+                        </button>
+                      )}
                     </div>
                   ))}
                 </div>
+              )}
+              {markError && (
+                <div style={{ fontSize: 12.5, color: '#a23a3a', marginTop: 8 }}>{markError}</div>
               )}
             </>
           )}
