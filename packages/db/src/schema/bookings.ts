@@ -59,6 +59,12 @@ export const bookings = pgTable(
     additionalCompanions: smallint('additional_companions').notNull().default(0),
     source: bookingSourceEnum('source').notNull(),
     status: bookingStatusEnum('status').notNull(),
+    // Human-friendly ticket number R-YYYYMMDD-NNNN — the manual fallback at
+    // the door when the QR isn't scanned, same role the serial plays on punch
+    // cards. Assigned at creation on the real paths (hold / punch booking);
+    // nullable because legacy rows are backfilled by migration and test
+    // fixtures insert rows directly.
+    bookingNumber: varchar('booking_number', { length: 20 }).unique(),
     // Minted only on transition to 'confirmed'. UNIQUE so a single barcode
     // resolves to exactly one booking at the scanner. Null for
     // held/expired/cancelled rows.

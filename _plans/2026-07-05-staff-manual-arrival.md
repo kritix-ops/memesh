@@ -49,6 +49,30 @@ anyway). Marking updates the row instantly and refreshes the tiles so the
 mark/undo control, shows nothing extra when the customer has no bookings
 today. No prop-drilling through PosApp's state tree.
 
+## Ticket scanning + booking numbers (Yoav follow-up, 2026-07-05)
+
+"Where can tickets be scanned, and where is their unique number for manual
+entry?" — nowhere and nowhere, so this lands too:
+
+- **Booking numbers**: every booking gets a human ticket number R-YYYYMMDD-NNNN
+  at creation (hold + punch paths; sequence `booking_number_seq`), same role
+  the M- serial plays on punch cards. Migration backfills every existing
+  booking before the unique constraint lands. Nullable column so test fixtures
+  that insert bookings directly stay valid. Shown under the customer's QR, in
+  the attendee list, on the POS rounds-today card.
+- **Scanning**: the POS scan screen now understands both token families — 'v1.'
+  punch cards keep the punch flow, 'b1.' booking QRs open a check-in card:
+  customer name, round, date, source, number; green "אישור כניסה" burns the
+  booking via setBookingArrival; already-arrived shows the time with an undo;
+  cancelled/held/other-day states are explained and blocked. A screenshotted
+  pre-swap QR fails as `stale_qr` (the lookup checks the signed barcode
+  version).
+- **Manual number entry**: the serial screen accepts both formats — M- goes to
+  the punch flow, R- to the ticket check-in flow.
+- New endpoint `POST /staff/rounds/checkin/lookup` (staff-gated, rate-limited):
+  pure read that resolves token or number to booking details; the confirm
+  action stays the arrival endpoint.
+
 ## Rejected alternatives
 
 - Building the full QR door-scan for bookings first: bigger feature, and Yanay

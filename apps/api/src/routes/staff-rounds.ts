@@ -5,12 +5,15 @@ import {
   getDashboardSettings,
   listCustomerRoundBookingsForDate,
   listRoundAttendees,
+  lookupBookingForCheckin,
   setBookingArrival,
   venueTodayIso,
 } from '@memesh/db';
+import { verifyBookingToken } from '@memesh/qr-engine';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { requireRoleHook } from '../lib/auth-guards.js';
+import { envKeyResolver } from '../qr.js';
 
 // Read-only rounds status for the shift floor (staff.memesh.co.il). Reuses the
 // same DB helpers as the admin live dashboard so occupancy is a single source
@@ -199,6 +202,57 @@ export const staffRoundsRoutes: FastifyPluginAsync = async (fastify) => {
         '[staff arrival] set',
       );
       return { arrived: result.arrived, usedAt: result.usedAt, changed: result.changed };
+    },
+  );
+
+  // Resolve a ticket for the door check-in screen — by scanned booking QR
+  // (token family 'b1.', verified + version-checked so a screenshotted QR from
+  // before a swap fails) or by the human-typed booking number R-YYYYMMDD-NNNN.
+  // The confirm action is the arrival endpoint above; this is a pure read.
+  const checkinLookupSchema = z
+    .object({
+      token: z.string().min(1).max(2048).optional(),
+      bookingNumber: z.string().min(1).max(32).optional(),
+    })
+    .refine((b) => Boolean(b.token) || Boolean(b.bookingNumber), {
+      message: 'token or bookingNumber is required',
+    });
+  fastify.post(
+    '/staff/rounds/checkin/lookup',
+    {
+      preHandler: requireRoleHook(...STAFF),
+      config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+    },
+    async (request, reply) => {
+      const parsed = checkinLookupSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.code(400).send({ error: 'invalid_body', issues: parsed.error.issues });
+      }
+      let query: { bookingId: string; version: number } | { bookingNumber: string };
+      if (parsed.data.token) {
+        const verified = verifyBookingToken(parsed.data.token, envKeyResolver);
+        if (!verified.ok) {
+          request.log.warn({ reason: verified.error }, '[staff checkin] bad token');
+          return reply.code(400).send({ error: 'invalid_token' });
+        }
+        query = { bookingId: verified.payload.bookingId, version: verified.payload.version };
+      } else {
+        query = { bookingNumber: parsed.data.bookingNumber! };
+      }
+      const result = await lookupBookingForCheckin(db, query);
+      if (!result.ok) {
+        const code = result.error === 'not_found' ? 404 : 409; // stale_qr
+        return reply.code(code).send({ error: result.error });
+      }
+      request.log.info(
+        {
+          bookingId: result.booking.bookingId,
+          by: parsed.data.token ? 'token' : 'number',
+          status: result.booking.status,
+        },
+        '[staff checkin] lookup',
+      );
+      return { booking: result.booking };
     },
   );
 

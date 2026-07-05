@@ -5,6 +5,8 @@ import { apiRequest, type ApiResult } from '@memesh/web-shared';
 
 export interface CustomerRoundBooking {
   bookingId: string;
+  /** Human-friendly ticket number (R-YYYYMMDD-NNNN) — the manual door fallback. */
+  bookingNumber: string | null;
   roundInstanceId: string;
   label: string;
   /** YYYY-MM-DD */
