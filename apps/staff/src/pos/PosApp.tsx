@@ -35,7 +35,9 @@ import {
 } from '../lib/api/punch';
 import {
   getCustomerRoundsToday,
+  lookupCheckin,
   setBookingArrival,
+  type CheckinBooking,
   type CustomerDayBooking,
 } from '../lib/api/rounds';
 import { getMyPinStatus, setMyPin } from '../lib/api/staff';
@@ -1654,6 +1656,7 @@ function CustomerRoundsToday({ customerId }: { customerId: string }) {
               <span style={{ display: 'block', fontSize: 12.5, color: MUTED, marginTop: 2 }}>
                 {b.source === 'punchcard' ? 'כרטיסייה' : b.source === 'gift' ? 'מתנה' : 'כרטיס'}
                 {b.additionalCompanions > 0 ? ' · +מלווה נוסף' : ''}
+                {b.bookingNumber ? ` · ${b.bookingNumber}` : ''}
               </span>
             </span>
             {b.arrived ? (
@@ -2724,6 +2727,22 @@ type ScanPhase =
   | 'error';
 type ScanSource = { mode: 'token'; token: string } | { mode: 'serial'; serial: string };
 
+// Door check-in over a scanned booking QR ('b1.' token family) or a typed
+// R- booking number (plan 2026-07-05-staff-manual-arrival). Lives inside the
+// same scan screen as punch cards so one gesture serves both ticket kinds.
+type CheckinState =
+  | { phase: 'loading' }
+  | { phase: 'ready'; booking: CheckinBooking }
+  | { phase: 'submitting'; booking: CheckinBooking }
+  | { phase: 'done'; booking: CheckinBooking; usedAt: string | null }
+  | { phase: 'error'; message: string };
+
+/** Local YYYY-MM-DD — display gate only; the server enforces the venue day. */
+const todayIsoLocal = (): string => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
 function Scan({ onClose }: { onClose: () => void }) {
   // 'loading-preview' fetches /scan/lookup before the modal opens, so the
   // cashier sees customer + card context (and a red banner for problem
@@ -2737,6 +2756,7 @@ function Scan({ onClose }: { onClose: () => void }) {
   const [serialInput, setSerialInput] = useState('');
   const [serialFieldError, setSerialFieldError] = useState<string | null>(null);
   const [preview, setPreview] = useState<ScanLookupResponse | null>(null);
+  const [checkin, setCheckin] = useState<CheckinState | null>(null);
 
   useEffect(() => {
     console.info('[web scan] mounted');
@@ -2752,6 +2772,52 @@ function Scan({ onClose }: { onClose: () => void }) {
     setSerialFieldError(null);
     setCameraError(null);
     setPreview(null);
+    setCheckin(null);
+  };
+
+  // --- ticket check-in (booking QR / R- number) ------------------------------
+
+  const fetchCheckin = async (input: { token?: string; bookingNumber?: string }) => {
+    setCheckin({ phase: 'loading' });
+    console.info('[web scan] checkin lookup', { by: input.token ? 'token' : 'number' });
+    const res = await lookupCheckin(input);
+    if (res.ok) {
+      console.info('[web scan] checkin found', { status: res.data.booking.status });
+      setCheckin({ phase: 'ready', booking: res.data.booking });
+      return;
+    }
+    console.warn('[web scan] checkin lookup error', { status: res.status, error: res.error });
+    setCheckin({
+      phase: 'error',
+      message:
+        res.error === 'stale_qr'
+          ? 'קוד QR ישן — ההזמנה עודכנה מאז. חפשו את הלקוח בלקוחות.'
+          : res.error === 'invalid_token'
+            ? 'קוד QR לא תקין.'
+            : 'הזמנה לא נמצאה. בדקו את המספר ונסו שוב.',
+    });
+  };
+
+  const confirmCheckin = async (booking: CheckinBooking, arrived: boolean) => {
+    setCheckin({ phase: 'submitting', booking });
+    console.info('[web scan] checkin mark', { bookingId: booking.bookingId, arrived });
+    const res = await setBookingArrival(booking.bookingId, arrived);
+    if (!res.ok) {
+      console.warn('[web scan] checkin mark error', { status: res.status, error: res.error });
+      setCheckin({
+        phase: 'error',
+        message:
+          res.error === 'not_today'
+            ? 'אפשר לסמן הגעה רק ביום הסבב עצמו.'
+            : 'לא ניתן לעדכן כרגע. נסו שוב.',
+      });
+      return;
+    }
+    if (arrived) {
+      setCheckin({ phase: 'done', booking, usedAt: res.data.usedAt });
+    } else {
+      setCheckin({ phase: 'ready', booking: { ...booking, arrived: false, usedAt: null, status: 'confirmed' } });
+    }
   };
 
   // Fetch /scan/lookup using the captured source, then transition to the
@@ -2794,10 +2860,15 @@ function Scan({ onClose }: { onClose: () => void }) {
   };
 
   const onScannerDetect = (codes: IDetectedBarcode[]) => {
-    if (phase !== 'camera') return;
+    if (phase !== 'camera' || checkin !== null) return;
     const first = codes[0];
     if (!first?.rawValue) return;
     console.info('[web scan] detected', { tokenPrefix: first.rawValue.slice(0, 8) });
+    // 'b1.' = booking token family (round ticket); 'v1.' = punch card.
+    if (first.rawValue.startsWith('b1.')) {
+      void fetchCheckin({ token: first.rawValue });
+      return;
+    }
     const nextSource: ScanSource = { mode: 'token', token: first.rawValue };
     setSource(nextSource);
     setScanKey(crypto.randomUUID());
@@ -2817,6 +2888,12 @@ function Scan({ onClose }: { onClose: () => void }) {
       return;
     }
     setSerialFieldError(null);
+    // R- numbers are round tickets; M- serials are punch cards.
+    if (/^r-/i.test(trimmed)) {
+      setPhase('camera');
+      void fetchCheckin({ bookingNumber: trimmed });
+      return;
+    }
     const nextSource: ScanSource = { mode: 'serial', serial: trimmed };
     setSource(nextSource);
     setScanKey(crypto.randomUUID());
@@ -2846,7 +2923,150 @@ function Scan({ onClose }: { onClose: () => void }) {
   return (
     <div>
       <BackBar label="חזרה" onClick={onClose} />
-      {phase === 'camera' && (
+
+      {checkin && (
+        <div style={{ ...card }}>
+          {checkin.phase === 'loading' ? (
+            <div style={{ textAlign: 'center', color: MUTED }}>מאתר הזמנה…</div>
+          ) : checkin.phase === 'error' ? (
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: 18, fontWeight: 600, color: '#c25a5a' }}>
+                לא ניתן לרשום כניסה
+              </div>
+              <div style={{ color: MUTED, marginTop: 8, fontSize: 14 }}>{checkin.message}</div>
+              <button style={{ ...primaryBtn, width: '100%', marginTop: 18 }} onClick={reset}>
+                סריקה נוספת
+              </button>
+            </div>
+          ) : checkin.phase === 'done' ? (
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ display: 'flex', justifyContent: 'center', animation: 'memesh-burst 0.5s ease' }}>
+                <Sun size={96} />
+              </div>
+              <div style={{ fontSize: 22, fontWeight: 600, marginTop: 12 }}>הכניסה נרשמה</div>
+              <div style={{ color: MUTED, marginTop: 6 }}>
+                {checkin.booking.customer.firstName} {checkin.booking.customer.lastName} ·{' '}
+                {roundTitle(checkin.booking.label, checkin.booking.startTime, checkin.booking.endTime)}
+              </div>
+              <button style={{ ...primaryBtn, width: '100%', marginTop: 18 }} onClick={reset}>
+                סריקה הבאה
+              </button>
+              <button
+                type="button"
+                onClick={() => void confirmCheckin(checkin.booking, false)}
+                style={{
+                  border: 'none',
+                  background: 'transparent',
+                  color: MUTED,
+                  fontSize: 12.5,
+                  cursor: 'pointer',
+                  marginTop: 10,
+                  textDecoration: 'underline',
+                }}
+              >
+                ביטול הרישום (טעות)
+              </button>
+            </div>
+          ) : (
+            (() => {
+              const b = checkin.booking;
+              const busy = checkin.phase === 'submitting';
+              const isToday = b.date === todayIsoLocal();
+              const blocked =
+                b.status === 'cancelled' || b.status === 'expired'
+                  ? 'ההזמנה בוטלה — אין כניסה.'
+                  : b.status === 'held'
+                    ? 'ההזמנה עדיין בתהליך תשלום.'
+                    : !isToday && !b.arrived
+                      ? `ההזמנה לתאריך ${fmtDate(b.date)} — לא להיום.`
+                      : null;
+              return (
+                <div>
+                  <div style={{ fontSize: 13, color: MUTED, marginBottom: 4 }}>כניסה לסבב</div>
+                  <div style={{ fontSize: 20, fontWeight: 600 }}>
+                    {b.customer.firstName} {b.customer.lastName}
+                  </div>
+                  <div style={{ fontSize: 14, color: MUTED, marginTop: 4 }}>
+                    {roundTitle(b.label, b.startTime, b.endTime)} · {fmtDate(b.date)}
+                  </div>
+                  <div style={{ fontSize: 13, color: MUTED, marginTop: 2 }}>
+                    {b.source === 'punchcard' ? 'כרטיסייה' : b.source === 'gift' ? 'מתנה' : 'כרטיס'}
+                    {b.additionalCompanions > 0 ? ' · +מלווה נוסף' : ''}
+                    {b.bookingNumber ? ` · ${b.bookingNumber}` : ''}
+                  </div>
+                  {blocked ? (
+                    <div
+                      style={{
+                        marginTop: 14,
+                        padding: '10px 14px',
+                        borderRadius: 10,
+                        background: '#fbecec',
+                        color: '#a23a3a',
+                        fontSize: 14,
+                      }}
+                    >
+                      {blocked}
+                    </div>
+                  ) : b.arrived ? (
+                    <div style={{ marginTop: 14 }}>
+                      <div
+                        style={{
+                          padding: '10px 14px',
+                          borderRadius: 10,
+                          background: 'rgba(15,157,88,0.1)',
+                          color: '#0f9d58',
+                          fontSize: 14,
+                          fontWeight: 600,
+                        }}
+                      >
+                        ✓ כבר נרשמה כניסה
+                        {b.usedAt
+                          ? ` · ${new Date(b.usedAt).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jerusalem' })}`
+                          : ''}
+                      </div>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => void confirmCheckin(b, false)}
+                        style={{
+                          border: 'none',
+                          background: 'transparent',
+                          color: MUTED,
+                          fontSize: 12.5,
+                          cursor: 'pointer',
+                          marginTop: 10,
+                          textDecoration: 'underline',
+                        }}
+                      >
+                        ביטול הרישום (טעות)
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      disabled={busy}
+                      onClick={() => void confirmCheckin(b, true)}
+                      style={{
+                        ...primaryBtn,
+                        width: '100%',
+                        marginTop: 16,
+                        background: '#0f9d58',
+                        opacity: busy ? 0.6 : 1,
+                      }}
+                    >
+                      {busy ? 'רושם…' : 'אישור כניסה'}
+                    </button>
+                  )}
+                  <button style={{ ...ghostBtn, width: '100%', marginTop: 10 }} onClick={reset}>
+                    סריקה נוספת
+                  </button>
+                </div>
+              );
+            })()
+          )}
+        </div>
+      )}
+
+      {phase === 'camera' && !checkin && (
         <div style={{ ...card, textAlign: 'center' }}>
           <div
             style={{
@@ -2885,7 +3105,7 @@ function Scan({ onClose }: { onClose: () => void }) {
             )}
           </div>
           <div style={{ color: MUTED, fontSize: 13.5, marginTop: 12 }}>
-            מקמו את קוד ה-QR של הכרטיסייה במסגרת
+            מקמו את קוד ה-QR במסגרת — כרטיסייה או כרטיס כניסה לסבב
           </div>
           <button
             style={{ ...ghostBtn, width: '100%', marginTop: 12 }}
@@ -2900,11 +3120,11 @@ function Scan({ onClose }: { onClose: () => void }) {
         </div>
       )}
 
-      {phase === 'serial' && (
+      {phase === 'serial' && !checkin && (
         <div style={{ ...card }}>
           <div style={{ fontSize: 18, fontWeight: 600, marginBottom: 6 }}>הזנת מספר סידורי</div>
           <div style={{ color: MUTED, fontSize: 13.5, marginBottom: 14 }}>
-            מספר סידורי בפורמט M-YYYYMMDD-NNNN מודפס על הכרטיסייה
+            כרטיסייה: M-YYYYMMDD-NNNN · כרטיס כניסה לסבב: R-YYYYMMDD-NNNN
           </div>
           <input
             autoFocus

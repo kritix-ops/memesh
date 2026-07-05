@@ -165,6 +165,42 @@ test('POST /staff/rounds/bookings/:id/arrival is staff-gated and validates id + 
   assert.ok([404, 500].includes(ok.statusCode), `got ${ok.statusCode}`);
 });
 
+test('POST /staff/rounds/checkin/lookup is staff-gated and validates input', async () => {
+  const noToken = await app.inject({
+    method: 'POST',
+    url: '/staff/rounds/checkin/lookup',
+    payload: { bookingNumber: 'R-20260705-0001' },
+  });
+  assert.equal(noToken.statusCode, 401);
+
+  const emptyBody = await app.inject({
+    method: 'POST',
+    url: '/staff/rounds/checkin/lookup',
+    headers: auth(await tokenFor('cashier')),
+    payload: {},
+  });
+  assert.equal(emptyBody.statusCode, 400);
+  assert.equal(emptyBody.json().error, 'invalid_body');
+
+  const badToken = await app.inject({
+    method: 'POST',
+    url: '/staff/rounds/checkin/lookup',
+    headers: auth(await tokenFor('cashier')),
+    payload: { token: 'not-a-real-token' },
+  });
+  assert.equal(badToken.statusCode, 400);
+  assert.equal(badToken.json().error, 'invalid_token');
+
+  const unknownNumber = await app.inject({
+    method: 'POST',
+    url: '/staff/rounds/checkin/lookup',
+    headers: auth(await tokenFor('cashier')),
+    payload: { bookingNumber: 'R-19990101-0001' },
+  });
+  // 404 on a real DB (no such booking); 500 on the DB-less box.
+  assert.ok([404, 500].includes(unknownNumber.statusCode), `got ${unknownNumber.statusCode}`);
+});
+
 test('GET /staff/customers/:id/rounds-today is staff-gated and validates the id', async () => {
   const noToken = await app.inject({
     method: 'GET',

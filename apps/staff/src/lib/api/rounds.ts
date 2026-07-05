@@ -22,6 +22,8 @@ export interface StaffRoundsRound {
 
 export interface RoundAttendee {
   bookingId: string;
+  /** Human-friendly ticket number — lets the floor cross-check a spoken number. */
+  bookingNumber: string | null;
   firstName: string;
   lastName: string;
   phone: string;
@@ -100,6 +102,7 @@ export const setBookingArrival = (
 
 export interface CustomerDayBooking {
   bookingId: string;
+  bookingNumber: string | null;
   roundInstanceId: string;
   label: string;
   /** "HH:MM" */
@@ -117,3 +120,28 @@ export const getCustomerRoundsToday = (
   customerId: string,
 ): Promise<ApiResult<{ date: string; bookings: CustomerDayBooking[] }>> =>
   apiRequest(`/staff/customers/${customerId}/rounds-today`);
+
+export interface CheckinBooking {
+  bookingId: string;
+  bookingNumber: string | null;
+  customer: { firstName: string; lastName: string; phone: string };
+  label: string;
+  /** "HH:MM" */
+  startTime: string;
+  endTime: string;
+  /** YYYY-MM-DD */
+  date: string;
+  ticketType: 'child_under_walking' | 'child_over_walking';
+  additionalCompanions: number;
+  source: 'paid' | 'punchcard' | 'gift' | 'manual';
+  status: 'held' | 'confirmed' | 'used' | 'cancelled' | 'expired';
+  arrived: boolean;
+  usedAt: string | null;
+}
+
+/** Resolve a ticket for door check-in — scanned QR token or typed R- number. */
+export const lookupCheckin = (input: {
+  token?: string;
+  bookingNumber?: string;
+}): Promise<ApiResult<{ booking: CheckinBooking }>> =>
+  apiRequest('/staff/rounds/checkin/lookup', { method: 'POST', body: input });

@@ -7,7 +7,7 @@
 import { and, asc, eq } from 'drizzle-orm';
 import type { PgDatabase } from 'drizzle-orm/pg-core';
 import { venueTodayIso } from './round-time';
-import { bookings, roundInstances, rounds } from './schema/index';
+import { bookings, customers, roundInstances, rounds } from './schema/index';
 
 type AnyPgDatabase = PgDatabase<any, any, any>;
 
@@ -74,8 +74,94 @@ export const setBookingArrival = async (
   });
 };
 
+export interface CheckinBooking {
+  bookingId: string;
+  bookingNumber: string | null;
+  customer: { firstName: string; lastName: string; phone: string };
+  label: string;
+  /** "HH:MM" */
+  startTime: string;
+  endTime: string;
+  /** YYYY-MM-DD */
+  date: string;
+  ticketType: 'child_under_walking' | 'child_over_walking';
+  additionalCompanions: number;
+  source: 'paid' | 'punchcard' | 'gift' | 'manual';
+  status: 'held' | 'confirmed' | 'used' | 'cancelled' | 'expired';
+  arrived: boolean;
+  usedAt: string | null;
+}
+
+export type CheckinLookupResult =
+  | { ok: true; booking: CheckinBooking }
+  | { ok: false; error: 'not_found' | 'stale_qr' };
+
+/**
+ * Resolve a booking for the door check-in screen — by verified QR payload
+ * (id + signed barcode version) or by the human-typed booking number. A
+ * version mismatch means the QR predates a swap re-mint: 'stale_qr', so a
+ * screenshotted old barcode can't check in against the new slot.
+ */
+export const lookupBookingForCheckin = async (
+  db: AnyPgDatabase,
+  query: { bookingId: string; version: number } | { bookingNumber: string },
+): Promise<CheckinLookupResult> => {
+  const where =
+    'bookingId' in query
+      ? eq(bookings.id, query.bookingId)
+      : eq(bookings.bookingNumber, query.bookingNumber.trim().toUpperCase());
+  const rows = await db
+    .select({
+      bookingId: bookings.id,
+      bookingNumber: bookings.bookingNumber,
+      barcodeVersion: bookings.barcodeVersion,
+      firstName: customers.firstName,
+      lastName: customers.lastName,
+      phone: customers.phone,
+      label: rounds.displayName,
+      startTime: rounds.startTime,
+      endTime: rounds.endTime,
+      date: roundInstances.date,
+      ticketType: bookings.ticketType,
+      additionalCompanions: bookings.additionalCompanions,
+      source: bookings.source,
+      status: bookings.status,
+      usedAt: bookings.usedAt,
+    })
+    .from(bookings)
+    .innerJoin(customers, eq(customers.id, bookings.customerId))
+    .innerJoin(roundInstances, eq(roundInstances.id, bookings.roundInstanceId))
+    .innerJoin(rounds, eq(rounds.id, roundInstances.roundId))
+    .where(where)
+    .limit(1);
+  const row = rows[0];
+  if (!row) return { ok: false, error: 'not_found' as const };
+  if ('version' in query && row.barcodeVersion !== query.version) {
+    return { ok: false, error: 'stale_qr' as const };
+  }
+  return {
+    ok: true as const,
+    booking: {
+      bookingId: row.bookingId,
+      bookingNumber: row.bookingNumber,
+      customer: { firstName: row.firstName, lastName: row.lastName, phone: row.phone },
+      label: row.label,
+      startTime: row.startTime.slice(0, 5),
+      endTime: row.endTime.slice(0, 5),
+      date: row.date,
+      ticketType: row.ticketType as CheckinBooking['ticketType'],
+      additionalCompanions: row.additionalCompanions,
+      source: row.source as CheckinBooking['source'],
+      status: row.status as CheckinBooking['status'],
+      arrived: row.status === 'used',
+      usedAt: row.usedAt ? row.usedAt.toISOString() : null,
+    },
+  };
+};
+
 export interface CustomerDayBooking {
   bookingId: string;
+  bookingNumber: string | null;
   roundInstanceId: string;
   label: string;
   /** "HH:MM" */
@@ -101,6 +187,7 @@ export const listCustomerRoundBookingsForDate = async (
   const rows = await db
     .select({
       bookingId: bookings.id,
+      bookingNumber: bookings.bookingNumber,
       roundInstanceId: bookings.roundInstanceId,
       label: rounds.displayName,
       startTime: rounds.startTime,
@@ -120,6 +207,7 @@ export const listCustomerRoundBookingsForDate = async (
     .filter((r) => r.status === 'confirmed' || r.status === 'used')
     .map((r) => ({
       bookingId: r.bookingId,
+      bookingNumber: r.bookingNumber,
       roundInstanceId: r.roundInstanceId,
       label: r.label,
       startTime: r.startTime.slice(0, 5),

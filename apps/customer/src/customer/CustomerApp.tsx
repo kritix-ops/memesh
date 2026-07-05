@@ -1554,6 +1554,9 @@ function RoundBookingCard({
       {booking.barcodeToken && (
         <MemeshQr value={booking.barcodeToken} size={180} title={`ברקוד — ${booking.label}`} />
       )}
+      {booking.bookingNumber && (
+        <div style={{ fontSize: 13, color: MUTED }}>{booking.bookingNumber}</div>
+      )}
       <div style={{ fontSize: 12.5, color: MUTED }}>
         {booking.ticketType === 'child_under_walking' ? 'תינוק/ת' : 'ילד/ה'}
         {booking.additionalCompanions > 0 ? ' · כולל מלווה נוסף' : ''}

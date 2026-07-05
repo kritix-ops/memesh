@@ -13,6 +13,7 @@
 import { and, count as countRows, eq, sql } from 'drizzle-orm';
 import type { PgDatabase } from 'drizzle-orm/pg-core';
 import { signBookingToken, type KeyResolver } from '@memesh/qr-engine';
+import { allocateBookingNumber } from './cards';
 import { getRoundSettings } from './round-settings';
 import { isInstanceSchedulable } from './rounds-schedule';
 import { markWaitlistClaimed } from './rounds-waitlist';
@@ -122,11 +123,16 @@ export const bookRoundWithPunch = async (
 
     // 3. Insert the confirmed bookings, then sign each barcode (needs the id).
     // One row per entry — a punch booking is always one child + one companion,
-    // so N punches are N bookings, never one booking with a quantity.
+    // so N punches are N bookings, never one booking with a quantity. Each
+    // gets its own booking number: the manual door fallback per ticket.
+    const bookingNumbers: string[] = [];
+    for (let i = 0; i < count; i += 1) {
+      bookingNumbers.push(await allocateBookingNumber(tx, now));
+    }
     const insertedBookings = await tx
       .insert(bookings)
       .values(
-        Array.from({ length: count }, () => ({
+        bookingNumbers.map((bookingNumber) => ({
           roundInstanceId: input.roundInstanceId,
           customerId: input.customerId,
           ticketType: input.ticketType,
@@ -134,6 +140,7 @@ export const bookRoundWithPunch = async (
           source: 'punchcard' as const,
           status: 'confirmed' as const,
           punchCardId: cardRow.id,
+          bookingNumber,
           confirmedAt: now,
           updatedAt: now,
         })),

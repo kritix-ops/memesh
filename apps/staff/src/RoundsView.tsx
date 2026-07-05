@@ -679,6 +679,12 @@ function AttendeesSection({
                           {a.additionalCompanions > 0 ? ' · +מלווה נוסף' : ''}
                         </span>
                         <span style={{ display: 'block', fontSize: 12.5, marginTop: 2 }}>
+                          {a.bookingNumber && (
+                            <span style={{ color: MUTED }} dir="ltr">
+                              {a.bookingNumber}
+                              {' · '}
+                            </span>
+                          )}
                           <a href={`tel:${a.phone}`} style={{ color: MUTED, textDecoration: 'none' }} dir="ltr">
                             {a.phone}
                           </a>

@@ -10,7 +10,11 @@ import { and, eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/pglite';
 import { migrate } from 'drizzle-orm/pglite/migrator';
 import { createCustomer, createPunchCard } from './cards';
-import { listCustomerRoundBookingsForDate, setBookingArrival } from './rounds-arrival';
+import {
+  listCustomerRoundBookingsForDate,
+  lookupBookingForCheckin,
+  setBookingArrival,
+} from './rounds-arrival';
 import { bookRoundWithPunch } from './rounds-punch';
 import { createRound } from './rounds';
 import { bookings, roundInstances } from './schema';
@@ -128,6 +132,54 @@ test('setBookingArrival refuses other days, cancelled bookings, and unknown ids'
     { bookingId: '00000000-0000-0000-0000-000000000000', arrived: true },
     ON_ROUND_DAY,
   );
+  assert.equal(missing.ok, false);
+  if (!missing.ok) assert.equal(missing.error, 'not_found');
+});
+
+test('punch bookings are born with distinct R- booking numbers', async () => {
+  const db = await freshDb();
+  const { bookingId, customerId, punchCardId, roundId } = await setup(db);
+  const inst = await instanceOn(db, roundId, ROUND_DAY);
+  const second = await bookRoundWithPunch(
+    db,
+    { roundInstanceId: inst, customerId, punchCardId, ticketType: 'child_over_walking' },
+    resolver,
+    NOW,
+  );
+  assert.equal(second.ok, true);
+  if (!second.ok) return;
+
+  const first = (await db.select().from(bookings).where(eq(bookings.id, bookingId)).limit(1))[0];
+  const next = (
+    await db.select().from(bookings).where(eq(bookings.id, second.bookings[0]!.bookingId)).limit(1)
+  )[0];
+  assert.match(first!.bookingNumber ?? '', /^R-\d{8}-\d{4,5}$/);
+  assert.match(next!.bookingNumber ?? '', /^R-\d{8}-\d{4,5}$/);
+  assert.notEqual(first!.bookingNumber, next!.bookingNumber);
+});
+
+test('lookupBookingForCheckin resolves by number (any case) and by id + version', async () => {
+  const db = await freshDb();
+  const { bookingId } = await setup(db);
+  const row = (await db.select().from(bookings).where(eq(bookings.id, bookingId)).limit(1))[0];
+  const number = row!.bookingNumber!;
+
+  const byNumber = await lookupBookingForCheckin(db, { bookingNumber: ` ${number.toLowerCase()} ` });
+  assert.equal(byNumber.ok, true);
+  if (!byNumber.ok) return;
+  assert.equal(byNumber.booking.bookingId, bookingId);
+  assert.equal(byNumber.booking.customer.firstName, 'א');
+  assert.equal(byNumber.booking.date, ROUND_DAY);
+  assert.equal(byNumber.booking.arrived, false);
+
+  const byId = await lookupBookingForCheckin(db, { bookingId, version: row!.barcodeVersion });
+  assert.equal(byId.ok, true);
+
+  const stale = await lookupBookingForCheckin(db, { bookingId, version: row!.barcodeVersion + 1 });
+  assert.equal(stale.ok, false);
+  if (!stale.ok) assert.equal(stale.error, 'stale_qr');
+
+  const missing = await lookupBookingForCheckin(db, { bookingNumber: 'R-19990101-0001' });
   assert.equal(missing.ok, false);
   if (!missing.ok) assert.equal(missing.error, 'not_found');
 });
