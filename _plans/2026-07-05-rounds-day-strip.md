@@ -15,10 +15,16 @@ uses. This replaces the bare date input inside the punch-card booking form.
 `{ date, roundsRequired, rounds }`. It mirrors the single-date route's composition
 exactly - master switch + anyActiveRounds once, then per date: resolve the winning
 schedule rule, filter rounds that fit its windows entirely, and derive
-`roundsRequired` from the rule's outside behavior. Reuses
-`roundAvailabilityForDate`, `resolveScheduleForDate`, `roundFitsWindows`,
-`getRoundSettings`. Up to 14 dates × (1 + instances) queries per call - fine at
-this scale; grouping into one SQL is a later optimization if it ever shows up.
+`roundsRequired` from the rule's outside behavior, with the same seat-count
+predicate as the single-date read.
+
+Performance (Yoav 2026-07-05, "takes a while to load"): the first version
+looped the per-date helpers - about 5 queries per day, 150 for a month - which
+made the picker visibly slow to open. It now runs 5 queries total regardless
+of range: settings, any-active-rounds, all rules once (resolved per date with
+the pure `resolveScheduleFromRules`), all instances in the range once, and one
+grouped booking-count query. The existing range tests double as the
+behavior-parity check for the rewrite.
 
 **API** (`apps/api/src/routes/rounds-booking.ts`): `GET /rounds/availability-range`
 with optional `from` (default: venue today via `venueTodayIso` - the API host is
