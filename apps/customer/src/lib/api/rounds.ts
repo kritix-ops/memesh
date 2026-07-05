@@ -46,6 +46,20 @@ export const getRoundAvailability = (
   }>
 > => apiRequest(`/rounds/availability?date=${encodeURIComponent(date)}`, { audience: 'customer' });
 
+export interface DayAvailability {
+  /** YYYY-MM-DD */
+  date: string;
+  /** false = free play on this date — rounds (if any) are optional. */
+  roundsRequired: boolean;
+  rounds: AvailabilityRound[];
+}
+
+/** Upcoming days for the day-strip picker. `from` defaults to venue today server-side. */
+export const getRoundAvailabilityRange = (
+  days = 14,
+): Promise<ApiResult<{ from: string; companionPriceIls: number; days: DayAvailability[] }>> =>
+  apiRequest(`/rounds/availability-range?days=${days}`, { audience: 'customer' });
+
 export const swapRoundBooking = (
   bookingId: string,
   targetRoundInstanceId: string,
@@ -68,11 +82,13 @@ export const cancelRoundBooking = (
 export const bookRoundWithPunch = (
   punchCardId: string,
   roundInstanceId: string,
-  ticketType: 'child_under_walking' | 'child_over_walking',
-): Promise<ApiResult<{ bookingId: string; barcodeToken: string; remaining: number }>> =>
+  count: number,
+): Promise<
+  ApiResult<{ bookings: { bookingId: string; barcodeToken: string }[]; remaining: number }>
+> =>
   apiRequest('/rounds/book-punch', {
     method: 'POST',
-    body: { punchCardId, roundInstanceId, ticketType },
+    body: { punchCardId, roundInstanceId, count },
     audience: 'customer',
   });
 
@@ -114,11 +130,10 @@ export const getMyWaitlist = (): Promise<ApiResult<{ entries: CustomerWaitlistEn
 
 export const joinWaitlist = (
   roundInstanceId: string,
-  ticketType: 'child_under_walking' | 'child_over_walking',
 ): Promise<ApiResult<{ entryId: string; position: number; alreadyOnList: boolean }>> =>
   apiRequest('/rounds/waitlist/join', {
     method: 'POST',
-    body: { roundInstanceId, ticketType },
+    body: { roundInstanceId },
     audience: 'customer',
   });
 

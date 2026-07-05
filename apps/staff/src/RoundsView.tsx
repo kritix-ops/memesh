@@ -1,8 +1,10 @@
 import { type CSSProperties, useCallback, useEffect, useState } from 'react';
 import {
   getRoundAttendees,
+  getRoundAvailabilityRange,
   getStaffRounds,
   type RoundAttendee,
+  type StaffDayAvailability,
   type StaffRoundsResponse,
   type StaffRoundsRound,
 } from './lib/api/rounds';
@@ -77,6 +79,7 @@ function shiftIsoDate(iso: string, days: number): string {
 }
 
 const WEEKDAY_HE = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
+const WEEKDAY_HE_SHORT = ['א', 'ב', 'ג', 'ד', 'ה', 'ו', 'ש'];
 
 function fmtIsoDateHe(iso: string): string {
   const [y, m, d] = iso.split('-');
@@ -84,10 +87,35 @@ function fmtIsoDateHe(iso: string): string {
   return `יום ${weekday} · ${d}/${m}/${y}`;
 }
 
+// Day-strip dot for the two-week jumper (plan 2026-07-05-rounds-day-strip):
+// aggregated occupancy against the same warn/danger thresholds as the tiles,
+// so the strip and the tiles never disagree about a day. 'free' = free play
+// (nothing to book), 'none' = rounds required but none offered.
+type StripStatus = StatusLevel | 'free' | 'none';
+
+function stripStatus(d: StaffDayAvailability, warnPct: number, dangerPct: number): StripStatus {
+  const open = d.rounds.filter((r) => !r.isClosed);
+  if (open.length === 0) return d.roundsRequired ? 'none' : 'free';
+  const capacity = open.reduce((s, r) => s + r.capacity, 0);
+  const available = open.reduce((s, r) => s + r.available, 0);
+  if (available === 0) return 'red';
+  const pct = capacity > 0 ? Math.round(((capacity - available) / capacity) * 100) : 0;
+  return statusLevel(pct, warnPct, dangerPct);
+}
+
+const STRIP_DOT: Record<StripStatus, string> = {
+  green: STATUS.green.fg,
+  amber: STATUS.amber.fg,
+  red: STATUS.red.fg,
+  free: '#a9bac6',
+  none: '#d9d2c9',
+};
+
 export function RoundsView() {
   const todayIso = localIsoDate(new Date());
   const [date, setDate] = useState(todayIso);
   const [data, setData] = useState<StaffRoundsResponse | null>(null);
+  const [strip, setStrip] = useState<StaffDayAvailability[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [paused, setPaused] = useState(false);
   const isToday = date === todayIso;
@@ -107,16 +135,32 @@ export function RoundsView() {
     }
   }, [date]);
 
+  // The two-week strip refreshes with the tiles so the dots stay live too.
+  const loadStrip = useCallback(async () => {
+    const res = await getRoundAvailabilityRange();
+    if (res.ok) {
+      setStrip(res.data.days);
+      console.info('[staff rounds] strip ok', { days: res.data.days.length });
+    } else {
+      console.warn('[staff rounds] strip fail', { error: res.error });
+    }
+  }, []);
+
   useEffect(() => {
     console.info('[staff rounds] mount/date', { date });
     void load();
   }, [load, date]);
+
+  useEffect(() => {
+    void loadStrip();
+  }, [loadStrip]);
 
   const refreshSeconds = data?.settings.refreshIntervalSeconds ?? 30;
 
   useEffect(() => {
     const tick = () => {
       void load();
+      void loadStrip();
     };
     let id: ReturnType<typeof setInterval> | null = setInterval(tick, refreshSeconds * 1000);
     const onVisibility = () => {
@@ -137,7 +181,7 @@ export function RoundsView() {
       if (id) clearInterval(id);
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [refreshSeconds, load]);
+  }, [refreshSeconds, load, loadStrip]);
 
   return (
     <main style={{ maxWidth: 920, margin: '0 auto', padding: '20px 16px 48px' }}>
@@ -232,6 +276,86 @@ export function RoundsView() {
           </button>
         )}
       </div>
+
+      {strip && strip.length > 0 && (
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ display: 'flex', gap: 6, overflowX: 'auto', padding: '2px 2px 4px' }}>
+            {strip.map((d, i) => {
+              const active = date === d.date;
+              const warnPct = data?.settings.capacityWarningPct ?? 70;
+              const dangerPct = data?.settings.capacityDangerPct ?? 90;
+              const status = stripStatus(d, warnPct, dangerPct);
+              return (
+                <button
+                  key={d.date}
+                  type="button"
+                  onClick={() => setDate(d.date)}
+                  aria-label={fmtIsoDateHe(d.date)}
+                  style={{
+                    flex: '0 0 auto',
+                    minWidth: 52,
+                    border: `1.5px solid ${active ? ORANGE : '#e9e0d9'}`,
+                    background: active ? '#fff4ec' : '#fff',
+                    borderRadius: 12,
+                    padding: '8px 6px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    gap: 4,
+                  }}
+                >
+                  <span style={{ fontSize: 10.5, color: MUTED, fontWeight: 600 }}>
+                    {i === 0
+                      ? 'היום'
+                      : `${WEEKDAY_HE_SHORT[new Date(`${d.date}T12:00:00`).getDay()]}׳`}
+                  </span>
+                  <span style={{ fontSize: 15, fontWeight: 700, color: INK }}>
+                    {Number(d.date.slice(8, 10))}
+                  </span>
+                  <span
+                    aria-hidden
+                    style={{
+                      width: 7,
+                      height: 7,
+                      borderRadius: '50%',
+                      background: STRIP_DOT[status],
+                    }}
+                  />
+                </button>
+              );
+            })}
+          </div>
+          <div
+            style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: '4px 12px',
+              justifyContent: 'center',
+              fontSize: 11.5,
+              color: MUTED,
+              marginTop: 6,
+            }}
+          >
+            {(
+              [
+                ['green', 'פנוי'],
+                ['amber', 'מתמלא'],
+                ['red', 'מלא'],
+                ['free', 'כניסה חופשית'],
+              ] as const
+            ).map(([k, label]) => (
+              <span key={k} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                <span
+                  aria-hidden
+                  style={{ width: 7, height: 7, borderRadius: '50%', background: STRIP_DOT[k] }}
+                />
+                {label}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
 
       {!data ? (
         error ? (
