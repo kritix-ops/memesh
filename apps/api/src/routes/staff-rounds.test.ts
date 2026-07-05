@@ -126,5 +126,70 @@ test('GET /staff/rounds/:id/attendees is staff-gated and validates the id', asyn
   // 200 with [] on a real DB (unknown instance simply has no bookings);
   // 500 on the DB-less box. Either way auth + validation passed.
   assert.ok([200, 500].includes(ok.statusCode), `got ${ok.statusCode}`);
+});
+
+test('POST /staff/rounds/bookings/:id/arrival is staff-gated and validates id + body', async () => {
+  const noToken = await app.inject({
+    method: 'POST',
+    url: '/staff/rounds/bookings/00000000-0000-0000-0000-000000000000/arrival',
+    payload: { arrived: true },
+  });
+  assert.equal(noToken.statusCode, 401);
+
+  const badId = await app.inject({
+    method: 'POST',
+    url: '/staff/rounds/bookings/not-a-uuid/arrival',
+    headers: auth(await tokenFor('cashier')),
+    payload: { arrived: true },
+  });
+  assert.equal(badId.statusCode, 400);
+  assert.equal(badId.json().error, 'invalid_id');
+
+  const badBody = await app.inject({
+    method: 'POST',
+    url: '/staff/rounds/bookings/00000000-0000-0000-0000-000000000000/arrival',
+    headers: auth(await tokenFor('cashier')),
+    payload: { arrived: 'yes' },
+  });
+  assert.equal(badBody.statusCode, 400);
+  assert.equal(badBody.json().error, 'invalid_body');
+
+  const ok = await app.inject({
+    method: 'POST',
+    url: '/staff/rounds/bookings/00000000-0000-0000-0000-000000000000/arrival',
+    headers: auth(await tokenFor('cashier')),
+    payload: { arrived: true },
+  });
+  // Unknown booking → 404 on a real DB; 500 on the DB-less box. Either way
+  // auth + validation passed and the engine was reached.
+  assert.ok([404, 500].includes(ok.statusCode), `got ${ok.statusCode}`);
+});
+
+test('GET /staff/customers/:id/rounds-today is staff-gated and validates the id', async () => {
+  const noToken = await app.inject({
+    method: 'GET',
+    url: '/staff/customers/00000000-0000-0000-0000-000000000000/rounds-today',
+  });
+  assert.equal(noToken.statusCode, 401);
+
+  const badId = await app.inject({
+    method: 'GET',
+    url: '/staff/customers/not-a-uuid/rounds-today',
+    headers: auth(await tokenFor('cashier')),
+  });
+  assert.equal(badId.statusCode, 400);
+  assert.equal(badId.json().error, 'invalid_id');
+
+  const ok = await app.inject({
+    method: 'GET',
+    url: '/staff/customers/00000000-0000-0000-0000-000000000000/rounds-today',
+    headers: auth(await tokenFor('cashier')),
+  });
+  // 200 with [] on a real DB (unknown customer has no bookings); 500 without.
+  assert.ok([200, 500].includes(ok.statusCode), `got ${ok.statusCode}`);
+  if (ok.statusCode !== 200) return;
+  const body = ok.json();
+  assert.ok(typeof body.date === 'string');
+  assert.ok(Array.isArray(body.bookings));
   if (ok.statusCode === 200) assert.deepEqual(ok.json().attendees, []);
 });
