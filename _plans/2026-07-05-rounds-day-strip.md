@@ -22,10 +22,12 @@ this scale; grouping into one SQL is a later optimization if it ever shows up.
 
 **API** (`apps/api/src/routes/rounds-booking.ts`): `GET /rounds/availability-range`
 with optional `from` (default: venue today via `venueTodayIso` - the API host is
-UTC, never the server clock) and optional `days` (default 14, max 21). Public and
-rate-limited like the single-date endpoint but at half the rate (heavier query).
-Same public shape per day as the existing endpoint, plus `companionPriceIls` once.
-The single-date endpoint stays untouched - the WP snippet depends on it.
+UTC, never the server clock) and optional `days` (default 14, max 31 - the whole
+30-day instance horizon, so the pickers keep the reach the old free date inputs
+had). Public and rate-limited like the single-date endpoint but at half the rate
+(heavier query). Same public shape per day as the existing endpoint, plus
+`companionPriceIls` once. The single-date endpoint stays untouched - the WP
+snippet's server-side validation still uses it.
 
 **UI** (`apps/customer/src/customer/CustomerApp.tsx`): the punch booking form
 loads the 14-day range when opened. The date input is replaced by a scrollable
@@ -43,6 +45,20 @@ Day dot derivation (client-side, from the day's rounds):
 - no rounds offered but required → gray (detail shows "אין סבבים פנויים")
 - else by total remaining across open rounds: 0 → red; ≤25% of capacity → amber;
   otherwise green.
+
+**WordPress** (`wordpress/memesh-rounds-snippet.php`, Yanay 2026-07-05): the
+entry-product picker becomes the same day strip - one availability-range call
+(31 days) renders the chips with dots and the chosen day's rounds as tappable
+rows, replacing the date input + dropdown. Selections fill the same hidden form
+fields (`memesh_date`, `memesh_round_instance_id`, `memesh_round_times`) the
+checkout hold already reads, and server-side validation is unchanged. The
+add-to-cart button is disabled until the selection is valid (the browser
+`required` guard left with the old select). All DOM is built with
+createElement - API data is never concatenated into HTML. Free-play days show
+an explicit "בלי סבב - כניסה חופשית" row when rounds are optional. The strip
+fails closed like the old picker: fetch error → message + button stays
+disabled. Deploy note: the API (PR with this plan) must be live before Yanay
+pastes the new snippet, since the picker needs the range endpoint.
 
 **Staff** (`apps/staff/src/RoundsView.tsx`, Yoav clarification 2026-07-05): the
 same two-week strip sits above the occupancy tiles in the staff סבבים page as a

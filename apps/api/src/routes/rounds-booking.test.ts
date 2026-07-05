@@ -76,7 +76,7 @@ test('GET /rounds/availability-range rejects a malformed from date with 400', as
 });
 
 test('GET /rounds/availability-range rejects days out of range with 400', async () => {
-  for (const days of ['0', '22', 'abc']) {
+  for (const days of ['0', '32', 'abc']) {
     const res = await app.inject({ method: 'GET', url: `/rounds/availability-range?days=${days}` });
     assert.equal(res.statusCode, 400, `days=${days}`);
     assert.equal(res.json().error, 'invalid_days');

@@ -177,10 +177,13 @@ export const roundsBookingRoutes: FastifyPluginAsync = async (fastify) => {
     },
   );
 
-  // Multi-day availability for the customer day-strip picker (plan
-  // 2026-07-05-rounds-day-strip). Same public shape as the single-date endpoint,
-  // one entry per day, so the strip renders every dot from one request. Public
-  // like availability but at half the rate — each call is up to 21 dates deep.
+  // Multi-day availability for the day-strip pickers (plan
+  // 2026-07-05-rounds-day-strip): the customer dashboard, the staff jumper, and
+  // the WP product-page picker. Same public shape as the single-date endpoint,
+  // one entry per day, so a strip renders every dot from one request. Public
+  // like availability but at half the rate — each call is up to a month deep.
+  // Max 31 covers the 30-day instance horizon (INSTANCE_HORIZON_DAYS); beyond
+  // it no instances exist to show anyway.
   fastify.get(
     '/rounds/availability-range',
     { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } },
@@ -192,7 +195,7 @@ export const roundsBookingRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(400).send({ error: 'invalid_date' });
       }
       const days = q.days === undefined ? 14 : Number(q.days);
-      if (!Number.isInteger(days) || days < 1 || days > 21) {
+      if (!Number.isInteger(days) || days < 1 || days > 31) {
         return reply.code(400).send({ error: 'invalid_days' });
       }
       const cardSettings = await getCardSettings(db);
