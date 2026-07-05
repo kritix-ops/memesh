@@ -797,7 +797,7 @@ const dayOfMonth = (dateIso: string): number => Number(dateIso.slice(8, 10));
 // Book a round using this card's entries (super-brief §3.4). No WooCommerce — the
 // customer already paid for the card. Lives inside the punch-card card so the
 // "this card → book with it" link is obvious (Yanay feedback, 2026-07-04). The
-// day strip shows two weeks of availability as colored dots (Yanay's variant B
+// day strip shows the full booking horizon as colored dots (Yanay's variant B
 // pick, 2026-07-05); tap a day, pick an open round, pick how many entries to
 // spend — a clear "spends N of M" confirm precedes the punch so it never
 // happens by accident.
@@ -876,7 +876,8 @@ function PunchRoundBooking({
     setChosen(null);
     setError(null);
     setJoinMsg(null);
-    const res = await getRoundAvailabilityRange();
+    // 30 days = the full instance horizon, same reach the old date input had.
+    const res = await getRoundAvailabilityRange(30);
     console.info('[customer punch-booking] range loaded', {
       ok: res.ok,
       days: res.ok ? res.data.days.length : 0,

@@ -7,7 +7,11 @@
 // note and keep the real shared secret in MEMESH_SHARED_KEY (never commit it).
 //
 // What it does:
-//   - Injects a round picker + paid-companion checkbox on the entry products.
+//   - Injects a day-strip round picker + paid-companion checkbox on the entry
+//     products: a month of days with availability dots (same look as the
+//     customer dashboard, Yanay 2026-07-05), then the chosen day's rounds as
+//     tappable rows. One /rounds/availability-range call feeds the whole
+//     picker.
 //   - Punch-card upsell notice when a 2nd entry ticket is added.
 //   - Holds the seat at checkout via /rounds/hold/wc and tags the order.
 //   - Rounds mandatory ONLY when the rounds system is on: global switch via
@@ -89,17 +93,15 @@ add_action('woocommerce_before_add_to_cart_button', function () {
     if (!memesh_rounds_enabled()) return; // rounds off — plain product
     ?>
     <div class="memesh-round-picker">
-        <label class="memesh-field">
-            <span class="memesh-field-label">בחירת תאריך</span>
-            <input type="date" id="memesh-date" name="memesh_date" required
-                   min="<?php echo esc_attr(date('Y-m-d')); ?>" />
-        </label>
-        <label class="memesh-field" id="memesh-round-field">
-            <span class="memesh-field-label">בחירת סבב</span>
-            <select id="memesh-round" name="memesh_round_instance_id" required>
-                <option value="">— בחרו תאריך תחילה —</option>
-            </select>
-        </label>
+        <div class="memesh-field-label">בחירת יום וסבב</div>
+        <div class="memesh-strip" id="memesh-strip"></div>
+        <div class="memesh-legend" id="memesh-legend" style="display:none">
+            <span><i class="memesh-dot memesh-dot-ok"></i> הרבה מקום</span>
+            <span><i class="memesh-dot memesh-dot-warn"></i> נשארו מעט</span>
+            <span><i class="memesh-dot memesh-dot-full"></i> מלא</span>
+            <span><i class="memesh-dot memesh-dot-free"></i> כניסה חופשית</span>
+        </div>
+        <div class="memesh-rounds" id="memesh-rounds"></div>
 
         <div class="memesh-companion-card">
             <label class="memesh-companion-label">
@@ -116,67 +118,179 @@ add_action('woocommerce_before_add_to_cart_button', function () {
             </label>
         </div>
 
-        <div id="memesh-round-msg" class="memesh-round-msg"></div>
+        <div id="memesh-round-msg" class="memesh-round-msg">טוען זמינות…</div>
+        <input type="hidden" id="memesh-date" name="memesh_date" value="" />
+        <input type="hidden" id="memesh-round" name="memesh_round_instance_id" value="" />
         <input type="hidden" id="memesh-round-times" name="memesh_round_times" value="" />
     </div>
     <script>
+    // Day-strip picker (Yanay 2026-07-05): same look and logic as the customer
+    // dashboard. One availability-range call renders a month of day chips with
+    // status dots; tapping a day lists its rounds as rows; tapping a row fills
+    // the hidden form fields the checkout hold already reads. All DOM is built
+    // with createElement — nothing from the API is ever concatenated into HTML.
     (function () {
         var api = <?php echo json_encode(MEMESH_API_BASE); ?>;
+        var stripEl = document.getElementById('memesh-strip');
+        var legendEl = document.getElementById('memesh-legend');
+        var roundsEl = document.getElementById('memesh-rounds');
+        var msgEl = document.getElementById('memesh-round-msg');
         var dateEl = document.getElementById('memesh-date');
         var roundEl = document.getElementById('memesh-round');
-        var roundField = document.getElementById('memesh-round-field');
-        var msgEl = document.getElementById('memesh-round-msg');
         var timesEl = document.getElementById('memesh-round-times');
-        if (!dateEl) return;
-        // Keep the chosen round's hours in a hidden field so the cart /
-        // checkout / receipt can show "סבב 05/07/2026 · 09:00–14:00" and the
-        // buyer knows exactly which slot they bought, not just the date.
-        roundEl.addEventListener('change', function () {
-            var opt = roundEl.options[roundEl.selectedIndex];
-            timesEl.value = (opt && opt.getAttribute('data-times')) || '';
-        });
-        dateEl.addEventListener('change', function () {
-            roundEl.innerHTML = '<option value="">טוען…</option>';
-            roundEl.required = true;
-            roundField.style.display = '';
-            msgEl.textContent = '';
-            msgEl.style.color = '#a23a3a';
+        if (!stripEl) return;
+
+        var DOW = ['א', 'ב', 'ג', 'ד', 'ה', 'ו', 'ש'];
+
+        // The add-to-cart button stays disabled until the selection is valid —
+        // the browser "required" guard went away with the old <select>, and a
+        // reload-with-error beats nothing, but not-clickable beats both.
+        function cartBtn() {
+            var form = stripEl.closest ? stripEl.closest('form.cart') : null;
+            return (form && form.querySelector('.single_add_to_cart_button')) ||
+                   document.querySelector('.single_add_to_cart_button');
+        }
+        function setCanBuy(ok) {
+            var btn = cartBtn();
+            if (btn) btn.disabled = !ok;
+        }
+        function setMsg(text, good) {
+            msgEl.textContent = text || '';
+            msgEl.style.color = good ? '#5a7a3a' : '#a23a3a';
+        }
+
+        function openRounds(day) {
+            return (day.rounds || []).filter(function (x) { return x.available > 0 && !x.isClosed; });
+        }
+        // Dot per day — same thresholds as the dashboard strip: red when
+        // nothing is left, amber at a quarter or less, green otherwise.
+        function dayDotClass(day) {
+            var open = (day.rounds || []).filter(function (x) { return !x.isClosed; });
+            if (open.length === 0) return day.roundsRequired ? 'memesh-dot-none' : 'memesh-dot-free';
+            var cap = 0, avail = 0;
+            open.forEach(function (x) { cap += x.capacity; avail += x.available; });
+            if (avail === 0) return 'memesh-dot-full';
+            if (cap > 0 && avail / cap <= 0.25) return 'memesh-dot-warn';
+            return 'memesh-dot-ok';
+        }
+
+        function selectRound(row, id, times) {
+            var rows = roundsEl.querySelectorAll('.memesh-round-row');
+            for (var i = 0; i < rows.length; i += 1) rows[i].classList.remove('is-selected');
+            row.classList.add('is-selected');
+            roundEl.value = id;
+            // The round's hours ride along so the cart / checkout / receipt can
+            // show "סבב 05/07/2026 · 09:00–14:00", not just the date.
+            timesEl.value = times;
+            setMsg('');
+            setCanBuy(true);
+        }
+
+        function roundRow(x, optional) {
+            var row = document.createElement('button');
+            row.type = 'button'; // inside form.cart — default type would submit
+            row.className = 'memesh-round-row';
+            var label = document.createElement('span');
+            label.className = 'memesh-round-label';
+            label.textContent = x.label + ' ' + x.startTime + '–' + x.endTime;
+            var avail = document.createElement('span');
+            avail.className = 'memesh-round-avail';
+            avail.textContent = x.available + ' פנויים';
+            row.appendChild(label);
+            row.appendChild(avail);
+            row.addEventListener('click', function () {
+                selectRound(row, x.roundInstanceId, x.startTime + '–' + x.endTime);
+                if (optional) setMsg('בתאריך זה אפשר גם להיכנס חופשי בלי סבב — לבחירתכם.', true);
+            });
+            return row;
+        }
+
+        function renderDay(day) {
+            roundsEl.textContent = '';
+            dateEl.value = day.date;
+            roundEl.value = '';
             timesEl.value = '';
-            fetch(api + '/rounds/availability?date=' + encodeURIComponent(dateEl.value))
-                .then(function (r) { return r.json(); })
-                .then(function (data) {
-                    var open = (data.rounds || []).filter(function (x) { return x.available > 0 && !x.isClosed; });
-                    var optional = data.roundsRequired === false;
-                    if (optional && open.length === 0) {
-                        // Rounds are off for this date — free play, nothing to pick.
-                        roundEl.innerHTML = '<option value=""></option>';
-                        roundEl.required = false;
-                        roundField.style.display = 'none';
-                        msgEl.style.color = '#5a7a3a';
-                        msgEl.textContent = 'בתאריך זה הכניסה חופשית — אין צורך בבחירת סבב.';
-                        return;
-                    }
-                    if (open.length === 0) {
-                        roundEl.innerHTML = '<option value="">אין סבבים פנויים בתאריך זה</option>';
-                        return;
-                    }
-                    var options = open.map(function (x) {
-                        return '<option value="' + x.roundInstanceId + '" data-times="' + x.startTime + '–' + x.endTime + '">' +
-                               x.label + ' ' + x.startTime + '–' + x.endTime + ' (' + x.available + ' פנויים)</option>';
-                    }).join('');
-                    if (optional) {
-                        // Free-play day with round windows: picking a round is a
-                        // choice, not a requirement.
-                        roundEl.required = false;
-                        roundEl.innerHTML = '<option value="">בלי סבב — כניסה חופשית</option>' + options;
-                        msgEl.style.color = '#5a7a3a';
-                        msgEl.textContent = 'בתאריך זה אפשר להיכנס חופשי או לשריין סבב — לבחירתכם.';
-                        return;
-                    }
-                    roundEl.innerHTML = '<option value="">— בחרו סבב —</option>' + options;
-                })
-                .catch(function () { msgEl.textContent = 'לא ניתן לטעון סבבים כרגע.'; });
-        });
+            var open = openRounds(day);
+            var optional = day.roundsRequired === false;
+
+            if (open.length === 0) {
+                if (optional) {
+                    setMsg('בתאריך זה הכניסה חופשית — אין צורך בבחירת סבב.', true);
+                    setCanBuy(true); // server-side validation lets off-dates through
+                } else {
+                    setMsg('אין סבבים פנויים ביום זה — בחרו יום אחר.');
+                    setCanBuy(false);
+                }
+                return;
+            }
+
+            if (optional) {
+                // Free-play day with round windows: a round is a choice, not a
+                // requirement — an explicit "no round" row keeps that obvious.
+                var freeRow = document.createElement('button');
+                freeRow.type = 'button';
+                freeRow.className = 'memesh-round-row is-selected';
+                var freeLabel = document.createElement('span');
+                freeLabel.className = 'memesh-round-label';
+                freeLabel.textContent = 'בלי סבב — כניסה חופשית';
+                freeRow.appendChild(freeLabel);
+                freeRow.addEventListener('click', function () {
+                    selectRound(freeRow, '', '');
+                    setMsg('בתאריך זה אפשר להיכנס חופשי או לשריין סבב — לבחירתכם.', true);
+                });
+                roundsEl.appendChild(freeRow);
+                setMsg('בתאריך זה אפשר להיכנס חופשי או לשריין סבב — לבחירתכם.', true);
+                setCanBuy(true);
+            } else {
+                setMsg('בחרו סבב כדי להמשיך.');
+                setCanBuy(false);
+            }
+            open.forEach(function (x) { roundsEl.appendChild(roundRow(x, optional)); });
+        }
+
+        function dayChip(day, index) {
+            var chip = document.createElement('button');
+            chip.type = 'button';
+            chip.className = 'memesh-day-chip';
+            var dow = document.createElement('span');
+            dow.className = 'memesh-chip-dow';
+            dow.textContent = index === 0 ? 'היום' : DOW[new Date(day.date + 'T12:00:00').getDay()] + '׳';
+            var num = document.createElement('span');
+            num.className = 'memesh-chip-num';
+            num.textContent = String(Number(day.date.slice(8, 10)));
+            var dot = document.createElement('i');
+            dot.className = 'memesh-dot ' + dayDotClass(day);
+            chip.appendChild(dow);
+            chip.appendChild(num);
+            chip.appendChild(dot);
+            chip.addEventListener('click', function () {
+                var chips = stripEl.querySelectorAll('.memesh-day-chip');
+                for (var i = 0; i < chips.length; i += 1) chips[i].classList.remove('is-active');
+                chip.classList.add('is-active');
+                renderDay(day);
+            });
+            return chip;
+        }
+
+        setCanBuy(false); // nothing valid until the strip loads and a day is picked
+        // 31 days = the API's max, covering the whole instance horizon — the
+        // same reach the old free date input had.
+        fetch(api + '/rounds/availability-range?days=31')
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                var days = data.days || [];
+                if (days.length === 0) {
+                    setMsg('אין סבבים פנויים כרגע. נסו שוב מאוחר יותר.');
+                    return;
+                }
+                days.forEach(function (day, index) { stripEl.appendChild(dayChip(day, index)); });
+                legendEl.style.display = '';
+                var first = stripEl.querySelector('.memesh-day-chip');
+                if (first) first.click(); // today preselected, its rounds visible
+            })
+            .catch(function () {
+                setMsg('לא ניתן לטעון סבבים כרגע. רעננו את העמוד ונסו שוב.');
+            });
     })();
     </script>
     <?php
@@ -187,14 +301,53 @@ add_action('wp_head', function () {
     ?>
     <style>
     .memesh-round-picker { margin: 18px 0; display: flex; flex-direction: column; gap: 12px; }
-    .memesh-field { display: flex; flex-direction: column; gap: 6px; }
     .memesh-field-label { font-size: 14px; font-weight: 500; color: #333; }
-    .memesh-field input,
-    .memesh-field select {
-        padding: 9px 12px; border: 1px solid #ccc; border-radius: 6px;
-        font-size: 15px; background: #fff; width: 100%; box-sizing: border-box;
-    }
     .memesh-round-msg { font-size: 13px; color: #a23a3a; min-height: 16px; }
+
+    /* Day strip — same look as the customer dashboard picker. The chip and
+       row buttons reset theme button styling hard: WP themes love to paint
+       every <button>. */
+    .memesh-strip {
+        display: flex; gap: 6px; overflow-x: auto; padding: 2px 2px 4px;
+        -webkit-overflow-scrolling: touch;
+    }
+    .memesh-strip .memesh-day-chip,
+    .memesh-rounds .memesh-round-row {
+        appearance: none; -webkit-appearance: none; box-shadow: none;
+        margin: 0; text-transform: none; line-height: 1.3;
+        font-family: inherit; cursor: pointer;
+    }
+    .memesh-day-chip {
+        flex: 0 0 auto; min-width: 52px; padding: 8px 6px;
+        border: 1.5px solid #e9e0d9; background: #fff; border-radius: 12px;
+        display: flex; flex-direction: column; align-items: center; gap: 4px;
+    }
+    .memesh-day-chip.is-active { border-color: #e7a33e; background: #fdf3e3; }
+    .memesh-chip-dow { font-size: 10.5px; color: #636e72; font-weight: 600; }
+    .memesh-chip-num { font-size: 15px; font-weight: 700; color: #2d3436; }
+    .memesh-day-chip.is-active .memesh-chip-num { color: #b9772a; }
+    .memesh-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+    .memesh-dot-ok { background: #8fae5d; }
+    .memesh-dot-warn { background: #e7a33e; }
+    .memesh-dot-full { background: #cf7a6b; }
+    .memesh-dot-free { background: #a9bac6; }
+    .memesh-dot-none { background: #d9d2c9; }
+    .memesh-legend {
+        display: flex; flex-wrap: wrap; gap: 4px 12px; justify-content: center;
+        font-size: 11.5px; color: #636e72;
+    }
+    .memesh-legend span { display: inline-flex; align-items: center; gap: 5px; }
+    .memesh-rounds { display: flex; flex-direction: column; gap: 8px; }
+    .memesh-rounds:empty { display: none; }
+    .memesh-round-row {
+        display: flex; justify-content: space-between; align-items: center;
+        gap: 10px; width: 100%; padding: 10px 14px; font-size: 14px;
+        border: 1.5px solid #e9e0d9; background: #fff; border-radius: 10px;
+        text-align: right;
+    }
+    .memesh-round-row.is-selected { border-color: #e7a33e; background: #fdf3e3; }
+    .memesh-round-label { font-weight: 600; color: #2d3436; }
+    .memesh-round-avail { color: #636e72; font-size: 13px; white-space: nowrap; }
 
     .memesh-companion-card {
         margin: 4px 0; padding: 14px 16px;
