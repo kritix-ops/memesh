@@ -115,6 +115,31 @@ test('range: a closed rule day keeps roundsRequired true with fitting rounds onl
   assert.equal(range[0]!.rounds.length, 1); // 16:00–18:00 fits 15:00–19:00 entirely
 });
 
+test('range: an all-day closed rule marks the day closed; plain empty days are not closed', async () => {
+  const db = await freshDb();
+  await dailyRound(db);
+  // No windows + outside closed = the venue is shut that day.
+  const rule = await createScheduleRule(db, { dateFrom: FROM, windows: [], outside: 'closed' });
+  assert.equal(rule.ok, true);
+
+  const range = await roundAvailabilityRange(db, FROM, 2, NOW);
+  assert.equal(range[0]!.closed, true);
+  assert.equal(range[0]!.roundsRequired, true);
+  assert.equal(range[0]!.rounds.length, 0);
+  // The neighbor day has rounds and no rule — open, not closed.
+  assert.equal(range[1]!.closed, false);
+});
+
+test('range: a free_play empty day is not closed', async () => {
+  const db = await freshDb();
+  await dailyRound(db);
+  const rule = await createScheduleRule(db, { dateFrom: FROM, windows: [], outside: 'free_play' });
+  assert.equal(rule.ok, true);
+  const range = await roundAvailabilityRange(db, FROM, 1, NOW);
+  assert.equal(range[0]!.closed, false);
+  assert.equal(range[0]!.roundsRequired, false);
+});
+
 test('range: master switch off returns free-play days with no rounds', async () => {
   const db = await freshDb();
   await dailyRound(db);

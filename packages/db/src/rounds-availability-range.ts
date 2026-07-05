@@ -18,6 +18,12 @@ export interface DayAvailability {
   date: string;
   /** false = free play on this date — rounds (if any) are optional. */
   roundsRequired: boolean;
+  /**
+   * An admin rule explicitly shut this day: outside behavior 'closed' and no
+   * round survives the rule's windows — nothing bookable, no free play. Days
+   * that merely have no rounds (no rule, or past the horizon) are NOT closed.
+   */
+  closed: boolean;
   rounds: RoundAvailabilityRow[];
 }
 
@@ -39,7 +45,7 @@ export const roundAvailabilityRange = async (
   for (let i = 0; i < days; i += 1) {
     const date = addIsoDays(fromIso, i);
     if (!systemOn) {
-      result.push({ date, roundsRequired: false, rounds: [] });
+      result.push({ date, roundsRequired: false, closed: false, rounds: [] });
       continue;
     }
     const schedule = await resolveScheduleForDate(db, date);
@@ -49,7 +55,8 @@ export const roundAvailabilityRange = async (
       rows = rows.filter((r) => roundFitsWindows(r.startTime, r.endTime, schedule.windows));
       roundsRequired = schedule.outside === 'closed';
     }
-    result.push({ date, roundsRequired, rounds: rows });
+    const closed = schedule !== null && schedule.outside === 'closed' && rows.length === 0;
+    result.push({ date, roundsRequired, closed, rounds: rows });
   }
   return result;
 };

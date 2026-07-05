@@ -375,10 +375,11 @@ function ruleSummary(r: ScheduleRule): string {
   }
   if (r.weekdayMask !== null) parts.push(daysSummary(r.weekdayMask));
   const scope = parts.join(' · ') || 'כל הימים';
-  const windows =
-    r.windows.length === 0
-      ? 'ללא סבבים כל היום'
-      : `סבבים רק ב-${r.windows.map((w) => `${w.start}–${w.end}`).join(', ')}`;
+  if (r.windows.length === 0) {
+    // No windows: the outside behavior IS the whole day.
+    return `${scope} · ${r.outside === 'closed' ? 'המקום סגור' : 'כניסה חופשית כל היום'}`;
+  }
+  const windows = `סבבים רק ב-${r.windows.map((w) => `${w.start}–${w.end}`).join(', ')}`;
   const outside = r.outside === 'closed' ? 'מחוץ לחלונות: סגור' : 'מחוץ לחלונות: כניסה חופשית';
   return `${scope} · ${windows} · ${outside}`;
 }
@@ -609,7 +610,7 @@ function ScheduleRulesManager() {
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             <div style={{ fontSize: 13, color: MUTED }}>
-              חלונות שבהם הסבבים פועלים (ריק = ללא סבבים בכלל בימים האלה):
+              חלונות שבהם הסבבים פועלים (ריק = ללא סבבים בכלל בימים האלה — לפי הבחירה למטה):
             </div>
             {windows.map((w, i) => (
               <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -651,38 +652,41 @@ function ScheduleRulesManager() {
             )}
           </div>
 
-          {windows.length > 0 && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <div style={{ fontSize: 13, color: MUTED }}>מחוץ לחלונות האלה:</div>
-              <div style={{ display: 'flex', gap: 8 }}>
-                {(
-                  [
-                    ['free_play', 'כניסה חופשית (בלי סבב)'],
-                    ['closed', 'סגור — אין מכירה'],
-                  ] as const
-                ).map(([val, label]) => (
-                  <button
-                    key={val}
-                    type="button"
-                    onClick={() => setOutside(val)}
-                    style={{
-                      flex: 1,
-                      border: `1.5px solid ${outside === val ? ORANGE : '#e9e0d9'}`,
-                      background: outside === val ? '#fdf3e3' : '#fff',
-                      color: outside === val ? '#b9772a' : MUTED,
-                      borderRadius: 9,
-                      padding: '8px',
-                      fontSize: 13,
-                      fontWeight: 600,
-                      cursor: 'pointer',
-                    }}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
+          {/* Always visible — with no windows this IS the whole day's behavior,
+              and 'closed' here is how the admin marks a day the place is shut
+              (Yoav 2026-07-05). */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div style={{ fontSize: 13, color: MUTED }}>
+              {windows.length > 0 ? 'מחוץ לחלונות האלה:' : 'מה קורה בימים האלה?'}
             </div>
-          )}
+            <div style={{ display: 'flex', gap: 8 }}>
+              {(
+                [
+                  ['free_play', 'כניסה חופשית (בלי סבב)'],
+                  ['closed', windows.length > 0 ? 'סגור — אין מכירה' : 'המקום סגור — אין מכירה'],
+                ] as const
+              ).map(([val, label]) => (
+                <button
+                  key={val}
+                  type="button"
+                  onClick={() => setOutside(val)}
+                  style={{
+                    flex: 1,
+                    border: `1.5px solid ${outside === val ? ORANGE : '#e9e0d9'}`,
+                    background: outside === val ? '#fdf3e3' : '#fff',
+                    color: outside === val ? '#b9772a' : MUTED,
+                    borderRadius: 9,
+                    padding: '8px',
+                    fontSize: 13,
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
 
           <input
             type="text"
