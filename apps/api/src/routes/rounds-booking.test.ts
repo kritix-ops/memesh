@@ -98,6 +98,9 @@ test('GET /rounds/availability-range is public and returns one entry per day', a
   if (res.statusCode !== 200) return;
   const body = res.json();
   assert.equal(body.from, '2026-07-01');
+  // End of the booking window — the calendar popups stop paging there.
+  assert.match(body.maxDate, /^\d{4}-\d{2}-\d{2}$/);
+  assert.ok(body.maxDate > body.from, 'maxDate is in the future');
   assert.equal(typeof body.companionPriceIls, 'number');
   assert.equal(body.days.length, 3);
   assert.deepEqual(

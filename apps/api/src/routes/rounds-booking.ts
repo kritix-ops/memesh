@@ -1,5 +1,6 @@
 import { timingSafeEqual } from 'node:crypto';
 import {
+  addIsoDays,
   anyActiveRounds,
   bookRoundWithPunch,
   cancelBooking,
@@ -9,6 +10,7 @@ import {
   getCardSettings,
   getCustomerById,
   getRoundSettings,
+  INSTANCE_HORIZON_DAYS,
   joinWaitlist,
   leaveWaitlist,
   listCustomerRoundBookings,
@@ -182,8 +184,9 @@ export const roundsBookingRoutes: FastifyPluginAsync = async (fastify) => {
   // the WP product-page picker. Same public shape as the single-date endpoint,
   // one entry per day, so a strip renders every dot from one request. Public
   // like availability but at half the rate — each call is up to a month deep.
-  // Max 31 covers the 30-day instance horizon (INSTANCE_HORIZON_DAYS); beyond
-  // it no instances exist to show anyway.
+  // The instance horizon is a full year (INSTANCE_HORIZON_DAYS); the calendar
+  // popups page through it month by month with `from`, capped at 31 days per
+  // request, and stop at `maxDate` — the last date instances exist for.
   fastify.get(
     '/rounds/availability-range',
     { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } },
@@ -206,6 +209,8 @@ export const roundsBookingRoutes: FastifyPluginAsync = async (fastify) => {
       );
       return {
         from,
+        // End of the booking window — calendars disable navigation past it.
+        maxDate: addIsoDays(venueTodayIso(), INSTANCE_HORIZON_DAYS - 1),
         companionPriceIls: cardSettings.roundAdditionalCompanionPriceIls,
         days: range.map((d) => ({
           date: d.date,

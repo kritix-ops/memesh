@@ -27,6 +27,12 @@ export const roundInstances = pgTable(
       .references(() => rounds.id),
     date: date('date').notNull(),
     capacity: integer('capacity').notNull(),
+    // True when THIS date's capacity was set by hand rather than copied from
+    // the template. Template capacity edits propagate to every future
+    // instance where this is false (see propagation in rounds.ts) — the flag
+    // is what lets a deliberate per-date decision survive that sweep. Any
+    // future per-date capacity editor MUST set it.
+    capacityOverridden: boolean('capacity_overridden').notNull().default(false),
     // Manual closure flag — separate from rounds.isActive. isActive turns
     // off the recurring template; isClosed kills a single instance (private
     // event, holiday). Set by admin from the per-date override panel.

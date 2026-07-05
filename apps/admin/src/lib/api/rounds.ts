@@ -34,8 +34,20 @@ export interface RoundInput {
 
 export type RoundPatch = Partial<RoundInput>;
 
+/** What a template edit did to the round's future dates — booked dates that
+ *  kept their old capacity (or survived a weekday removal) are reported so
+ *  the admin can resolve them by hand. */
+export interface RoundPropagation {
+  capacityUpdated: number;
+  capacityKeptDates: string[];
+  instancesRemoved: number;
+  removedDayKeptDates: string[];
+}
+
 export interface RoundResponse {
   round: AdminRound;
+  /** Present on update responses only. */
+  propagation?: RoundPropagation;
 }
 
 export const listRounds = (): Promise<ApiResult<RoundsListResponse>> => apiRequest('/admin/rounds');
