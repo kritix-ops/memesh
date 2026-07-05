@@ -37,3 +37,5 @@ apps/api-deploy/lib/api-bundle.mjs
 # the working copy + the upload ZIP remain a place where a stray hardcoded
 # value could leak. Keep the plugin out of git; ship via the release ZIP only.
 wp-plugin/
+
+20*-yanay-snippet*.txt
