@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { date, jsonb, pgEnum, pgTable, smallint, timestamp, uuid, varchar } from 'drizzle-orm/pg-core';
+import { date, jsonb, pgEnum, pgTable, smallint, time, timestamp, uuid, varchar } from 'drizzle-orm/pg-core';
 
 // Scheduling rules for when the rounds system applies (Yoav 2026-07-02,
 // replaces the short-lived round_off_dates). A rule scopes a set of dates —
@@ -16,6 +16,11 @@ import { date, jsonb, pgEnum, pgTable, smallint, timestamp, uuid, varchar } from
 // in rounds-schedule.ts.
 
 export const roundScheduleOutsideEnum = pgEnum('round_schedule_outside', ['free_play', 'closed']);
+
+// Provenance. 'manual' rows are authored by an admin in the schedule UI and are
+// NEVER touched by the holiday sync. 'holiday_sync' rows are regenerated each
+// run from confirmed holiday_policies (plan 2026-07-07-jewish-holidays-closures).
+export const roundScheduleSourceEnum = pgEnum('round_schedule_source', ['manual', 'holiday_sync']);
 
 export interface ScheduleWindow {
   /** "HH:MM" */
@@ -35,6 +40,17 @@ export const roundScheduleRules = pgTable('round_schedule_rules', {
   // Time windows in which rounds run. Empty array = no rounds that day.
   windows: jsonb('windows').$type<ScheduleWindow[]>().notNull().default(sql`'[]'::jsonb`),
   outside: roundScheduleOutsideEnum('outside').notNull().default('free_play'),
+  // On a 'free_play' day, bound the venue's open hours in venue-local "HH:MM"
+  // (special hours / Friday early-close). Null = open all day. Ignored when
+  // outside = 'closed'. The resolver keeps the day sellable and surfaces these.
+  openFrom: time('open_from'),
+  openUntil: time('open_until'),
+  // Provenance + idempotency for the holiday sync. source_key is
+  // `${holidayKey}:${year}` for holidays and the Friday ISO date for Shabbat;
+  // null on manual rows. Lets the sync rebuild its own rows without ever
+  // touching a manual one.
+  source: roundScheduleSourceEnum('source').notNull().default('manual'),
+  sourceKey: varchar('source_key', { length: 96 }),
   // Admin-facing label ("חנוכה", "שיפוצים") so the list stays readable.
   note: varchar('note', { length: 120 }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

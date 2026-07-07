@@ -126,6 +126,10 @@ export const deleteScheduleRule = async (db: AnyPgDatabase, id: string): Promise
 export interface ResolvedSchedule {
   windows: ScheduleWindow[];
   outside: 'free_play' | 'closed';
+  /** Free-play open/close bounds ("HH:MM"), or null for open-all-day. Only
+   *  meaningful when outside === 'free_play' (special hours / Friday early-close). */
+  openFrom: string | null;
+  openUntil: string | null;
   ruleId: string;
 }
 
@@ -167,7 +171,14 @@ export const resolveScheduleFromRules = (
     (a, b) => specificity(a) - specificity(b) || b.updatedAt.getTime() - a.updatedAt.getTime(),
   );
   const winner = matching[0]!;
-  return { windows: winner.windows, outside: winner.outside, ruleId: winner.id };
+  return {
+    windows: winner.windows,
+    outside: winner.outside,
+    // time columns come back as "HH:MM:SS"; normalize to "HH:MM".
+    openFrom: winner.openFrom ? winner.openFrom.slice(0, 5) : null,
+    openUntil: winner.openUntil ? winner.openUntil.slice(0, 5) : null,
+    ruleId: winner.id,
+  };
 };
 
 /**
