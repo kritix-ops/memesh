@@ -440,11 +440,21 @@ function MonthAccordion({
           cursor: 'pointer',
         }}
       >
-        <span style={{ fontSize: 13, fontWeight: 600, color: INK }}>
-          {month.label}
-          <span style={{ color: MUTED, fontWeight: 400, marginInlineStart: 8 }}>
-            {month.rules.length} ימים
-          </span>
+        {/* inline-flex puts the label and the count in separate boxes, so the
+            year's digits and the day-count digits can't merge under RTL bidi
+            ("ינואר 2026" + "5 ימים" was rendering as "ינואר 20265 ימים"). */}
+        <span
+          style={{
+            fontSize: 13,
+            fontWeight: 600,
+            color: INK,
+            display: 'inline-flex',
+            alignItems: 'baseline',
+            gap: 8,
+          }}
+        >
+          <span>{month.label}</span>
+          <span style={{ color: MUTED, fontWeight: 400 }}>{month.rules.length} ימים</span>
         </span>
         <span
           aria-hidden
