@@ -140,6 +140,31 @@ test('range: a free_play empty day is not closed', async () => {
   assert.equal(range[0]!.roundsRequired, false);
 });
 
+test("range: today drops rounds whose hours are over; a future day keeps them", async () => {
+  const db = await freshDb();
+  // 17:00 Israel (IDT) on 2026-07-01: the morning round has ended, the evening
+  // one hasn't. Both are daily, so tomorrow still offers both.
+  const now = new Date('2026-07-01T14:00:00Z');
+  const today = '2026-07-01';
+  const morning = await createRound(
+    db,
+    { label: 'm', displayName: 'Morning', startTime: '09:00', endTime: '11:00', daysActive: 127, defaultCapacity: 5 },
+    now,
+  );
+  const evening = await createRound(
+    db,
+    { label: 'e', displayName: 'Evening', startTime: '20:00', endTime: '22:00', daysActive: 127, defaultCapacity: 5 },
+    now,
+  );
+  if (!morning.ok || !evening.ok) throw new Error('round');
+
+  const range = await roundAvailabilityRange(db, today, 2, now);
+  const todayLabels = range[0]!.rounds.map((r) => r.label).sort();
+  const tomorrowLabels = range[1]!.rounds.map((r) => r.label).sort();
+  assert.deepEqual(todayLabels, ['Evening'], 'ended morning round is gone today');
+  assert.deepEqual(tomorrowLabels, ['Evening', 'Morning'], 'future day keeps both');
+});
+
 test('range: master switch off returns free-play days with no rounds', async () => {
   const db = await freshDb();
   await dailyRound(db);

@@ -12,7 +12,7 @@
 
 import { and, count, eq, gte, lte, sql } from 'drizzle-orm';
 import type { PgDatabase } from 'drizzle-orm/pg-core';
-import { addIsoDays } from './round-time';
+import { addIsoDays, isRoundEnded, venueTodayIso } from './round-time';
 import { getRoundSettings } from './round-settings';
 import { anyActiveRounds, type RoundAvailabilityRow } from './rounds';
 import { resolveScheduleFromRules, roundFitsWindows } from './rounds-schedule';
@@ -102,6 +102,11 @@ export const roundAvailabilityRange = async (
     .groupBy(bookings.roundInstanceId);
   const takenByInstance = new Map(takenRows.map((r) => [r.roundInstanceId, Number(r.n)]));
 
+  // Rounds whose hours are already over today can't be booked (Yanay
+  // 2026-07-07). Only the venue-today row is filtered — future days have no
+  // ended rounds, and the pickers never request past dates.
+  const todayIso = venueTodayIso(now);
+
   const rowsByDate = new Map<string, RoundAvailabilityRow[]>();
   for (const inst of instances) {
     const taken = takenByInstance.get(inst.id) ?? 0;
@@ -130,10 +135,15 @@ export const roundAvailabilityRange = async (
       roundsRequired = schedule.outside === 'closed';
     }
     dayRows.sort((a, b) => a.startTime.localeCompare(b.startTime));
+    // `closed`/`roundsRequired` are read BEFORE dropping ended rounds, so a
+    // today whose every round has passed reads as "no rounds available" (dot:
+    // none), not "the venue is closed".
     const closed = schedule !== null && schedule.outside === 'closed' && dayRows.length === 0;
     // Open/close hours only apply to a free-play (still sellable) day.
     const openFrom = schedule && schedule.outside === 'free_play' ? schedule.openFrom : null;
     const openUntil = schedule && schedule.outside === 'free_play' ? schedule.openUntil : null;
-    return { date, roundsRequired, closed, openFrom, openUntil, rounds: dayRows };
+    const rounds =
+      date === todayIso ? dayRows.filter((r) => !isRoundEnded(date, r.endTime, now)) : dayRows;
+    return { date, roundsRequired, closed, openFrom, openUntil, rounds };
   });
 };
