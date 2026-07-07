@@ -15,8 +15,19 @@ type AnyPgDatabase = PgDatabase<any, any, any>;
 
 export type SwapBookingInput = {
   bookingId: string;
-  customerId: string;
+  /**
+   * When set, the booking must belong to this customer or the swap is refused
+   * (`forbidden`). Omit for a staff/admin-initiated move (the floor relocating
+   * an early arrival), which acts on any customer's booking.
+   */
+  customerId?: string;
   targetRoundInstanceId: string;
+  /**
+   * Skip the "before the original round starts" (`too_late`) gate. Staff/admin
+   * override only — lets the floor move a late arrival to a later round. The
+   * customer route never sets it.
+   */
+  skipWindow?: boolean;
 };
 
 export type SwapBookingResult =
@@ -61,13 +72,18 @@ export const swapBooking = async (
       .for('update');
     const b = rows[0];
     if (!b) return { ok: false, error: 'not_found' as const };
-    if (b.customerId !== input.customerId) return { ok: false, error: 'forbidden' as const };
+    // Ownership is enforced only for customer-initiated swaps; a staff/admin
+    // move passes no customerId and may relocate any booking.
+    if (input.customerId !== undefined && b.customerId !== input.customerId) {
+      return { ok: false, error: 'forbidden' as const };
+    }
     if (b.status !== 'confirmed') return { ok: false, error: 'not_confirmed' as const };
     if (b.roundInstanceId === input.targetRoundInstanceId) {
       return { ok: false, error: 'same_round' as const };
     }
-    // Allowed only until the ORIGINAL round starts (super-brief §6.1).
-    if (!isBeforeRoundStart(b.date, hhmm(b.startTime), now)) {
+    // Customers may only move until the ORIGINAL round starts (super-brief
+    // §6.1). Staff/admin skip this so a late arrival can still be moved.
+    if (!input.skipWindow && !isBeforeRoundStart(b.date, hhmm(b.startTime), now)) {
       return { ok: false, error: 'too_late' as const };
     }
 

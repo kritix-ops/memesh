@@ -17,7 +17,17 @@ type AnyPgDatabase = PgDatabase<any, any, any>;
 
 export type CancelBookingInput = {
   bookingId: string;
-  customerId: string;
+  /**
+   * When set, the booking must belong to this customer or the cancel is
+   * refused (`forbidden`). Omit for an admin/staff-initiated removal, which
+   * acts on any customer's booking.
+   */
+  customerId?: string;
+  /**
+   * Skip the 24h cancellation-window (`too_late`) gate. Admin override only —
+   * the customer route never sets this, so customers stay bound to the window.
+   */
+  skipWindow?: boolean;
 };
 
 export type CancelBookingDeps = {
@@ -61,12 +71,21 @@ export const cancelBooking = async (
       .for('update');
     const b = rows[0];
     if (!b) return { ok: false, error: 'not_found' as const };
-    if (b.customerId !== input.customerId) return { ok: false, error: 'forbidden' as const };
+    // Ownership is enforced only for customer-initiated cancels; an admin/staff
+    // removal passes no customerId and may act on any booking.
+    if (input.customerId !== undefined && b.customerId !== input.customerId) {
+      return { ok: false, error: 'forbidden' as const };
+    }
     if (b.status !== 'confirmed') return { ok: false, error: 'not_confirmed' as const };
 
-    const roundSettings = await getRoundSettings(tx);
-    if (!isWithinCancelWindow(b.date, hhmm(b.startTime), roundSettings.cancellationWindowHours, now)) {
-      return { ok: false, error: 'too_late' as const };
+    // The cancellation window binds customers; an admin override skips it so a
+    // last-minute no-show / mistake can be removed. Money-safety is unchanged —
+    // a paid booking still refunds fail-closed below regardless of the window.
+    if (!input.skipWindow) {
+      const roundSettings = await getRoundSettings(tx);
+      if (!isWithinCancelWindow(b.date, hhmm(b.startTime), roundSettings.cancellationWindowHours, now)) {
+        return { ok: false, error: 'too_late' as const };
+      }
     }
 
     let refunded = false;

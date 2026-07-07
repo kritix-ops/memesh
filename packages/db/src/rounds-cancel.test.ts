@@ -172,6 +172,48 @@ test('cancelBooking on one of several punch bookings returns exactly one punch',
   }
 });
 
+test('cancelBooking as admin (no customerId) removes any booking and refunds', async () => {
+  const db = await freshDb();
+  const { bookingId } = await setup(db);
+  const card = await getCardSettings(db);
+  const calls: number[] = [];
+  const refund = async (_order: string, amount: number) => {
+    calls.push(amount);
+    return true;
+  };
+  // No customerId — the ownership gate is skipped for an admin removal.
+  const res = await cancelBooking(db, { bookingId }, { refund }, NOW);
+  assert.equal(res.ok, true);
+  if (!res.ok) return;
+  assert.equal(res.refunded, true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0], card.roundChildOverWalkingPriceIls);
+  const row = (await db.select().from(bookings).where(eq(bookings.id, bookingId)).limit(1))[0];
+  assert.equal(row!.status, 'cancelled');
+});
+
+test('cancelBooking with skipWindow removes past the cancel window (admin override)', async () => {
+  const db = await freshDb();
+  const { bookingId } = await setup(db);
+  const refund = async () => true;
+  // AFTER_START is past the window — a customer would get too_late; admin skips it.
+  const res = await cancelBooking(db, { bookingId, skipWindow: true }, { refund }, AFTER_START);
+  assert.equal(res.ok, true);
+  const row = (await db.select().from(bookings).where(eq(bookings.id, bookingId)).limit(1))[0];
+  assert.equal(row!.status, 'cancelled');
+});
+
+test('cancelBooking as admin still fails closed when the refund is not confirmed', async () => {
+  const db = await freshDb();
+  const { bookingId } = await setup(db);
+  const refund = async () => false;
+  const res = await cancelBooking(db, { bookingId, skipWindow: true }, { refund }, NOW);
+  assert.equal(res.ok, false);
+  if (!res.ok) assert.equal(res.error, 'refund_failed');
+  const row = (await db.select().from(bookings).where(eq(bookings.id, bookingId)).limit(1))[0];
+  assert.equal(row!.status, 'confirmed'); // money-safety holds for admin too
+});
+
 test('cancelBooking is not repeatable — a second cancel does not refund again', async () => {
   const db = await freshDb();
   const { bookingId, customerId } = await setup(db);

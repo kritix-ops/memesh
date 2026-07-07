@@ -37,6 +37,13 @@ export const roundSettings = pgTable('round_settings', {
   // a pointless "almost done" ping on the final round of the day.
   closingTime: time('closing_time').notNull().default('19:00:00'),
   skipLastRoundReminder: boolean('skip_last_round_reminder').notNull().default(true),
+  // Staff/admin walk-in adds may exceed a full round's capacity (Yanay
+  // 2026-07-07). Off → a full round refuses a walk-in. Default on.
+  allowOverCapacityWalkIn: boolean('allow_over_capacity_walk_in').notNull().default(true),
+  // Warn the cashier at the door when the scanned card's customer has an
+  // upcoming reserved round whose entry is already committed (Yanay
+  // 2026-07-07). Default on.
+  warnUpcomingReservationAtDoor: boolean('warn_upcoming_reservation_at_door').notNull().default(true),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 

@@ -122,6 +122,21 @@ export interface ScanLookupEntry {
   refundReason: string | null;
 }
 
+/** A future round this customer already has reserved (Yanay 2026-07-07). A
+ *  punch-card reservation already spent its entry, so the cashier is warned not
+ *  to let the card be burned down before the reserved date. */
+export interface ScanLookupUpcomingReservation {
+  bookingId: string;
+  roundInstanceId: string;
+  label: string;
+  /** YYYY-MM-DD */
+  date: string;
+  /** "HH:MM" */
+  startTime: string;
+  endTime: string;
+  source: 'paid' | 'punchcard' | 'gift' | 'manual';
+}
+
 export interface ScanLookupResponse {
   status: ScanLookupStatus;
   /**
@@ -134,6 +149,10 @@ export interface ScanLookupResponse {
   card: ScanLookupCard;
   customer: ScanLookupCustomer;
   entries: ScanLookupEntry[];
+  /** Empty when the venue setting warnUpcomingReservationAtDoor is off. Optional
+   *  so the staff app stays resilient to an older API that predates the field
+   *  (the two deploy as separate projects). */
+  upcomingReservations?: ScanLookupUpcomingReservation[];
 }
 
 export interface LookupByTokenOptions {

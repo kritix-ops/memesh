@@ -47,6 +47,12 @@ export function isBeforeRoundStart(dateIso: string, startTimeHhmm: string, now: 
   return roundStartWallMs(dateIso, startTimeHhmm) > venueWallMs(now);
 }
 
+/** True once the round's end time has passed — i.e. the round is over (venue
+ *  wall clock). Symmetric to isBeforeRoundStart, using the end time. */
+export function isRoundEnded(dateIso: string, endTimeHhmm: string, now: Date): boolean {
+  return roundStartWallMs(dateIso, endTimeHhmm) <= venueWallMs(now);
+}
+
 /** True while `now` is at least `windowHours` before the round's start (the cancel window). */
 export function isWithinCancelWindow(
   dateIso: string,

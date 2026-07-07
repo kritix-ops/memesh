@@ -261,6 +261,32 @@ test('roundAvailabilityForDate: excludes inactive rounds and never goes negative
   assert.equal(avail[0]!.available, 0, 'clamps at 0, never negative');
 });
 
+test('roundAvailabilityForDate: drops a round whose hours are already over today', async () => {
+  const db = await freshDb();
+  // 17:00 Israel (IDT) on TODAY_ISO: a 09:00–11:00 round has ended, a
+  // 20:00–22:00 one has not (Yanay 2026-07-07 — no booking a passed slot).
+  const now = new Date('2026-07-01T14:00:00Z');
+  const ended = await createRound(
+    db,
+    { ...baseInput, displayName: 'בוקר', startTime: '09:00', endTime: '11:00' },
+    now,
+  );
+  const live = await createRound(
+    db,
+    { ...baseInput, displayName: 'ערב', startTime: '20:00', endTime: '22:00' },
+    now,
+  );
+  assert.equal(ended.ok && live.ok, true);
+  if (!ended.ok || !live.ok) return;
+
+  const avail = await roundAvailabilityForDate(db, TODAY_ISO, now);
+  assert.deepEqual(
+    avail.map((r) => r.label),
+    ['ערב'],
+    'only the round still to come is offered',
+  );
+});
+
 test('listCustomerRoundBookings: confirmed upcoming only, owner-scoped', async () => {
   const db = await freshDb();
   const created = await createRound(db, baseInput, NOW);

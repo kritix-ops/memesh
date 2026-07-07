@@ -174,6 +174,32 @@ export function PunchConfirmModal({
       <div style={panelStyle} onClick={(e) => e.stopPropagation()}>
         {preview && <PreviewBlock preview={preview} remaining={remaining} lastEntry={lastEntry} />}
 
+        {preview && (preview.upcomingReservations?.length ?? 0) > 0 && (
+          <div
+            role="alert"
+            style={{
+              background: '#fff4e2',
+              color: '#8a5a12',
+              border: '1px solid #f0d9b8',
+              borderRadius: 10,
+              padding: '12px 14px',
+              fontSize: 13.5,
+              marginTop: 12,
+            }}
+          >
+            <div style={{ fontWeight: 700, marginBottom: 6 }}>⚠ ללקוח יש כבר סבב מוזמן</div>
+            {(preview.upcomingReservations ?? []).map((r) => (
+              <div key={r.bookingId} style={{ marginTop: 2 }}>
+                {r.label} · {r.date.slice(8, 10)}/{r.date.slice(5, 7)} בשעה {r.startTime}
+                {r.source === 'punchcard' && ' · כניסה כבר נוצלה מהכרטיסייה'}
+              </div>
+            ))}
+            <div style={{ marginTop: 6, fontSize: 12.5 }}>
+              שימו לב לא לנצל את כל הכניסות לפני התאריך המוזמן.
+            </div>
+          </div>
+        )}
+
         {showExpiringBadge && preview && (
           <div
             role="status"

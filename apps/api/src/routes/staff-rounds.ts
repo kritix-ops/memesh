@@ -1,19 +1,48 @@
 import {
+  addWalkInBooking,
+  cancelBooking,
   dashboardLiveRoundsForDate,
   dashboardLiveWaitlist,
   db,
   getDashboardSettings,
+  getRoundSettings,
   listCustomerRoundBookingsForDate,
   listRoundAttendees,
   lookupBookingForCheckin,
+  promoteWaitlist,
   setBookingArrival,
+  swapBooking,
   venueTodayIso,
 } from '@memesh/db';
 import { verifyBookingToken } from '@memesh/qr-engine';
-import type { FastifyPluginAsync } from 'fastify';
+import type { FastifyBaseLogger, FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { requireRoleHook } from '../lib/auth-guards.js';
+import { makeRoundRefund } from '../lib/round-refund.js';
+import { fireWaitlistOffer } from '../lib/waitlist-notify.js';
 import { envKeyResolver } from '../qr.js';
+
+// Offer a freed/vacated seat to the round's next waitlisted customer after a
+// staff removal or move. Never fails the caller — a promotion error is logged
+// and the hold-sweep cron retries. Mirrors rounds-booking.ts's helper so the
+// waitlist behaves identically no matter who freed the seat.
+const promoteFreedSeat = async (
+  roundInstanceId: string,
+  log: FastifyBaseLogger,
+): Promise<void> => {
+  try {
+    const res = await promoteWaitlist(db, roundInstanceId);
+    if (res.promoted) {
+      log.info(
+        { roundInstanceId, entryId: res.promoted.entryId },
+        '[staff rounds] waitlist promoted',
+      );
+      await fireWaitlistOffer(res.promoted, log);
+    }
+  } catch (err) {
+    log.error({ err, roundInstanceId }, '[staff rounds] waitlist promote failed (non-fatal)');
+  }
+};
 
 // Read-only rounds status for the shift floor (staff.memesh.co.il). Reuses the
 // same DB helpers as the admin live dashboard so occupancy is a single source
@@ -273,6 +302,138 @@ export const staffRoundsRoutes: FastifyPluginAsync = async (fastify) => {
         '[staff customer rounds] served',
       );
       return { date, bookings };
+    },
+  );
+
+  // Move a booking to a different round instance — the floor relocating an
+  // early/late arrival (Yanay 2026-07-07: booked 14:00, showed up at 08:00).
+  // Any staff role; acts on any customer's booking (no ownership check) and
+  // skips the customer's "before original start" gate. The target's capacity
+  // still applies — a full target is refused; use a walk-in for over-capacity.
+  const moveSchema = z.object({ targetRoundInstanceId: z.string().uuid() });
+  fastify.post(
+    '/staff/rounds/bookings/:bookingId/move',
+    { preHandler: requireRoleHook(...STAFF) },
+    async (request, reply) => {
+      const { bookingId } = request.params as { bookingId: string };
+      if (!UUID_RE.test(bookingId)) return reply.code(400).send({ error: 'invalid_id' });
+      const parsed = moveSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.code(400).send({ error: 'invalid_body', issues: parsed.error.issues });
+      }
+      const result = await swapBooking(
+        db,
+        { bookingId, targetRoundInstanceId: parsed.data.targetRoundInstanceId, skipWindow: true },
+        envKeyResolver,
+      );
+      if (!result.ok) {
+        const code =
+          result.error === 'not_found' || result.error === 'target_not_found' ? 404 : 409; // not_confirmed / same_round / target_closed / target_full
+        return reply.code(code).send({ error: result.error });
+      }
+      request.log.info(
+        { bookingId, to: parsed.data.targetRoundInstanceId, staffId: request.user?.id },
+        '[staff rounds move] done',
+      );
+      // The move freed a seat in the original round — offer it to its waitlist.
+      await promoteFreedSeat(result.vacatedRoundInstanceId, request.log);
+      return { bookingId: result.bookingId, barcodeToken: result.barcodeToken };
+    },
+  );
+
+  // Add a walk-in to a round from the floor, even when it's full (Yanay
+  // 2026-07-07). The booking is source='manual' so it stays visibly separate
+  // from the ones who registered. Over-capacity is gated by the venue setting
+  // allowOverCapacityWalkIn (default on). Any staff role.
+  const walkInSchema = z.object({
+    customerId: z.string().uuid(),
+    ticketType: z.enum(['child_under_walking', 'child_over_walking']).optional(),
+  });
+  fastify.post(
+    '/staff/rounds/:roundInstanceId/walk-in',
+    { preHandler: requireRoleHook(...STAFF) },
+    async (request, reply) => {
+      const { roundInstanceId } = request.params as { roundInstanceId: string };
+      if (!UUID_RE.test(roundInstanceId)) return reply.code(400).send({ error: 'invalid_id' });
+      const parsed = walkInSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.code(400).send({ error: 'invalid_body', issues: parsed.error.issues });
+      }
+      const settings = await getRoundSettings(db);
+      const result = await addWalkInBooking(
+        db,
+        {
+          roundInstanceId,
+          customerId: parsed.data.customerId,
+          allowOverCapacity: settings.allowOverCapacityWalkIn,
+          ...(parsed.data.ticketType ? { ticketType: parsed.data.ticketType } : {}),
+          ...(request.user ? { staffId: request.user.id } : {}),
+        },
+        envKeyResolver,
+      );
+      if (!result.ok) {
+        const code =
+          result.error === 'round_not_found' || result.error === 'customer_not_found' ? 404 : 409; // round_closed / round_full
+        return reply.code(code).send({ error: result.error });
+      }
+      request.log.info(
+        {
+          roundInstanceId,
+          customerId: parsed.data.customerId,
+          overCapacity: result.overCapacity,
+          staffId: request.user?.id,
+        },
+        '[staff rounds walk-in] added',
+      );
+      return {
+        bookingId: result.bookingId,
+        barcodeToken: result.barcodeToken,
+        bookingNumber: result.bookingNumber,
+        overCapacity: result.overCapacity,
+        taken: result.taken,
+        capacity: result.capacity,
+      };
+    },
+  );
+
+  // Remove a booking from a round (ADMIN only — it can move money). A paid
+  // booking is refunded fail-closed via WooCommerce (the seat is released only
+  // once the refund confirms); a punch-card booking returns the spent entry to
+  // the customer's card. The 24h cancel window is skipped — admin override.
+  fastify.post(
+    '/staff/rounds/bookings/:bookingId/cancel',
+    { preHandler: requireRoleHook('admin') },
+    async (request, reply) => {
+      const { bookingId } = request.params as { bookingId: string };
+      if (!UUID_RE.test(bookingId)) return reply.code(400).send({ error: 'invalid_id' });
+      const refund = makeRoundRefund(request.log);
+      const result = await cancelBooking(db, { bookingId, skipWindow: true }, { refund });
+      if (!result.ok) {
+        const code =
+          result.error === 'not_found'
+            ? 404
+            : result.error === 'refund_failed'
+              ? 502 // refund provider couldn't confirm — seat kept, nothing changed
+              : 409; // not_confirmed (already cancelled / used)
+        return reply.code(code).send({ error: result.error });
+      }
+      request.log.info(
+        {
+          bookingId,
+          staffId: request.user?.id,
+          refunded: result.refunded,
+          punchReturned: result.punchReturned,
+        },
+        '[staff rounds remove] done',
+      );
+      // The removal freed a seat — offer it to the round's waitlist.
+      await promoteFreedSeat(result.roundInstanceId, request.log);
+      return {
+        ok: true,
+        refunded: result.refunded,
+        punchReturned: result.punchReturned,
+        refundAmountIls: result.refundAmountIls,
+      };
     },
   );
 };

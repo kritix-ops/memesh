@@ -50,6 +50,8 @@ export function RoundSettingsSection() {
   const [offsets, setOffsets] = useState('30, 10');
   const [closing, setClosing] = useState('19:00');
   const [skipLast, setSkipLast] = useState(true);
+  const [allowOverCapacity, setAllowOverCapacity] = useState(true);
+  const [warnUpcoming, setWarnUpcoming] = useState(true);
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -64,6 +66,8 @@ export function RoundSettingsSection() {
     setOffsets(s.reminderOffsets.join(', '));
     setClosing(s.closingTime.slice(0, 5));
     setSkipLast(s.skipLastRoundReminder);
+    setAllowOverCapacity(s.allowOverCapacityWalkIn);
+    setWarnUpcoming(s.warnUpcomingReservationAtDoor);
   };
 
   useEffect(() => {
@@ -115,7 +119,9 @@ export function RoundSettingsSection() {
     activeEnd !== String(loaded.activeHoursEnd) ||
     offsetsChanged ||
     closing !== loaded.closingTime.slice(0, 5) ||
-    skipLast !== loaded.skipLastRoundReminder;
+    skipLast !== loaded.skipLastRoundReminder ||
+    allowOverCapacity !== loaded.allowOverCapacityWalkIn ||
+    warnUpcoming !== loaded.warnUpcomingReservationAtDoor;
 
   const submit = async () => {
     const patch: RoundSettingsPatch = {};
@@ -133,6 +139,10 @@ export function RoundSettingsSection() {
     if (offsetsChanged && offsetsOk) patch.reminderOffsets = parsedOffsets;
     if (closing !== loaded.closingTime.slice(0, 5) && closingOk) patch.closingTime = closing;
     if (skipLast !== loaded.skipLastRoundReminder) patch.skipLastRoundReminder = skipLast;
+    if (allowOverCapacity !== loaded.allowOverCapacityWalkIn)
+      patch.allowOverCapacityWalkIn = allowOverCapacity;
+    if (warnUpcoming !== loaded.warnUpcomingReservationAtDoor)
+      patch.warnUpcomingReservationAtDoor = warnUpcoming;
     if (Object.keys(patch).length === 0) return;
 
     setSubmitting(true);
@@ -238,6 +248,24 @@ export function RoundSettingsSection() {
           description="לא לשלוח תזכורת סיום לסבב האחרון של היום — המקום נסגר ממילא, אז זו הודעה מיותרת."
           checked={skipLast}
           onChange={setSkipLast}
+          disabled={submitting}
+        />
+
+        <div style={{ fontSize: 13.5, color: MUTED, fontWeight: 600, marginTop: 8 }}>
+          ניהול משתתפים בסבב
+        </div>
+        <BooleanField
+          label="הוספה ידנית מעל התפוסה"
+          description="לאפשר לצוות להוסיף משתתף לסבב גם כשהוא מלא. הנוספים מסומנים בנפרד מהנרשמים. כשמכובה — סבב מלא לא יקבל הוספה ידנית."
+          checked={allowOverCapacity}
+          onChange={setAllowOverCapacity}
+          disabled={submitting}
+        />
+        <BooleanField
+          label="התראה בקופה על הזמנה עתידית"
+          description="כשסורקים כרטיסייה בקופה, להציג התראה אם ללקוח יש כבר סבב עתידי שהוזמן — כדי שלא ינצל את כל הכניסות לפני התאריך."
+          checked={warnUpcoming}
+          onChange={setWarnUpcoming}
           disabled={submitting}
         />
       </div>

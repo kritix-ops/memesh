@@ -15,6 +15,10 @@ export interface RoundSettings {
   /** 'HH:MM:SS' from the DB time column. */
   closingTime: string;
   skipLastRoundReminder: boolean;
+  /** Staff/admin walk-ins may exceed a full round's capacity. */
+  allowOverCapacityWalkIn: boolean;
+  /** Warn the cashier at the door about the card's upcoming reserved rounds. */
+  warnUpcomingReservationAtDoor: boolean;
   updatedAt: string;
 }
 
@@ -32,6 +36,8 @@ export type RoundSettingsPatch = {
   reminderOffsets?: number[];
   closingTime?: string;
   skipLastRoundReminder?: boolean;
+  allowOverCapacityWalkIn?: boolean;
+  warnUpcomingReservationAtDoor?: boolean;
 };
 
 export interface RoundSettingsUpdateResponse {
