@@ -175,6 +175,48 @@ test('reuseActiveHold: a retry succeeds even when the round has since filled', a
   assert.equal(retry.holdId, first.holdId);
 });
 
+test('reuseActiveHold with holdKey: two children on one round get two seats; each line reuses on retry', async () => {
+  const db = await freshDb();
+  const { instId, customerId } = await setup(db, 3);
+
+  // Two siblings on the SAME round in one cart (Yanay 2026-07-07 multi-child).
+  // Distinct per-line keys must NOT collapse into one held seat — this is the
+  // oversell the reuse path would cause without a key.
+  const childA = await createHold(
+    db,
+    { roundInstanceId: instId, customerId, ...ticket, reuseActiveHold: true, holdKey: 'line-A' },
+    NOW,
+  );
+  const childB = await createHold(
+    db,
+    { roundInstanceId: instId, customerId, ...ticket, reuseActiveHold: true, holdKey: 'line-B' },
+    NOW,
+  );
+  assert.equal(childA.ok, true);
+  assert.equal(childB.ok, true);
+  if (!childA.ok || !childB.ok) return;
+  assert.equal(childB.reused, false, 'a different line is a different seat');
+  assert.notEqual(childB.holdId, childA.holdId);
+
+  let rows = await db.select().from(bookings).where(eq(bookings.roundInstanceId, instId));
+  assert.equal(rows.length, 2, 'two held rows, one per child');
+
+  // A payment retry re-fires each line with its own stable key → reuse, no leak.
+  const retryAt = new Date(NOW.getTime() + 2 * 60_000);
+  const retryA = await createHold(
+    db,
+    { roundInstanceId: instId, customerId, ...ticket, reuseActiveHold: true, holdKey: 'line-A' },
+    retryAt,
+  );
+  assert.equal(retryA.ok, true);
+  if (!retryA.ok) return;
+  assert.equal(retryA.reused, true);
+  assert.equal(retryA.holdId, childA.holdId, 'same line, same hold');
+
+  rows = await db.select().from(bookings).where(eq(bookings.roundInstanceId, instId));
+  assert.equal(rows.length, 2, 'still two rows after the retry — no leak');
+});
+
 test('releaseHold: owner frees the seat, non-owner is forbidden', async () => {
   const db = await freshDb();
   const { instId, customerId } = await setup(db, 1);

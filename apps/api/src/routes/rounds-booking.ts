@@ -81,6 +81,10 @@ const wcHoldSchema = z.object({
   roundInstanceId: z.string().uuid(),
   ticketType: z.enum(['child_under_walking', 'child_over_walking']),
   additionalCompanions: z.number().int().min(0).max(1).optional(),
+  // Per-line idempotency key (the cart line's memesh_uid): lets one cart hold
+  // several children on the same round without the reuse path collapsing them
+  // into one seat, while a payment retry still refreshes the same line's hold.
+  holdKey: z.string().min(1).max(64).optional(),
   customerHint: z.object({
     phone: phoneSchema,
     firstName: z.string().min(1).max(80),
@@ -337,6 +341,7 @@ export const roundsBookingRoutes: FastifyPluginAsync = async (fastify) => {
         ...(parsed.data.additionalCompanions !== undefined
           ? { additionalCompanions: parsed.data.additionalCompanions }
           : {}),
+        ...(parsed.data.holdKey !== undefined ? { holdKey: parsed.data.holdKey } : {}),
       });
       if (!result.ok) {
         const code = result.error === 'not_found' ? 404 : 409;
@@ -347,6 +352,7 @@ export const roundsBookingRoutes: FastifyPluginAsync = async (fastify) => {
           holdId: result.holdId,
           customerId: customer.id,
           roundInstanceId: parsed.data.roundInstanceId,
+          holdKey: parsed.data.holdKey ?? null,
           reused: result.reused,
         },
         '[rounds hold wc] created',
