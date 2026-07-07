@@ -31,6 +31,13 @@ export interface DayAvailability {
    * that merely have no rounds (no rule, or past the horizon) are NOT closed.
    */
   closed: boolean;
+  /**
+   * Free-play open/close bounds ("HH:MM") for a special-hours or Friday
+   * early-close day — the day stays sellable, these are for display. Null when
+   * the day is open all day (or closed / rounds-required).
+   */
+  openFrom: string | null;
+  openUntil: string | null;
   rounds: RoundAvailabilityRow[];
 }
 
@@ -49,7 +56,14 @@ export const roundAvailabilityRange = async (
   const systemOn = settings.roundsEnabled && (await anyActiveRounds(db));
   const dates = Array.from({ length: days }, (_, i) => addIsoDays(fromIso, i));
   if (!systemOn) {
-    return dates.map((date) => ({ date, roundsRequired: false, closed: false, rounds: [] }));
+    return dates.map((date) => ({
+      date,
+      roundsRequired: false,
+      closed: false,
+      openFrom: null,
+      openUntil: null,
+      rounds: [],
+    }));
   }
   const toIso = dates[dates.length - 1]!;
 
@@ -117,6 +131,9 @@ export const roundAvailabilityRange = async (
     }
     dayRows.sort((a, b) => a.startTime.localeCompare(b.startTime));
     const closed = schedule !== null && schedule.outside === 'closed' && dayRows.length === 0;
-    return { date, roundsRequired, closed, rounds: dayRows };
+    // Open/close hours only apply to a free-play (still sellable) day.
+    const openFrom = schedule && schedule.outside === 'free_play' ? schedule.openFrom : null;
+    const openUntil = schedule && schedule.outside === 'free_play' ? schedule.openUntil : null;
+    return { date, roundsRequired, closed, openFrom, openUntil, rounds: dayRows };
   });
 };

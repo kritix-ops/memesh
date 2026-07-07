@@ -13,6 +13,7 @@ import { customerAuthRoutes } from './routes/customer-auth.js';
 import { customersRoutes } from './routes/customers.js';
 import { debugQrRoutes } from './routes/debug-qr.js';
 import { giftClaimRoutes } from './routes/gift-claim.js';
+import { holidaysAdminRoutes } from './routes/holidays-admin.js';
 import { meRoutes } from './routes/me.js';
 import { punchRoutes } from './routes/punch.js';
 import { cronGiftExpireRoutes } from './routes/cron-gift-expire.js';
@@ -106,6 +107,7 @@ export const buildApp = async (): Promise<FastifyInstance> => {
   await fastify.register(staffRoundsRoutes);
   await fastify.register(rolePermissionsRoutes);
   await fastify.register(roundsAdminRoutes);
+  await fastify.register(holidaysAdminRoutes);
   await fastify.register(roundsBookingRoutes);
   await fastify.register(adminRoutes);
   await fastify.register(reportsRoutes);

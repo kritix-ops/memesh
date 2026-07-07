@@ -22,6 +22,7 @@ export * from './bookings';
 export * from './waitlist-entries';
 export * from './round-reminder-log';
 export * from './round-schedule-rules';
+export * from './holiday-policies';
 
 export * from './dashboard-settings';
 export * from './round-settings';

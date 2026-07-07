@@ -197,6 +197,13 @@
       "when": 1783254990000,
       "tag": "0027_round_instances_capacity_overridden",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1783407864561,
+      "tag": "0028_holiday_policies",
+      "breakpoints": true
     }
   ]
 }
