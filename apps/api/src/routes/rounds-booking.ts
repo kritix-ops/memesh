@@ -216,6 +216,10 @@ export const roundsBookingRoutes: FastifyPluginAsync = async (fastify) => {
           date: d.date,
           roundsRequired: d.roundsRequired,
           closed: d.closed,
+          // Special-hours / Friday early-close bounds ("HH:MM"), null when the
+          // day is open all day. The day stays sellable — these are for display.
+          openFrom: d.openFrom,
+          openUntil: d.openUntil,
           rounds: d.rounds.map((r) => ({
             roundInstanceId: r.roundInstanceId,
             label: r.label,

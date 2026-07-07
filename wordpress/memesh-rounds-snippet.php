@@ -340,6 +340,11 @@ add_action('wp_footer', function () {
                 timesEl.value = '';
                 var open = openRounds(day);
                 var optional = day.roundsRequired === false;
+                // Special hours / Friday early-close (holiday closures): the day
+                // stays open and sellable, we just surface the hours.
+                var hoursNote = (day.openFrom && day.openUntil)
+                    ? 'שעות היום: ' + day.openFrom + '–' + day.openUntil + '. '
+                    : '';
 
                 if (day.closed) {
                     setMsg('המקום סגור בתאריך זה — בחרו יום אחר.');
@@ -349,7 +354,7 @@ add_action('wp_footer', function () {
 
                 if (open.length === 0) {
                     if (optional) {
-                        setMsg('בתאריך זה הכניסה חופשית — אין צורך בבחירת סבב.', true);
+                        setMsg(hoursNote + 'בתאריך זה הכניסה חופשית — אין צורך בבחירת סבב.', true);
                         setCanBuy(true); // server-side validation lets off-dates through
                     } else {
                         setMsg('אין סבבים פנויים ביום זה — בחרו יום אחר.');
@@ -370,10 +375,10 @@ add_action('wp_footer', function () {
                     freeRow.appendChild(freeLabel);
                     freeRow.addEventListener('click', function () {
                         selectRound(freeRow, '', '');
-                        setMsg('בתאריך זה אפשר להיכנס חופשי או לשריין סבב — לבחירתכם.', true);
+                        setMsg(hoursNote + 'בתאריך זה אפשר להיכנס חופשי או לשריין סבב — לבחירתכם.', true);
                     });
                     roundsEl.appendChild(freeRow);
-                    setMsg('בתאריך זה אפשר להיכנס חופשי או לשריין סבב — לבחירתכם.', true);
+                    setMsg(hoursNote + 'בתאריך זה אפשר להיכנס חופשי או לשריין סבב — לבחירתכם.', true);
                     setCanBuy(true);
                 } else {
                     setMsg('בחרו סבב כדי להמשיך.');
