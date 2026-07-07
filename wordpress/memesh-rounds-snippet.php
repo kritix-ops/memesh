@@ -237,6 +237,7 @@ add_action('wp_footer', function () {
             var roundEl = root.querySelector('input[name="memesh_round_instance_id"]');
             var timesEl = root.querySelector('input[name="memesh_round_times"]');
             if (!stripEl || !dateEl) return;
+            console.info('[memesh picker] initPicker', { api: api, inForm: !!form });
 
             var dayCache = {};       // date → day, every fetch lands here
             var todayIso = null;     // venue today = first day of the initial fetch
@@ -525,10 +526,17 @@ add_action('wp_footer', function () {
 
             setCanBuy(false); // nothing valid until the strip loads and a day is picked
             // 31 days feed the strip; the calendar pages the rest of the window.
+            console.info('[memesh picker] loading availability strip', { api: api });
             fetch(api + '/rounds/availability-range?days=31')
-                .then(function (r) { return r.json(); })
+                .then(function (r) {
+                    if (!r.ok) throw new Error('HTTP ' + r.status);
+                    return r.json();
+                })
                 .then(function (data) {
                     var days = data.days || [];
+                    console.info('[memesh picker] strip loaded', {
+                        days: days.length, maxDate: data.maxDate || null,
+                    });
                     if (days.length === 0) {
                         setMsg('אין סבבים פנויים כרגע. נסו שוב מאוחר יותר.');
                         return;
@@ -544,18 +552,57 @@ add_action('wp_footer', function () {
                     if (calToggle) calToggle.style.display = '';
                     setSelectedDate(days[0].date); // today preselected, its rounds visible
                 })
-                .catch(function () {
+                .catch(function (err) {
+                    console.warn('[memesh picker] strip fetch failed', err);
                     setMsg('לא ניתן לטעון סבבים כרגע. רעננו את העמוד ונסו שוב.');
                 });
         }
 
+        // Track initialized roots in a WeakSet, not a DOM attribute: Elementor
+        // opens a popup by CLONING its content into a fresh visible node, and a
+        // DOM-attribute guard clones along with it — so we would skip the very
+        // node the customer sees and leave "טוען זמינות…" frozen. A WeakSet keys
+        // on object identity, so a clone is correctly seen as uninitialized.
+        var initedRoots = new WeakSet();
         function initAll() {
             var roots = document.querySelectorAll('[data-memesh-picker]');
+            var fresh = 0;
             for (var i = 0; i < roots.length; i += 1) {
-                if (roots[i].getAttribute('data-memesh-init')) continue;
-                roots[i].setAttribute('data-memesh-init', '1');
-                initPicker(roots[i]);
+                var root = roots[i];
+                if (initedRoots.has(root)) continue;
+                // Defer until the popup subtree is fully injected: Elementor may
+                // add the root a beat before its fields. The observer fires again
+                // when they land, so skipping now (without marking) is safe.
+                if (!root.querySelector('.memesh-strip') ||
+                    !root.querySelector('input[name="memesh_date"]')) continue;
+                initedRoots.add(root);
+                fresh += 1;
+                initPicker(root);
             }
+            if (fresh > 0) {
+                console.info('[memesh picker] init', { onPage: roots.length, newlyInitialized: fresh });
+            }
+        }
+
+        // The picker usually lives inside an Elementor popup, whose markup is
+        // injected (or cloned) into the DOM only when the popup opens — well
+        // after DOMContentLoaded, the one moment the old code scanned. A
+        // MutationObserver re-runs init whenever nodes are added, so the picker
+        // comes alive the instant the popup appears. Debounced to one pass per
+        // frame so a busy WP page never thrashes.
+        var scheduleQueued = false;
+        var raf = window.requestAnimationFrame
+            ? window.requestAnimationFrame.bind(window)
+            : function (cb) { return setTimeout(cb, 16); };
+        function scheduleInit() {
+            if (scheduleQueued) return;
+            scheduleQueued = true;
+            raf(function () { scheduleQueued = false; initAll(); });
+        }
+        if (typeof MutationObserver !== 'undefined') {
+            new MutationObserver(scheduleInit).observe(document.documentElement, {
+                childList: true, subtree: true,
+            });
         }
         if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initAll);
         else initAll();
@@ -569,7 +616,7 @@ add_action('wp_footer', function () {
 add_action('wp_head', function () {
     ?>
     <style>
-    .memesh-round-picker { margin: 18px 0; display: flex; flex-direction: column; gap: 12px; }
+    .memesh-round-picker { direction: rtl; margin: 18px 0; display: flex; flex-direction: column; gap: 12px; }
     .memesh-field-label { font-size: 14px; font-weight: 500; color: #333; }
     .memesh-round-msg { font-size: 13px; color: #a23a3a; min-height: 16px; }
 
@@ -640,6 +687,30 @@ add_action('wp_head', function () {
     }
     .memesh-round-bar-fill.is-scarce { background: #e7a33e; }
 
+    /* Paid-companion opt-in — a bordered card matching the day/round cards, with
+       the checkbox at the inline-start (right, in RTL) and the +₪12 price pinned
+       to the far inline-end of the header row. */
+    .memesh-companion-card {
+        border: 1.5px solid #e9e0d9; border-radius: 12px; background: #fff;
+        padding: 12px 14px;
+    }
+    .memesh-companion-label {
+        display: flex; align-items: flex-start; gap: 10px; margin: 0; cursor: pointer;
+    }
+    .memesh-companion-label input[type="checkbox"] {
+        flex: 0 0 auto; width: 18px; height: 18px; margin: 2px 0 0;
+        accent-color: #b9772a; cursor: pointer;
+    }
+    .memesh-companion-content {
+        flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px;
+    }
+    .memesh-companion-header {
+        display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+    }
+    .memesh-companion-header strong { font-size: 14px; font-weight: 700; color: #2d3436; }
+    .memesh-companion-price { font-size: 13px; font-weight: 700; color: #b9772a; white-space: nowrap; }
+    .memesh-companion-note { font-size: 12px; color: #636e72; line-height: 1.5; }
+
     /* Calendar button + month grid (Yanay 2026-07-05). */
     .memesh-cal-toggle {
         flex: 0 0 auto; min-width: 52px; padding: 8px 6px;
@@ -677,9 +748,12 @@ add_action('wp_head', function () {
     .memesh-cal-loading { text-align: center; color: #636e72; font-size: 12.5px; }
 
     /* The shortcode's own add-to-cart form (price-list popups). */
-    .memesh-shortcode-cart { display: flex; flex-direction: column; gap: 12px; margin: 0; }
+    .memesh-shortcode-cart { direction: rtl; display: flex; flex-direction: column; gap: 12px; margin: 0; }
+    /* Reserve inline-end room (the left edge in RTL) so the price never slides
+       under the Elementor popup close button, which sits in that corner. */
     .memesh-shortcode-head {
-        display: flex; justify-content: space-between; align-items: baseline; gap: 8px;
+        display: flex; justify-content: space-between; align-items: baseline;
+        gap: 8px; padding-inline-end: 44px;
     }
     .memesh-shortcode-title { font-size: 17px; font-weight: 700; color: #2d3436; }
     .memesh-shortcode-price { font-size: 16px; font-weight: 600; color: #a25a1c; white-space: nowrap; }
