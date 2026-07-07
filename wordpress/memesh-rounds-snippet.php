@@ -192,10 +192,18 @@ add_shortcode('memesh_round_picker', function ($atts) {
     $product = wc_get_product($product_id);
     if (!$product || !$product->is_purchasable()) return '';
     $rounds_on = memesh_rounds_enabled();
+    // The footer behavior script must print even when rounds are off (no picker
+    // renders): it also wires the AJAX add-to-cart on this form.
+    memesh_picker_script_needed(true);
 
     ob_start();
     ?>
-    <form class="cart memesh-shortcode-cart" action="<?php echo esc_url(get_permalink($product_id)); ?>" method="post">
+    <form class="cart memesh-shortcode-cart" method="post"
+          action="<?php echo esc_url(get_permalink($product_id)); ?>"
+          data-memesh-add
+          data-add-url="<?php echo esc_url(WC_AJAX::get_endpoint('memesh_add_to_cart')); ?>"
+          data-nonce="<?php echo esc_attr(wp_create_nonce('memesh_add_to_cart')); ?>"
+          data-checkout-url="<?php echo esc_url(wc_get_checkout_url()); ?>">
         <div class="memesh-shortcode-head">
             <span class="memesh-shortcode-title"><?php echo esc_html($product->get_name()); ?></span>
             <span class="memesh-shortcode-price"><?php echo wp_kses_post($product->get_price_html()); ?></span>
@@ -205,9 +213,64 @@ add_shortcode('memesh_round_picker', function ($atts) {
                 class="single_add_to_cart_button memesh-shortcode-buy" <?php echo $rounds_on ? 'disabled' : ''; ?>>
             הוספה לסל
         </button>
+        <!-- Shown in place after an AJAX add (Yanay 2026-07-07) — the shopper
+             stays in the popup instead of being thrown to the product page. -->
+        <div class="memesh-added" style="display:none">
+            <div class="memesh-added-title">✓ הכרטיס נוסף לסל</div>
+            <div class="memesh-added-round"></div>
+            <div class="memesh-added-actions">
+                <a class="memesh-added-checkout" href="<?php echo esc_url(wc_get_checkout_url()); ?>">מעבר לתשלום</a>
+                <button type="button" class="memesh-added-again">הוספת ילד/ה נוסף/ת</button>
+            </div>
+        </div>
     </form>
     <?php
     return ob_get_clean();
+});
+
+/**
+ * AJAX add-to-cart for the price-list popup (Yanay 2026-07-07). The full-page
+ * POST used to land shoppers on WordPress's product template — and that page's
+ * native button let a second ticket be added with no round chosen (בלי שיבוץ).
+ * The popup posts here instead: the SAME WC()->cart->add_to_cart() runs, so every
+ * existing hook (validation, add_cart_item_data, the companion auto-add) fires
+ * off $_POST exactly as before, and the shopper stays put. Reachable for guests
+ * with the cart session loaded — the wc-ajax front controller serves both.
+ */
+add_action('wc_ajax_memesh_add_to_cart', function () {
+    if (!check_ajax_referer('memesh_add_to_cart', 'memesh_nonce', false)) {
+        wp_send_json_error(['message' => 'פג תוקף הדף. רעננו את העמוד ונסו שוב.'], 400);
+    }
+    $product_id = isset($_POST['product_id']) ? (int) $_POST['product_id'] : 0;
+    if (!memesh_is_round_product($product_id)) {
+        wp_send_json_error(['message' => 'מוצר לא תקין.'], 400);
+    }
+
+    // add_to_cart runs woocommerce_add_to_cart_validation + add_cart_item_data,
+    // both reading $_POST['memesh_*'] — already on this request from the form.
+    $key = WC()->cart->add_to_cart($product_id, 1);
+    if (!$key) {
+        // The validation hook queued the reason as an error notice; show it in
+        // the popup instead of on a page the shopper never reaches.
+        $errors = wc_get_notices('error');
+        wc_clear_notices();
+        $first = $errors[0] ?? null;
+        $message = is_array($first) ? ($first['notice'] ?? '') : (is_string($first) ? $first : '');
+        $message = $message !== '' ? wp_strip_all_tags($message) : 'לא ניתן להוסיף לסל. בדקו את הבחירה ונסו שוב.';
+        error_log('[memesh cart] add_to_cart rejected for product ' . $product_id . ': ' . $message);
+        wp_send_json_error(['message' => $message], 200);
+    }
+
+    // Drop the queued "added"/upsell notices so they don't surface on the next
+    // page load — the popup shows its own confirmation.
+    wc_clear_notices();
+    $item  = WC()->cart->get_cart_item($key);
+    $round = $item ? memesh_round_display($item) : '';
+    error_log('[memesh cart] added product ' . $product_id . ' key ' . $key);
+    wp_send_json_success([
+        'count' => WC()->cart->get_cart_contents_count(),
+        'round' => $round,
+    ]);
 });
 
 /** Picker behavior — printed once per page, initializes every picker root. */
@@ -575,12 +638,83 @@ add_action('wp_footer', function () {
                 });
         }
 
+        // AJAX add-to-cart for the price-list popup form (Yanay 2026-07-07):
+        // submit adds the ticket in place and swaps the picker for an in-popup
+        // confirmation, so the shopper is never thrown to the WordPress product
+        // page. The form keeps its product-page `action` as a no-JS fallback.
+        function wireCartForm(form) {
+            var addUrl = form.getAttribute('data-add-url');
+            var nonce = form.getAttribute('data-nonce');
+            var btn = form.querySelector('.single_add_to_cart_button');
+            var added = form.querySelector('.memesh-added');
+            var addedRound = added && added.querySelector('.memesh-added-round');
+            var againBtn = added && added.querySelector('.memesh-added-again');
+            var picker = form.querySelector('[data-memesh-picker]');
+            var msgEl = form.querySelector('.memesh-round-msg');
+            if (!addUrl || !btn) return;
+
+            function showError(text) {
+                if (msgEl) { msgEl.textContent = text; msgEl.style.color = '#a23a3a'; }
+            }
+
+            form.addEventListener('submit', function (e) {
+                e.preventDefault();
+                var productId = btn.value;
+                var fd = new FormData(form); // carries the memesh_* hidden inputs + companion box
+                fd.append('product_id', productId);
+                fd.append('memesh_nonce', nonce);
+                var label = btn.textContent;
+                btn.disabled = true;
+                btn.textContent = 'מוסיף…';
+                console.info('[memesh cart] ajax add', { productId: productId });
+                fetch(addUrl, { method: 'POST', body: fd, credentials: 'same-origin' })
+                    .then(function (r) { return r.json(); })
+                    .then(function (res) {
+                        btn.textContent = label;
+                        if (res && res.success) {
+                            console.info('[memesh cart] added', res.data);
+                            if (addedRound) addedRound.textContent =
+                                res.data && res.data.round ? 'סבב ' + res.data.round : '';
+                            if (picker) picker.style.display = 'none';
+                            btn.style.display = 'none';
+                            if (added) added.style.display = 'flex';
+                            // Let the theme's mini-cart refresh its count/fragments.
+                            if (window.jQuery) window.jQuery(document.body).trigger('wc_fragment_refresh');
+                        } else {
+                            var m = (res && res.data && res.data.message) || 'לא ניתן להוסיף לסל. נסו שוב.';
+                            console.warn('[memesh cart] add rejected', m);
+                            showError(m);
+                            btn.disabled = false;
+                        }
+                    })
+                    .catch(function (err) {
+                        console.warn('[memesh cart] add failed', err);
+                        btn.textContent = label;
+                        btn.disabled = false;
+                        showError('לא ניתן להוסיף לסל כרגע. נסו שוב.');
+                    });
+            });
+
+            // "Add another child": restore the picker + button. The last valid
+            // selection stays put, so twins on the same round go through with one
+            // more tap; changing the day re-runs the picker's own gating.
+            if (againBtn) {
+                againBtn.addEventListener('click', function () {
+                    if (added) added.style.display = 'none';
+                    btn.style.display = '';
+                    btn.disabled = false;
+                    if (picker) picker.style.display = '';
+                });
+            }
+        }
+
         // Track initialized roots in a WeakSet, not a DOM attribute: Elementor
         // opens a popup by CLONING its content into a fresh visible node, and a
         // DOM-attribute guard clones along with it — so we would skip the very
         // node the customer sees and leave "טוען זמינות…" frozen. A WeakSet keys
         // on object identity, so a clone is correctly seen as uninitialized.
         var initedRoots = new WeakSet();
+        var wiredForms = new WeakSet();
         function initAll() {
             var roots = document.querySelectorAll('[data-memesh-picker]');
             var fresh = 0;
@@ -595,6 +729,14 @@ add_action('wp_footer', function () {
                 initedRoots.add(root);
                 fresh += 1;
                 initPicker(root);
+            }
+            // Wire every price-list popup form once (Elementor clones get their
+            // own identity, so a cloned popup re-wires correctly).
+            var forms = document.querySelectorAll('form[data-memesh-add]');
+            for (var j = 0; j < forms.length; j += 1) {
+                if (wiredForms.has(forms[j])) continue;
+                wiredForms.add(forms[j]);
+                wireCartForm(forms[j]);
             }
             if (fresh > 0) {
                 console.info('[memesh picker] init', { onPage: roots.length, newlyInitialized: fresh });
@@ -780,6 +922,23 @@ add_action('wp_head', function () {
     }
     .memesh-shortcode-buy:hover { background: #9a7449; }
     .memesh-shortcode-buy:disabled { opacity: 0.5; cursor: default; }
+
+    /* In-popup confirmation after an AJAX add (Yanay 2026-07-07). */
+    .memesh-added { direction: rtl; flex-direction: column; gap: 10px; text-align: center; padding: 6px 0; }
+    .memesh-added-title { font-size: 16px; font-weight: 700; color: #5b7a34; }
+    .memesh-added-round { font-size: 13px; color: #636e72; min-height: 16px; }
+    .memesh-added-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+    .memesh-added-checkout {
+        display: block; background: #b18a5a; color: #fff !important; border-radius: 8px;
+        padding: 12px 18px; font-size: 15px; font-weight: 600; text-decoration: none;
+    }
+    .memesh-added-checkout:hover { background: #9a7449; }
+    .memesh-added-again {
+        appearance: none; -webkit-appearance: none; font-family: inherit; cursor: pointer;
+        background: #fff; color: #b9772a; border: 1.5px solid #e9e0d9; border-radius: 8px;
+        padding: 11px 18px; font-size: 14px; font-weight: 600;
+    }
+    .memesh-added-again:hover { background: #fdf3e3; }
 
     .woocommerce-message .memesh-upsell,
     .woocommerce-info    .memesh-upsell,
@@ -1026,9 +1185,11 @@ add_action('woocommerce_checkout_create_order_line_item', function ($item, $cart
     ]);
 
     if (is_wp_error($res)) {
+        error_log('[memesh hold] request to API failed: ' . $res->get_error_message());
         throw new Exception('לא ניתן לאשר מקום כרגע. נסו שוב.');
     }
     $code = wp_remote_retrieve_response_code($res);
+    $raw  = wp_remote_retrieve_body($res);
     if ($code === 409) {
         // Name the round so a parent with several children knows exactly which
         // line to fix. The whole checkout aborts here before the order exists,
@@ -1039,10 +1200,16 @@ add_action('woocommerce_checkout_create_order_line_item', function ($item, $cart
         ));
     }
     if ($code !== 200) {
+        // 401 wrong/absent shared secret, 400 bad body, 404 round gone, 503 API
+        // missing its own secret — the response body names which. Logged so the
+        // WP debug log is self-diagnosing instead of showing only the customer
+        // sentence. Never logs the secret (headers are not included here).
+        error_log(sprintf('[memesh hold] API returned HTTP %d: %s', $code, $raw));
         throw new Exception('לא ניתן לאשר מקום כרגע. נסו שוב.');
     }
-    $data = json_decode(wp_remote_retrieve_body($res), true);
+    $data = json_decode($raw, true);
     if (empty($data['holdId'])) {
+        error_log('[memesh hold] HTTP 200 but no holdId in body: ' . $raw);
         throw new Exception('לא ניתן לאשר מקום כרגע. נסו שוב.');
     }
 
