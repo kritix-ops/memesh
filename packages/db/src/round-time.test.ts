@@ -4,6 +4,7 @@ import {
   addIsoDays,
   isBeforeRoundStart,
   isoWeekday,
+  isRoundEnded,
   isWithinCancelWindow,
   venueStartOfDay,
   venueTodayIso,
@@ -16,6 +17,14 @@ test('isBeforeRoundStart: true before the venue-local start, false after', () =>
   // Round at 2026-07-01 16:00 Israel.
   assert.equal(isBeforeRoundStart('2026-07-01', '16:00', new Date('2026-07-01T07:00:00Z')), true); // 10:00 IDT
   assert.equal(isBeforeRoundStart('2026-07-01', '16:00', new Date('2026-07-01T14:00:00Z')), false); // 17:00 IDT
+});
+
+test('isRoundEnded: false before the venue-local end, true at/after it', () => {
+  // Round ending 2026-07-01 12:00 Israel (IDT, UTC+3).
+  assert.equal(isRoundEnded('2026-07-01', '12:00', new Date('2026-07-01T07:00:00Z')), false); // 10:00 IDT
+  assert.equal(isRoundEnded('2026-07-01', '12:00', new Date('2026-07-01T08:59:00Z')), false); // 11:59 IDT
+  assert.equal(isRoundEnded('2026-07-01', '12:00', new Date('2026-07-01T09:00:00Z')), true); // 12:00 IDT, exact
+  assert.equal(isRoundEnded('2026-07-01', '12:00', new Date('2026-07-01T14:00:00Z')), true); // 17:00 IDT
 });
 
 test('isWithinCancelWindow: true beyond the window, false inside it', () => {

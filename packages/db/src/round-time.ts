@@ -47,6 +47,16 @@ export function isBeforeRoundStart(dateIso: string, startTimeHhmm: string, now: 
   return roundStartWallMs(dateIso, startTimeHhmm) > venueWallMs(now);
 }
 
+/**
+ * True once a round has finished — its end time has passed in venue wall time.
+ * Availability reads drop ended rounds for the current day so a slot whose hours
+ * are already over can't be booked (Yanay 2026-07-07). A round in progress
+ * (started, not ended) is NOT ended, so same-window walk-ins still go through.
+ */
+export function isRoundEnded(dateIso: string, endTimeHhmm: string, now: Date): boolean {
+  return roundStartWallMs(dateIso, endTimeHhmm) <= venueWallMs(now);
+}
+
 /** True while `now` is at least `windowHours` before the round's start (the cancel window). */
 export function isWithinCancelWindow(
   dateIso: string,
