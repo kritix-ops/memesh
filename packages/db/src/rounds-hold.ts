@@ -32,6 +32,16 @@ export type CreateHoldInput = {
    * leave it unset.
    */
   reuseActiveHold?: boolean;
+  /**
+   * Per-line idempotency key for the WC path (the cart line's memesh_uid).
+   * Once the cart can hold several children on the SAME round (Yanay
+   * 2026-07-07), reuse keyed only on customer+round+ticketType would collapse
+   * two siblings into one seat. With a key, reuse matches the same cart line
+   * across payment retries only — two different children get two holds. When
+   * omitted (customer-app path, or a WC snippet not yet sending it) reuse falls
+   * back to the customer+round+ticketType match.
+   */
+  holdKey?: string;
 };
 
 export type CreateHoldResult =
@@ -96,6 +106,10 @@ export const createHold = async (
             eq(bookings.ticketType, input.ticketType),
             eq(bookings.status, 'held'),
             sql`${bookings.holdExpiresAt} > ${now}`,
+            // Scope reuse to this exact cart line when a key is supplied, so two
+            // children on one round don't share a seat. `and` drops undefined,
+            // so the legacy/no-key caller keeps the broader match.
+            input.holdKey !== undefined ? eq(bookings.holdKey, input.holdKey) : undefined,
           ),
         )
         .limit(1)
@@ -139,6 +153,7 @@ export const createHold = async (
         additionalCompanions: input.additionalCompanions ?? 0,
         source: input.source ?? 'paid',
         status: 'held',
+        holdKey: input.holdKey ?? null,
         // The ticket's manual door fallback, assigned at birth so it never
         // changes across hold → confirmed → used.
         bookingNumber: await allocateBookingNumber(tx, now),

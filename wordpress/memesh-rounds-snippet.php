@@ -92,6 +92,23 @@ add_filter('woocommerce_is_sold_individually', function ($sold, $product) {
     return memesh_is_round_product($product->get_id()) ? true : $sold;
 }, 10, 2);
 
+/**
+ * Lock the quantity in the CART to a fixed 1 for entry tickets and the
+ * companion line (Yanay 2026-07-07). sold_individually already hides the
+ * stepper in a stock cart, but themes and quantity plugins render their own
+ * +/- controls that ignore it — a bumped quantity is a paid seat with no round
+ * and no hold. Returning plain text replaces the input entirely, so there is
+ * nothing to click; extra children are added one line at a time from the
+ * product page, never by raising a line's quantity.
+ */
+add_filter('woocommerce_cart_item_quantity', function ($html, $cart_item_key, $cart_item) {
+    $pid = isset($cart_item['product_id']) ? (int) $cart_item['product_id'] : 0;
+    if (memesh_is_round_product($pid) || $pid === MEMESH_COMPANION_PRODUCT_ID) {
+        return '1';
+    }
+    return $html;
+}, 10, 3);
+
 /** Set/read whether any picker rendered on this page — the behavior script
  *  prints once in wp_footer only when at least one did. */
 function memesh_picker_script_needed($set = null) {
@@ -802,6 +819,10 @@ add_filter('woocommerce_add_to_cart_validation', function ($passed, $product_id)
         }
     }
     if ($existing) {
+        // A second entry ticket is allowed (Yanay 2026-07-07 — book several
+        // children in one order, each its own line via memesh_uid). We keep the
+        // punch-card note as an informational upsell but no longer BLOCK the
+        // add, so two same-age kids on the same or different dates go through.
         $punch_url = get_permalink(MEMESH_PUNCH_CARD_PRODUCT_ID);
         $msg  = '<div class="memesh-upsell">';
         $msg .= '<span class="memesh-upsell-title">מתכננים לבוא יותר מפעם אחת?</span>';
@@ -812,8 +833,6 @@ add_filter('woocommerce_add_to_cart_validation', function ($passed, $product_id)
         }
         $msg .= '</div>';
         wc_add_notice($msg, 'notice');
-
-        if ($existing === (int) $product_id) return false;
     }
     return $passed;
 }, 10, 2);
@@ -832,6 +851,13 @@ function memesh_round_display($cart_item) {
 /** Carry the choices into the cart item (only when a round was actually chosen). */
 add_filter('woocommerce_add_cart_item_data', function ($data, $product_id) {
     if (!memesh_is_round_product($product_id)) return $data;
+    // One child per line: a unique token per add gives every pick its own cart
+    // line, so WooCommerce never merges two children into quantity 2 (Yanay
+    // 2026-07-07 — several children, possibly different dates, in one order).
+    // It is also the oversell guard: one line means exactly one held seat at
+    // checkout. Stamped on every entry ticket, including free-play/off-date
+    // ones (which return early below), so two free-day kids also split cleanly.
+    $data['memesh_uid'] = wp_generate_uuid4();
     if (empty($_POST['memesh_round_instance_id'])) return $data; // plain-product / off-date mode
     $data['memesh_round_instance_id'] = sanitize_text_field($_POST['memesh_round_instance_id']);
     $data['memesh_date']              = sanitize_text_field($_POST['memesh_date']);
@@ -876,6 +902,21 @@ add_action('woocommerce_add_to_cart', function ($cart_item_key, $product_id, $qt
     WC()->cart->add_to_cart(MEMESH_COMPANION_PRODUCT_ID, 1, 0, [], ['memesh_companion_of' => $cart_item_key]);
     memesh_companion_adding(false);
 }, 10, 6);
+
+// After a child is added the shopper returns to the product page, so a short
+// note makes the "add another child" option obvious (Yanay 2026-07-07). Only
+// on the FIRST entry ticket — from the second on, the punch-card upsell already
+// signals more can be added, so we stay quiet and avoid stacking notices. Fires
+// only for entry tickets, so the auto-added companion line never triggers it.
+add_action('woocommerce_add_to_cart', function ($cart_item_key, $product_id) {
+    if (!memesh_is_round_product($product_id)) return;
+    $tickets = 0;
+    foreach (WC()->cart->get_cart() as $item) {
+        if (memesh_is_round_product($item['product_id'])) $tickets += 1;
+    }
+    if ($tickets > 1) return;
+    wc_add_notice('הכרטיס נוסף לסל. אפשר להוסיף עוד ילד/ה — גם בתאריך אחר — או לעבור לתשלום.', 'notice');
+}, 20, 2);
 
 // Keep the pair honest in both directions: removing the ticket removes its
 // companion line; removing the companion line stops the ticket from
@@ -940,6 +981,15 @@ add_filter('woocommerce_cart_item_name', function ($name, $cart_item) {
 add_action('woocommerce_checkout_create_order_line_item', function ($item, $cart_item_key, $values, $order) {
     if (empty($values['memesh_round_instance_id'])) return;
 
+    // One paid seat per child. Every entry ticket is its own cart line
+    // (memesh_uid) with quantity locked to 1, so a line should never carry more
+    // than one seat. The hold below reserves exactly one seat per call, so if
+    // any path ever inflated the quantity we refuse rather than charge for
+    // seats we did not reserve.
+    if ((int) ($values['quantity'] ?? 1) > 1) {
+        throw new Exception('כרטיס כניסה לסבב הוא ליחיד/ה — הוסיפו כל ילד/ה בשורה נפרדת.');
+    }
+
     $phone = $order->get_billing_phone();
     $first = $order->get_billing_first_name();
     $last  = $order->get_billing_last_name();
@@ -959,6 +1009,13 @@ add_action('woocommerce_checkout_create_order_line_item', function ($item, $cart
             'email'     => $email ?: null,
         ],
     ];
+    // Per-line idempotency key so two children on the SAME round don't collapse
+    // into one held seat (Yanay 2026-07-07). The uid is stable across payment
+    // retries (the cart line persists), so a retry still refreshes this line's
+    // own hold instead of leaking a second seat.
+    if (!empty($values['memesh_uid'])) {
+        $body['holdKey'] = $values['memesh_uid'];
+    }
     $res = wp_remote_post(MEMESH_API_BASE . '/rounds/hold/wc', [
         'headers' => [
             'Authorization' => 'Bearer ' . MEMESH_SHARED_KEY,
@@ -973,7 +1030,13 @@ add_action('woocommerce_checkout_create_order_line_item', function ($item, $cart
     }
     $code = wp_remote_retrieve_response_code($res);
     if ($code === 409) {
-        throw new Exception('הסבב התמלא זה עתה. אנא בחרו סבב אחר.');
+        // Name the round so a parent with several children knows exactly which
+        // line to fix. The whole checkout aborts here before the order exists,
+        // so nothing is charged.
+        throw new Exception(sprintf(
+            'הסבב שנבחר (%s) התמלא זה עתה. הסירו אותו מהסל ובחרו סבב אחר.',
+            memesh_round_display($values)
+        ));
     }
     if ($code !== 200) {
         throw new Exception('לא ניתן לאשר מקום כרגע. נסו שוב.');

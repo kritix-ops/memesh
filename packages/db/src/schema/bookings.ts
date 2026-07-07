@@ -80,6 +80,14 @@ export const bookings = pgTable(
     // Matches the punch_cards.wc_order_id shape (varchar not integer) so
     // reports can join on a single column type.
     wcOrderId: varchar('wc_order_id', { length: 64 }),
+    // Idempotency key for the WooCommerce checkout hold (super-brief §4.2).
+    // WooCommerce re-creates order line items on every checkout attempt, and a
+    // single cart can now carry several children on the SAME round (Yanay
+    // 2026-07-07). The reuse match keys on this per-line token (the cart line's
+    // memesh_uid), so a payment retry refreshes that line's own hold while two
+    // different children on one round each get their own seat. Null on every
+    // non-WC path.
+    holdKey: varchar('hold_key', { length: 64 }),
     // Set when source = 'punchcard' — points to the card that paid for
     // this booking, used on cancellation to refund the punch.
     punchCardId: uuid('punch_card_id').references(() => punchCards.id),
