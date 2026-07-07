@@ -761,7 +761,7 @@ function Cards() {
   }, [detailFor]);
 
   const reload = async () => {
-    const res = await listCardsForAdmin({ status, ...(debouncedQ && { q: debouncedQ }) });
+    const res = await listCardsForAdmin({ status, limit: 200, ...(debouncedQ && { q: debouncedQ }) });
     if (res.ok) setRows(res.data.cards);
     else setError(res.error);
   };
@@ -773,6 +773,7 @@ function Cards() {
     (async () => {
       const res = await listCardsForAdmin({
         status,
+        limit: 200,
         ...(debouncedQ && { q: debouncedQ }),
       });
       if (cancelled) return;
@@ -883,7 +884,14 @@ function Cards() {
           flexWrap: 'wrap',
         }}
       >
-        <div style={{ fontSize: 18, fontWeight: 600 }}>ניהול כרטיסיות</div>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+          <div style={{ fontSize: 18, fontWeight: 600 }}>ניהול כרטיסיות</div>
+          {rows && (
+            <span style={{ fontSize: 13.5, color: MUTED, fontWeight: 600 }}>
+              {rows.length} כרטיסיות{q.trim() ? ' · תוצאות חיפוש' : ''}
+            </span>
+          )}
+        </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           {filters.map((f) => {
             const on = status === f.k;

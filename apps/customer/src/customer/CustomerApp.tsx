@@ -1855,6 +1855,25 @@ function RoundBookingCard({
         {booking.status === 'used' ? ' · נוצל' : ''}
       </div>
 
+      {booking.source === 'punchcard' && booking.status === 'confirmed' && (
+        <div
+          style={{
+            width: '100%',
+            fontSize: 12.5,
+            color: '#8a5a12',
+            background: '#fff4e2',
+            border: '1px solid #f0d9b8',
+            borderRadius: 10,
+            padding: '8px 12px',
+            textAlign: 'center',
+            lineHeight: 1.5,
+          }}
+        >
+          כניסה אחת כבר נוצלה מהכרטיסייה עבור ההזמנה הזו והיא שמורה לך לתאריך זה. שימו לב לא לנצל
+          את כל הכניסות לפני כן.
+        </div>
+      )}
+
       {booking.companionPending && booking.status === 'confirmed' && (
         <div
           style={{

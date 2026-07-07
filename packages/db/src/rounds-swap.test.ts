@@ -101,3 +101,24 @@ test('swapBooking rejects a swap after the original round has started', async ()
   assert.equal(res.ok, false);
   if (!res.ok) assert.equal(res.error, 'too_late');
 });
+
+test('swapBooking as staff (no customerId) moves any customer booking', async () => {
+  const db = await freshDb();
+  const { bookingId, instB } = await setup(db);
+  // No customerId — the staff/admin floor move skips the ownership gate.
+  const res = await swapBooking(db, { bookingId, targetRoundInstanceId: instB }, resolver, NOW);
+  assert.equal(res.ok, true);
+  if (!res.ok) return;
+  const row = (await db.select().from(bookings).where(eq(bookings.id, bookingId)).limit(1))[0];
+  assert.equal(row!.roundInstanceId, instB);
+});
+
+test('swapBooking with skipWindow moves a late arrival past the original start', async () => {
+  const db = await freshDb();
+  const { bookingId, instB } = await setup(db);
+  const res = await swapBooking(db, { bookingId, targetRoundInstanceId: instB, skipWindow: true }, resolver, AFTER_FUTURE);
+  assert.equal(res.ok, true);
+  if (!res.ok) return;
+  const row = (await db.select().from(bookings).where(eq(bookings.id, bookingId)).limit(1))[0];
+  assert.equal(row!.roundInstanceId, instB);
+});

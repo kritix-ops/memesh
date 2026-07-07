@@ -6,11 +6,14 @@ import {
   monthLabelHe,
   monthOfIso,
 } from '@memesh/web-shared';
-import { type CSSProperties, useCallback, useEffect, useState } from 'react';
+import { type CSSProperties, useCallback, useEffect, useRef, useState } from 'react';
+import { createCustomer, searchCustomers, type Customer } from './lib/api/customers';
 import {
+  addWalkIn,
   getRoundAttendees,
   getRoundAvailabilityRange,
   getStaffRounds,
+  moveBooking,
   setBookingArrival,
   type RoundAttendee,
   type StaffDayAvailability,
@@ -647,6 +650,7 @@ export function RoundsView() {
                 <RoundStatusCard
                   key={round.roundInstanceId}
                   round={round}
+                  roundsToday={data.rounds}
                   warnPct={data.settings.capacityWarningPct}
                   dangerPct={data.settings.capacityDangerPct}
                   waitingCount={waiting}
@@ -663,6 +667,7 @@ export function RoundsView() {
 
 function RoundStatusCard({
   round,
+  roundsToday,
   warnPct,
   dangerPct,
   waitingCount,
@@ -670,10 +675,12 @@ function RoundStatusCard({
   onArrivalChanged,
 }: {
   round: StaffRoundsRound;
+  /** All of the day's rounds — the move-target picker lists the other open ones. */
+  roundsToday: StaffRoundsRound[];
   warnPct: number;
   dangerPct: number;
   waitingCount: number;
-  /** Arrival controls only make sense when the page shows today. */
+  /** Arrival + move + walk-in controls only make sense when the page shows today. */
   canMark: boolean;
   onArrivalChanged: () => void;
 }) {
@@ -782,9 +789,10 @@ function RoundStatusCard({
         {action.text}
       </div>
 
-      {round.bookedCount > 0 && (
+      {(round.bookedCount > 0 || canMark) && !round.isClosed && (
         <AttendeesSection
-          roundInstanceId={round.roundInstanceId}
+          round={round}
+          roundsToday={roundsToday}
           canMark={canMark}
           onArrivalChanged={onArrivalChanged}
         />
@@ -798,20 +806,60 @@ function RoundStatusCard({
 // today's rounds every row carries the manual check-in control: the floor
 // often doesn't scan (Yanay 2026-07-05), so arrival is marked by tap.
 function AttendeesSection({
-  roundInstanceId,
+  round,
+  roundsToday,
   canMark,
   onArrivalChanged,
 }: {
-  roundInstanceId: string;
+  round: StaffRoundsRound;
+  roundsToday: StaffRoundsRound[];
   canMark: boolean;
   onArrivalChanged: () => void;
 }) {
+  const roundInstanceId = round.roundInstanceId;
   const [open, setOpen] = useState(false);
   const [attendees, setAttendees] = useState<RoundAttendee[] | null>(null);
   const [error, setError] = useState(false);
   const [q, setQ] = useState('');
   const [busyId, setBusyId] = useState<string | null>(null);
   const [markError, setMarkError] = useState<string | null>(null);
+  const [moveFor, setMoveFor] = useState<string | null>(null);
+  const [addingWalkIn, setAddingWalkIn] = useState(false);
+  const [flash, setFlash] = useState<string | null>(null);
+
+  const moveTargets = roundsToday.filter(
+    (r) => r.roundInstanceId !== roundInstanceId && !r.isClosed,
+  );
+
+  const fetchAttendees = async () => {
+    const res = await getRoundAttendees(roundInstanceId);
+    if (res.ok) setAttendees(res.data.attendees);
+    else setError(true);
+  };
+
+  const doMove = async (a: RoundAttendee, targetId: string) => {
+    setBusyId(a.bookingId);
+    setMarkError(null);
+    console.info('[staff attendees] move', { bookingId: a.bookingId, targetId });
+    const res = await moveBooking(a.bookingId, targetId);
+    setBusyId(null);
+    setMoveFor(null);
+    if (!res.ok) {
+      setMarkError(
+        res.error === 'target_full'
+          ? 'הסבב שנבחר מלא. אפשר להוסיף כ"נוסף ידנית" מעל התפוסה.'
+          : res.error === 'target_closed'
+            ? 'הסבב שנבחר סגור.'
+            : 'ההעברה נכשלה. נסו שוב.',
+      );
+      return;
+    }
+    const target = roundsToday.find((r) => r.roundInstanceId === targetId);
+    setFlash(`${a.firstName} הועבר/ה ל${target?.label ?? 'סבב אחר'}`);
+    setTimeout(() => setFlash(null), 4000);
+    await fetchAttendees();
+    onArrivalChanged();
+  };
 
   const mark = async (a: RoundAttendee, arrived: boolean) => {
     setBusyId(a.bookingId);
@@ -845,17 +893,7 @@ function AttendeesSection({
     setOpen(next);
     if (next && attendees === null) {
       console.info('[staff attendees] fetch', { roundInstanceId });
-      const res = await getRoundAttendees(roundInstanceId);
-      if (res.ok) {
-        setAttendees(res.data.attendees);
-        console.info('[staff attendees] ok', {
-          roundInstanceId,
-          count: res.data.attendees.length,
-        });
-      } else {
-        setError(true);
-        console.warn('[staff attendees] fail', { roundInstanceId, error: res.error });
-      }
+      await fetchAttendees();
     }
   };
 
@@ -865,24 +903,67 @@ function AttendeesSection({
 
   return (
     <div style={{ marginTop: 10, borderTop: `1px solid ${TRACK}`, paddingTop: 10 }}>
-      <button
-        type="button"
-        onClick={() => void toggle()}
-        style={{
-          border: 'none',
-          background: 'transparent',
-          color: MUTED,
-          fontSize: 13.5,
-          fontWeight: 600,
-          cursor: 'pointer',
-          padding: 0,
-        }}
-      >
-        {open ? 'הסתרת הרשימה ▲' : 'מי הגיע? הצגת הרשימה ▼'}
-      </button>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+        <button
+          type="button"
+          onClick={() => void toggle()}
+          style={{
+            border: 'none',
+            background: 'transparent',
+            color: MUTED,
+            fontSize: 13.5,
+            fontWeight: 600,
+            cursor: 'pointer',
+            padding: 0,
+          }}
+        >
+          {open
+            ? 'הסתרת הרשימה ▲'
+            : round.bookedCount > 0
+              ? 'מי הגיע? הצגת הרשימה ▼'
+              : 'ניהול משתתפים ▼'}
+        </button>
+        {canMark && open && !addingWalkIn && (
+          <button
+            type="button"
+            onClick={() => setAddingWalkIn(true)}
+            style={{
+              border: 'none',
+              background: ORANGE,
+              color: '#fff',
+              borderRadius: 999,
+              padding: '6px 14px',
+              fontSize: 12.5,
+              fontWeight: 600,
+              cursor: 'pointer',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            + הוספת משתתף
+          </button>
+        )}
+      </div>
 
       {open && (
         <div style={{ marginTop: 10 }}>
+          {flash && (
+            <div style={{ fontSize: 12.5, color: '#0f7a44', background: '#eef7ee', borderRadius: 8, padding: '7px 10px', marginBottom: 8 }}>
+              {flash}
+            </div>
+          )}
+          {addingWalkIn && (
+            <StaffWalkInForm
+              roundInstanceId={roundInstanceId}
+              onCancel={() => setAddingWalkIn(false)}
+              onAdded={async (name, over) => {
+                setAddingWalkIn(false);
+                setFlash(`${name} נוסף/ה לסבב${over ? ' · מעל התפוסה' : ''}`);
+                setTimeout(() => setFlash(null), 4000);
+                await fetchAttendees();
+                onArrivalChanged();
+              }}
+            />
+          )}
           {error ? (
             <div style={{ fontSize: 13, color: '#a23a3a' }}>לא ניתן לטעון את הרשימה כרגע.</div>
           ) : attendees === null ? (
@@ -917,17 +998,32 @@ function AttendeesSection({
                       key={a.bookingId}
                       style={{
                         display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        gap: 8,
+                        flexDirection: 'column',
+                        gap: 6,
                         fontSize: 14,
                         padding: '6px 10px',
                         background: a.arrived ? 'rgba(15,157,88,0.07)' : '#faf8f6',
                         borderRadius: 8,
                       }}
                     >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
                       <span style={{ color: INK, minWidth: 0 }}>
                         {a.firstName} {a.lastName}
+                        {a.source === 'manual' && (
+                          <span
+                            style={{
+                              marginInlineStart: 6,
+                              fontSize: 10.5,
+                              fontWeight: 700,
+                              color: '#b9772a',
+                              background: '#fdf3e3',
+                              borderRadius: 999,
+                              padding: '1px 7px',
+                            }}
+                          >
+                            נוסף/ה ידנית
+                          </span>
+                        )}
                         <span style={{ color: MUTED, fontSize: 12.5, marginInlineStart: 6 }}>
                           {a.ticketType === 'child_under_walking' ? 'תינוק/ת' : 'ילד/ה'}
                           {a.additionalCompanions > 0 ? ' · +מלווה נוסף' : ''}
@@ -1018,6 +1114,50 @@ function AttendeesSection({
                           סמן הגעה
                         </button>
                       )}
+                      </div>
+
+                      {canMark && moveTargets.length > 0 && (
+                        moveFor === a.bookingId ? (
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center', borderTop: `1px solid ${TRACK}`, paddingTop: 6 }}>
+                            <span style={{ fontSize: 12, color: MUTED }}>העברה אל:</span>
+                            {moveTargets.map((t) => (
+                              <button
+                                key={t.roundInstanceId}
+                                type="button"
+                                disabled={busyId === a.bookingId}
+                                onClick={() => void doMove(a, t.roundInstanceId)}
+                                style={{
+                                  border: '1.5px solid #e9e0d9',
+                                  background: '#fff',
+                                  color: INK,
+                                  borderRadius: 8,
+                                  padding: '5px 10px',
+                                  fontSize: 12,
+                                  fontWeight: 600,
+                                  cursor: 'pointer',
+                                }}
+                              >
+                                {t.label} {t.startTime}
+                              </button>
+                            ))}
+                            <button
+                              type="button"
+                              onClick={() => setMoveFor(null)}
+                              style={{ border: 'none', background: 'transparent', color: MUTED, fontSize: 12, cursor: 'pointer', textDecoration: 'underline' }}
+                            >
+                              ביטול
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setMoveFor(a.bookingId)}
+                            style={{ alignSelf: 'flex-start', border: 'none', background: 'transparent', color: MUTED, fontSize: 12, cursor: 'pointer', textDecoration: 'underline', padding: 0 }}
+                          >
+                            העברה לסבב אחר
+                          </button>
+                        )
+                      )}
                     </div>
                   ))}
                 </div>
@@ -1027,6 +1167,159 @@ function AttendeesSection({
               )}
             </>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Walk-in add for the floor: search an existing customer or quick-add a new one,
+// then add them to the round (over capacity when the venue allows it).
+function StaffWalkInForm({
+  roundInstanceId,
+  onCancel,
+  onAdded,
+}: {
+  roundInstanceId: string;
+  onCancel: () => void;
+  onAdded: (customerName: string, overCapacity: boolean) => void | Promise<void>;
+}) {
+  const [q, setQ] = useState('');
+  const [results, setResults] = useState<Customer[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [first, setFirst] = useState('');
+  const [last, setLast] = useState('');
+  const [phone, setPhone] = useState('');
+  const abortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    if (creating) return;
+    const term = q.trim();
+    if (term.length < 2) {
+      setResults([]);
+      setSearching(false);
+      return;
+    }
+    setSearching(true);
+    const t = setTimeout(async () => {
+      abortRef.current?.abort();
+      const ctrl = new AbortController();
+      abortRef.current = ctrl;
+      const res = await searchCustomers(term, { signal: ctrl.signal });
+      if (res.ok) setResults(res.data.results);
+      setSearching(false);
+    }, 250);
+    return () => clearTimeout(t);
+  }, [q, creating]);
+
+  const add = async (customerId: string, name: string) => {
+    setBusy(true);
+    setError(null);
+    console.info('[staff attendees] walk-in add', { roundInstanceId, customerId });
+    const res = await addWalkIn(roundInstanceId, { customerId });
+    setBusy(false);
+    if (!res.ok) {
+      setError(
+        res.error === 'round_full'
+          ? 'הסבב מלא והוספה מעל התפוסה כבויה בהגדרות.'
+          : res.error === 'round_closed'
+            ? 'הסבב סגור.'
+            : 'ההוספה נכשלה. נסו שוב.',
+      );
+      return;
+    }
+    await onAdded(name, res.data.overCapacity);
+  };
+
+  const quickAdd = async () => {
+    if (!first.trim() || !phone.trim()) return;
+    setBusy(true);
+    setError(null);
+    console.info('[staff attendees] walk-in quick-create', { phone: phone.trim() });
+    const created = await createCustomer({ firstName: first.trim(), lastName: last.trim(), phone: phone.trim() });
+    if (!created.ok) {
+      setBusy(false);
+      setError('יצירת הלקוח נכשלה — בדקו את הטלפון (ייתכן שכבר קיים).');
+      return;
+    }
+    setBusy(false);
+    await add(created.data.customer.id, created.data.customer.firstName);
+  };
+
+  const inputStyle: CSSProperties = {
+    padding: '8px 10px',
+    borderRadius: 9,
+    border: '1.5px solid #e9e0d9',
+    fontSize: 13.5,
+    width: '100%',
+    boxSizing: 'border-box',
+  };
+  const chip: CSSProperties = {
+    border: '1.5px solid #e9e0d9',
+    background: '#fff',
+    borderRadius: 8,
+    padding: '5px 10px',
+    fontSize: 12.5,
+    fontWeight: 600,
+    color: MUTED,
+    cursor: 'pointer',
+  };
+
+  return (
+    <div style={{ border: '1px solid #e7d9c8', borderRadius: 10, padding: 10, background: '#fffdf9', marginBottom: 10 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+        <span style={{ fontSize: 13, fontWeight: 600, color: INK }}>
+          {creating ? 'לקוח חדש' : 'הוספת משתתף — חיפוש לקוח'}
+        </span>
+        <button type="button" style={chip} onClick={() => { setCreating(!creating); setError(null); }}>
+          {creating ? 'חזרה לחיפוש' : 'לקוח חדש'}
+        </button>
+      </div>
+
+      {error && <div style={{ fontSize: 12.5, color: '#a23a3a', marginBottom: 8 }}>{error}</div>}
+
+      {creating ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+            <input placeholder="שם פרטי" value={first} onChange={(e) => setFirst(e.target.value)} style={inputStyle} />
+            <input placeholder="שם משפחה" value={last} onChange={(e) => setLast(e.target.value)} style={inputStyle} />
+          </div>
+          <input placeholder="טלפון" value={phone} onChange={(e) => setPhone(e.target.value)} style={inputStyle} inputMode="tel" />
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              type="button"
+              disabled={busy || !first.trim() || !phone.trim()}
+              onClick={() => void quickAdd()}
+              style={{ border: 'none', background: ORANGE, color: '#fff', borderRadius: 9, padding: '8px 14px', fontSize: 13, fontWeight: 600, cursor: 'pointer', opacity: !first.trim() || !phone.trim() ? 0.5 : 1 }}
+            >
+              {busy ? 'מוסיף…' : 'יצירה והוספה'}
+            </button>
+            <button type="button" disabled={busy} onClick={onCancel} style={chip}>ביטול</button>
+          </div>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <input placeholder="שם, טלפון או מספר לקוח…" value={q} onChange={(e) => setQ(e.target.value)} style={inputStyle} autoFocus />
+          {searching && <div style={{ fontSize: 12.5, color: MUTED }}>מחפש…</div>}
+          {!searching && q.trim().length >= 2 && results.length === 0 && (
+            <div style={{ fontSize: 12.5, color: MUTED }}>לא נמצאו לקוחות. אפשר ליצור לקוח חדש למעלה.</div>
+          )}
+          {results.map((c) => (
+            <button
+              key={c.id}
+              type="button"
+              disabled={busy}
+              onClick={() => void add(c.id, c.firstName)}
+              style={{ ...chip, width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', textAlign: 'right' }}
+            >
+              <span style={{ fontWeight: 600, color: INK }}>{c.firstName} {c.lastName}</span>
+              <span style={{ color: MUTED, fontSize: 11.5 }} dir="ltr">{c.phone} · {c.customerNumber}</span>
+            </button>
+          ))}
+          <button type="button" disabled={busy} onClick={onCancel} style={{ ...chip, alignSelf: 'flex-start' }}>ביטול</button>
         </div>
       )}
     </div>

@@ -201,6 +201,116 @@ test('POST /staff/rounds/checkin/lookup is staff-gated and validates input', asy
   assert.ok([404, 500].includes(unknownNumber.statusCode), `got ${unknownNumber.statusCode}`);
 });
 
+test('POST /staff/rounds/bookings/:id/move is staff-gated and validates id + body', async () => {
+  const id = '00000000-0000-0000-0000-000000000000';
+  const target = '00000000-0000-0000-0000-000000000002';
+
+  const noToken = await app.inject({
+    method: 'POST',
+    url: `/staff/rounds/bookings/${id}/move`,
+    payload: { targetRoundInstanceId: target },
+  });
+  assert.equal(noToken.statusCode, 401);
+
+  const badId = await app.inject({
+    method: 'POST',
+    url: '/staff/rounds/bookings/not-a-uuid/move',
+    headers: auth(await tokenFor('cashier')),
+    payload: { targetRoundInstanceId: target },
+  });
+  assert.equal(badId.statusCode, 400);
+  assert.equal(badId.json().error, 'invalid_id');
+
+  const badBody = await app.inject({
+    method: 'POST',
+    url: `/staff/rounds/bookings/${id}/move`,
+    headers: auth(await tokenFor('cashier')),
+    payload: { targetRoundInstanceId: 'not-a-uuid' },
+  });
+  assert.equal(badBody.statusCode, 400);
+  assert.equal(badBody.json().error, 'invalid_body');
+
+  const ok = await app.inject({
+    method: 'POST',
+    url: `/staff/rounds/bookings/${id}/move`,
+    headers: auth(await tokenFor('cashier')),
+    payload: { targetRoundInstanceId: target },
+  });
+  // Unknown booking → 404 on a real DB; 500 on the DB-less box. Auth + validation passed.
+  assert.ok([404, 500].includes(ok.statusCode), `got ${ok.statusCode}`);
+});
+
+test('POST /staff/rounds/:id/walk-in is staff-gated and validates id + body', async () => {
+  const inst = '00000000-0000-0000-0000-000000000000';
+  const cust = '00000000-0000-0000-0000-000000000003';
+
+  const noToken = await app.inject({
+    method: 'POST',
+    url: `/staff/rounds/${inst}/walk-in`,
+    payload: { customerId: cust },
+  });
+  assert.equal(noToken.statusCode, 401);
+
+  const badId = await app.inject({
+    method: 'POST',
+    url: '/staff/rounds/not-a-uuid/walk-in',
+    headers: auth(await tokenFor('cashier')),
+    payload: { customerId: cust },
+  });
+  assert.equal(badId.statusCode, 400);
+  assert.equal(badId.json().error, 'invalid_id');
+
+  const badBody = await app.inject({
+    method: 'POST',
+    url: `/staff/rounds/${inst}/walk-in`,
+    headers: auth(await tokenFor('cashier')),
+    payload: { customerId: 'not-a-uuid' },
+  });
+  assert.equal(badBody.statusCode, 400);
+  assert.equal(badBody.json().error, 'invalid_body');
+
+  const ok = await app.inject({
+    method: 'POST',
+    url: `/staff/rounds/${inst}/walk-in`,
+    headers: auth(await tokenFor('cashier')),
+    payload: { customerId: cust },
+  });
+  // Unknown instance → 404 on a real DB; 500 on the DB-less box.
+  assert.ok([404, 500].includes(ok.statusCode), `got ${ok.statusCode}`);
+});
+
+test('POST /staff/rounds/bookings/:id/cancel is ADMIN-only (cashier gets 403)', async () => {
+  const id = '00000000-0000-0000-0000-000000000000';
+
+  const noToken = await app.inject({ method: 'POST', url: `/staff/rounds/bookings/${id}/cancel` });
+  assert.equal(noToken.statusCode, 401);
+
+  // The one participant action that moves money — a cashier must be refused.
+  const cashier = await app.inject({
+    method: 'POST',
+    url: `/staff/rounds/bookings/${id}/cancel`,
+    headers: auth(await tokenFor('cashier')),
+  });
+  assert.equal(cashier.statusCode, 403);
+  assert.equal(cashier.json().error, 'forbidden');
+
+  const badId = await app.inject({
+    method: 'POST',
+    url: '/staff/rounds/bookings/not-a-uuid/cancel',
+    headers: auth(await tokenFor('admin')),
+  });
+  assert.equal(badId.statusCode, 400);
+  assert.equal(badId.json().error, 'invalid_id');
+
+  const ok = await app.inject({
+    method: 'POST',
+    url: `/staff/rounds/bookings/${id}/cancel`,
+    headers: auth(await tokenFor('admin')),
+  });
+  // Unknown booking → 404 on a real DB; 500 on the DB-less box. Admin gate passed.
+  assert.ok([404, 500].includes(ok.statusCode), `got ${ok.statusCode}`);
+});
+
 test('GET /staff/customers/:id/rounds-today is staff-gated and validates the id', async () => {
   const noToken = await app.inject({
     method: 'GET',

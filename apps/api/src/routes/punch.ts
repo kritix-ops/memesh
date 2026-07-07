@@ -3,6 +3,8 @@ import {
   customers,
   db,
   getCardSettings,
+  getRoundSettings,
+  listUpcomingReservationsForCustomer,
   punchCard,
   punchCards,
   scanAttempts,
@@ -242,11 +244,26 @@ export const punchRoutes: FastifyPluginAsync = async (fastify) => {
       const preview = await scanCardLookup(db, punchCardId);
       if (!preview) return reply.code(404).send({ error: 'not_found' });
 
+      // Door warning (Yanay 2026-07-07): a punch-card round reservation already
+      // spent its entry at booking time, so surface the customer's upcoming
+      // reserved rounds here — the cashier is reminded not to let them burn the
+      // card down before a reserved date, and doesn't think an entry vanished.
+      // Gated by the venue setting; empty (no warning) when off.
+      const roundSettings = await getRoundSettings(db);
+      const upcomingReservations =
+        roundSettings.warnUpcomingReservationAtDoor && preview.customer.id
+          ? await listUpcomingReservationsForCustomer(db, preview.customer.id)
+          : [];
+
       request.log.info(
-        { mode: token ? 'token' : 'serial', status: preview.status },
+        {
+          mode: token ? 'token' : 'serial',
+          status: preview.status,
+          upcomingReservations: upcomingReservations.length,
+        },
         '[scan lookup]',
       );
-      return preview;
+      return { ...preview, upcomingReservations };
     },
   );
 };

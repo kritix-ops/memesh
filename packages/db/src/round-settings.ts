@@ -27,6 +27,8 @@ export type UpdateRoundSettingsInput = {
   reminderOffsets?: number[];
   closingTime?: string;
   skipLastRoundReminder?: boolean;
+  allowOverCapacityWalkIn?: boolean;
+  warnUpcomingReservationAtDoor?: boolean;
 };
 
 export type RoundSettingsValidationError =
@@ -164,6 +166,23 @@ export const updateRoundSettings = async (
   ) {
     diff.skipLastRoundReminder = [current.skipLastRoundReminder, patch.skipLastRoundReminder];
     next.skipLastRoundReminder = patch.skipLastRoundReminder;
+  }
+  if (
+    patch.allowOverCapacityWalkIn !== undefined &&
+    patch.allowOverCapacityWalkIn !== current.allowOverCapacityWalkIn
+  ) {
+    diff.allowOverCapacityWalkIn = [current.allowOverCapacityWalkIn, patch.allowOverCapacityWalkIn];
+    next.allowOverCapacityWalkIn = patch.allowOverCapacityWalkIn;
+  }
+  if (
+    patch.warnUpcomingReservationAtDoor !== undefined &&
+    patch.warnUpcomingReservationAtDoor !== current.warnUpcomingReservationAtDoor
+  ) {
+    diff.warnUpcomingReservationAtDoor = [
+      current.warnUpcomingReservationAtDoor,
+      patch.warnUpcomingReservationAtDoor,
+    ];
+    next.warnUpcomingReservationAtDoor = patch.warnUpcomingReservationAtDoor;
   }
 
   if (Object.keys(diff).length === 0) return { ok: true, row: current, diff: {} };

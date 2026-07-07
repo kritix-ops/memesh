@@ -8,6 +8,7 @@ import {
   type DashboardLiveWeekAheadDay,
 } from '../lib/api/admin';
 import { useViewport } from '../useViewport';
+import { RoundAttendeesPanel } from './RoundAttendeesPanel';
 import {
   computeStatusLevel,
   deltaDirection,
@@ -74,6 +75,8 @@ export function LiveRoundsDashboard() {
   const [data, setData] = useState<DashboardLiveResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [paused, setPaused] = useState(false);
+  // Which round's participant panel is open (Yanay 2026-07-07). Null = none.
+  const [selectedRoundId, setSelectedRoundId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const t0 = performance.now();
@@ -155,7 +158,8 @@ export function LiveRoundsDashboard() {
   // data (alerts/waitlist empty, week grid off or empty).
   const renderZone = (key: string) => {
     switch (key) {
-      case 'rounds_today':
+      case 'rounds_today': {
+        const selected = rounds.find((r) => r.roundInstanceId === selectedRoundId) ?? null;
         return (
           <div key={key}>
             <div style={{ ...zoneTitle, marginBottom: 10 }}>סבבי היום</div>
@@ -169,12 +173,27 @@ export function LiveRoundsDashboard() {
                     round={r}
                     warnPct={settings.capacityWarningPct}
                     dangerPct={settings.capacityDangerPct}
+                    selected={r.roundInstanceId === selectedRoundId}
+                    onClick={() =>
+                      setSelectedRoundId((prev) =>
+                        prev === r.roundInstanceId ? null : r.roundInstanceId,
+                      )
+                    }
                   />
                 ))}
               </div>
             )}
+            {selected && (
+              <RoundAttendeesPanel
+                round={selected}
+                roundsToday={rounds}
+                onClose={() => setSelectedRoundId(null)}
+                onChanged={() => void load()}
+              />
+            )}
           </div>
         );
+      }
       case 'stats_today':
         return (
           <div key={key}>
@@ -289,16 +308,39 @@ function RoundTile({
   round,
   warnPct,
   dangerPct,
+  selected,
+  onClick,
 }: {
   round: DashboardLiveRound;
   warnPct: number;
   dangerPct: number;
+  selected: boolean;
+  onClick: () => void;
 }) {
   const level = computeStatusLevel(round.pctFull, warnPct, dangerPct);
   const barColor = round.isClosed ? '#d8d4cf' : STATUS[level].fg;
   const free = Math.max(0, round.capacity - round.taken);
   return (
-    <div style={{ ...card, padding: 16, flex: '1 1 260px', minWidth: 240 }}>
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={onClick}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onClick();
+        }
+      }}
+      style={{
+        ...card,
+        padding: 16,
+        flex: '1 1 260px',
+        minWidth: 240,
+        cursor: 'pointer',
+        border: `1.5px solid ${selected ? ORANGE : 'transparent'}`,
+        background: selected ? '#fffaf3' : (card.background as string | undefined),
+      }}
+    >
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
         <div style={{ fontWeight: 600, fontSize: 15 }}>
           {round.label}
@@ -329,6 +371,9 @@ function RoundTile({
           כולל {round.heldCount} שמורים זמנית
         </div>
       )}
+      <div style={{ marginTop: 10, fontSize: 12, fontWeight: 600, color: selected ? ORANGE : MUTED }}>
+        {selected ? 'סגירת ניהול משתתפים' : 'ניהול משתתפים ‹'}
+      </div>
     </div>
   );
 }

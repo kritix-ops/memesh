@@ -24,6 +24,8 @@ const updateBodySchema = z.object({
   reminderOffsets: z.array(z.number().int()).optional(),
   closingTime: z.string().optional(),
   skipLastRoundReminder: z.boolean().optional(),
+  allowOverCapacityWalkIn: z.boolean().optional(),
+  warnUpcomingReservationAtDoor: z.boolean().optional(),
 }).strict();
 
 const validationStatus: Record<RoundSettingsValidationError['code'], number> = {
@@ -63,6 +65,12 @@ export const roundSettingsRoutes: FastifyPluginAsync = async (fastify) => {
         ...(d.closingTime !== undefined && { closingTime: d.closingTime }),
         ...(d.skipLastRoundReminder !== undefined && {
           skipLastRoundReminder: d.skipLastRoundReminder,
+        }),
+        ...(d.allowOverCapacityWalkIn !== undefined && {
+          allowOverCapacityWalkIn: d.allowOverCapacityWalkIn,
+        }),
+        ...(d.warnUpcomingReservationAtDoor !== undefined && {
+          warnUpcomingReservationAtDoor: d.warnUpcomingReservationAtDoor,
         }),
       };
       const result = await updateRoundSettings(db, patch);

@@ -6,7 +6,7 @@
 
 import { and, asc, count, eq, gte, inArray, lte, sql } from 'drizzle-orm';
 import type { PgDatabase } from 'drizzle-orm/pg-core';
-import { addIsoDays, isoWeekday, venueTodayIso } from './round-time';
+import { addIsoDays, isRoundEnded, isoWeekday, venueTodayIso } from './round-time';
 import {
   bookings,
   customers,
@@ -360,6 +360,12 @@ export const roundAvailabilityForDate = async (
   }
 
   result.sort((a, b) => a.startTime.localeCompare(b.startTime));
+  // A round whose hours are already over today isn't bookable (Yanay
+  // 2026-07-07) — drop it so the swap round list and single-date picker never
+  // offer a passed slot. Today only; a future date has no ended rounds.
+  if (dateIso === venueTodayIso(now)) {
+    return result.filter((r) => !isRoundEnded(dateIso, r.endTime, now));
+  }
   return result;
 };
 
@@ -485,6 +491,9 @@ export interface RoundAttendee {
   email: string | null;
   ticketType: 'child_under_walking' | 'child_over_walking';
   additionalCompanions: number;
+  /** Payment origin. `manual` = a staff walk-in add — shown separately from
+   *  the ones who registered (Yanay 2026-07-07). */
+  source: 'paid' | 'punchcard' | 'gift' | 'manual';
   /** Checked in at the door (booking burned to 'used'). */
   arrived: boolean;
   /** ISO timestamp of the door scan; null until arrival. */
@@ -511,6 +520,7 @@ export const listRoundAttendees = async (
       email: customers.email,
       ticketType: bookings.ticketType,
       additionalCompanions: bookings.additionalCompanions,
+      source: bookings.source,
       status: bookings.status,
       usedAt: bookings.usedAt,
     })
@@ -533,6 +543,7 @@ export const listRoundAttendees = async (
       email: r.email,
       ticketType: r.ticketType as 'child_under_walking' | 'child_over_walking',
       additionalCompanions: r.additionalCompanions,
+      source: r.source as 'paid' | 'punchcard' | 'gift' | 'manual',
       arrived: r.status === 'used',
       usedAt: r.usedAt ? r.usedAt.toISOString() : null,
     }))
@@ -541,6 +552,66 @@ export const listRoundAttendees = async (
       if (a.arrived && a.usedAt && b.usedAt) return b.usedAt.localeCompare(a.usedAt);
       return `${a.firstName} ${a.lastName}`.localeCompare(`${b.firstName} ${b.lastName}`, 'he');
     });
+};
+
+export interface UpcomingReservation {
+  bookingId: string;
+  roundInstanceId: string;
+  label: string;
+  /** YYYY-MM-DD */
+  date: string;
+  /** "HH:MM" */
+  startTime: string;
+  endTime: string;
+  source: 'paid' | 'punchcard' | 'gift' | 'manual';
+}
+
+/**
+ * A customer's confirmed reservations on venue-today or later — the "you
+ * already have an entrance booked" signal (Yanay 2026-07-07). A punch-card
+ * reservation spent its entry at booking time, so surfacing these at the door
+ * and in the personal area stops anyone from thinking an entry vanished, or
+ * from burning a card down before a reserved date. Confirmed only (a `used`
+ * booking already walked in); soonest first.
+ */
+export const listUpcomingReservationsForCustomer = async (
+  db: AnyPgDatabase,
+  customerId: string,
+  now: Date = new Date(),
+): Promise<UpcomingReservation[]> => {
+  const todayIso = venueTodayIso(now);
+  const rows = await db
+    .select({
+      bookingId: bookings.id,
+      roundInstanceId: bookings.roundInstanceId,
+      label: rounds.displayName,
+      date: roundInstances.date,
+      startTime: rounds.startTime,
+      endTime: rounds.endTime,
+      source: bookings.source,
+    })
+    .from(bookings)
+    .innerJoin(roundInstances, eq(roundInstances.id, bookings.roundInstanceId))
+    .innerJoin(rounds, eq(rounds.id, roundInstances.roundId))
+    .where(
+      and(
+        eq(bookings.customerId, customerId),
+        eq(bookings.status, 'confirmed'),
+        gte(roundInstances.date, todayIso),
+      ),
+    );
+
+  return rows
+    .map((r) => ({
+      bookingId: r.bookingId,
+      roundInstanceId: r.roundInstanceId,
+      label: r.label,
+      date: r.date,
+      startTime: hhmm(r.startTime),
+      endTime: hhmm(r.endTime),
+      source: r.source as 'paid' | 'punchcard' | 'gift' | 'manual',
+    }))
+    .sort((a, b) => `${a.date} ${a.startTime}`.localeCompare(`${b.date} ${b.startTime}`));
 };
 
 // ---------------------------------------------------------------------------

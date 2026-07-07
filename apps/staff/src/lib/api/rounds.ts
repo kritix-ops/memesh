@@ -30,6 +30,9 @@ export interface RoundAttendee {
   email: string | null;
   ticketType: 'child_under_walking' | 'child_over_walking';
   additionalCompanions: number;
+  /** `manual` = a staff walk-in add — shown apart from the registered ones.
+   *  Optional for resilience to an older API that predates the field. */
+  source?: 'paid' | 'punchcard' | 'gift' | 'manual';
   arrived: boolean;
   usedAt: string | null;
 }
@@ -104,6 +107,33 @@ export const setBookingArrival = (
     method: 'POST',
     body: { arrived },
   });
+
+/** Move a booking to another round instance — the early/late-arrival case
+ *  (Yanay 2026-07-07: booked 14:00, showed up at 08:00). */
+export const moveBooking = (
+  bookingId: string,
+  targetRoundInstanceId: string,
+): Promise<ApiResult<{ bookingId: string; barcodeToken: string }>> =>
+  apiRequest(`/staff/rounds/bookings/${bookingId}/move`, {
+    method: 'POST',
+    body: { targetRoundInstanceId },
+  });
+
+export interface WalkInResponse {
+  bookingId: string;
+  bookingNumber: string;
+  /** True when the add pushed the round past capacity. */
+  overCapacity: boolean;
+  taken: number;
+  capacity: number;
+}
+
+/** Add a walk-in to a round, over capacity when the venue allows it. */
+export const addWalkIn = (
+  roundInstanceId: string,
+  input: { customerId: string; ticketType?: 'child_under_walking' | 'child_over_walking' },
+): Promise<ApiResult<WalkInResponse>> =>
+  apiRequest(`/staff/rounds/${roundInstanceId}/walk-in`, { method: 'POST', body: input });
 
 export interface CustomerDayBooking {
   bookingId: string;

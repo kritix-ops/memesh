@@ -1,4 +1,4 @@
-import { type CSSProperties, useEffect, useState } from 'react';
+import { type CSSProperties, type ReactNode, useEffect, useState } from 'react';
 import {
   getRoundSettings,
   updateRoundSettings,
@@ -18,6 +18,10 @@ import {
   type ScheduleRule,
   type ScheduleWindow,
 } from '../lib/api/rounds';
+import {
+  groupScheduleRules,
+  type ClosureMonth,
+} from './schedule-rules-group';
 import {
   BooleanField,
   INK,
@@ -92,6 +96,19 @@ const primaryBtn: CSSProperties = {
   padding: '10px 18px',
   fontSize: 14,
   cursor: 'pointer',
+};
+// One schedule-rule row — shared by the always-visible active rules and the
+// rows inside each collapsed closures month.
+const ruleRowStyle: CSSProperties = {
+  display: 'flex',
+  justifyContent: 'space-between',
+  alignItems: 'center',
+  gap: 10,
+  padding: '10px 12px',
+  background: '#faf6f1',
+  border: '1px solid #e9e0d9',
+  borderRadius: 10,
+  flexWrap: 'wrap',
 };
 
 export function Rounds() {
@@ -389,11 +406,75 @@ function fmtIsoDate(iso: string): string {
   return `${d}/${m}/${y}`;
 }
 
+// One collapsed month of whole-day closures/holiday marks. Collapsed by default
+// so a synced year of Shabbats + holidays no longer scrolls forever (Yanay
+// 2026-07-07); the header always shows the month + day count.
+function MonthAccordion({
+  month,
+  open,
+  onToggle,
+  renderRow,
+}: {
+  month: ClosureMonth;
+  open: boolean;
+  onToggle: () => void;
+  renderRow: (r: ScheduleRule) => ReactNode;
+}) {
+  return (
+    <div style={{ border: '1px solid #efe7df', borderRadius: 10, overflow: 'hidden' }}>
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        style={{
+          width: '100%',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          gap: 10,
+          padding: '10px 12px',
+          background: open ? '#fdf3e3' : '#faf6f1',
+          border: 'none',
+          font: 'inherit',
+          textAlign: 'right',
+          cursor: 'pointer',
+        }}
+      >
+        <span style={{ fontSize: 13, fontWeight: 600, color: INK }}>
+          {month.label}
+          <span style={{ color: MUTED, fontWeight: 400, marginInlineStart: 8 }}>
+            {month.rules.length} ימים
+          </span>
+        </span>
+        <span
+          aria-hidden
+          style={{
+            color: MUTED,
+            fontSize: 15,
+            lineHeight: 1,
+            transform: open ? 'rotate(-90deg)' : 'none',
+            transition: 'transform 0.15s',
+          }}
+        >
+          ‹
+        </span>
+      </button>
+      {open && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '8px' }}>
+          {month.rules.map((r) => renderRow(r))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ScheduleRulesManager() {
   const [rules, setRules] = useState<ScheduleRule[] | null>(null);
   const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Which closures month is expanded (single-open keeps the list short).
+  const [openMonth, setOpenMonth] = useState<string | null>(null);
 
   // Form state
   const [scope, setScope] = useState<RuleScopeKind>('single');
@@ -500,6 +581,27 @@ function ScheduleRulesManager() {
     fontSize: 13.5,
   };
 
+  // One rule row — reused for the always-visible active rules and the rows
+  // inside each closures month. Closes over busy/remove for the delete button.
+  const ruleRow = (r: ScheduleRule): ReactNode => (
+    <div key={r.id} style={ruleRowStyle}>
+      <div style={{ fontSize: 13, color: INK }}>
+        {r.note && <strong style={{ marginInlineEnd: 6 }}>{r.note}:</strong>}
+        {ruleSummary(r)}
+      </div>
+      <button
+        type="button"
+        disabled={busy}
+        onClick={() => void remove(r.id)}
+        style={{ ...ghostBtn, color: '#a23a3a', borderColor: '#eddad3', padding: '5px 12px', fontSize: 12.5 }}
+      >
+        מחיקה
+      </button>
+    </div>
+  );
+
+  const grouped = rules ? groupScheduleRules(rules) : null;
+
   return (
     <div style={cardStyle}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
@@ -516,37 +618,33 @@ function ScheduleRulesManager() {
         )}
       </div>
 
-      {rules && rules.length > 0 && (
+      {grouped && (grouped.activeRules.length > 0 || grouped.dayMarkCount > 0) && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 12 }}>
-          {rules.map((r) => (
+          {grouped.activeRules.map((r) => ruleRow(r))}
+
+          {grouped.dayMarkCount > 0 && (
             <div
-              key={r.id}
               style={{
                 display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                gap: 10,
-                padding: '10px 12px',
-                background: '#faf6f1',
-                border: '1px solid #e9e0d9',
-                borderRadius: 10,
-                flexWrap: 'wrap',
+                flexDirection: 'column',
+                gap: 6,
+                marginTop: grouped.activeRules.length ? 6 : 0,
               }}
             >
-              <div style={{ fontSize: 13, color: INK }}>
-                {r.note && <strong style={{ marginInlineEnd: 6 }}>{r.note}:</strong>}
-                {ruleSummary(r)}
+              <div style={{ fontSize: 12.5, color: MUTED, fontWeight: 600 }}>
+                ימי סגירה וחגים ({grouped.dayMarkCount})
               </div>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => void remove(r.id)}
-                style={{ ...ghostBtn, color: '#a23a3a', borderColor: '#eddad3', padding: '5px 12px', fontSize: 12.5 }}
-              >
-                מחיקה
-              </button>
+              {grouped.dayMarkMonths.map((m) => (
+                <MonthAccordion
+                  key={m.key}
+                  month={m}
+                  open={openMonth === m.key}
+                  onToggle={() => setOpenMonth((prev) => (prev === m.key ? null : m.key))}
+                  renderRow={ruleRow}
+                />
+              ))}
             </div>
-          ))}
+          )}
         </div>
       )}
 

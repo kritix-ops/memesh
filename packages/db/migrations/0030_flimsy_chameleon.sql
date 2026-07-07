@@ -1,0 +1,2 @@
+ALTER TABLE "round_settings" ADD COLUMN "allow_over_capacity_walk_in" boolean DEFAULT true NOT NULL;--> statement-breakpoint
+ALTER TABLE "round_settings" ADD COLUMN "warn_upcoming_reservation_at_door" boolean DEFAULT true NOT NULL;
