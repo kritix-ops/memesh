@@ -43,6 +43,11 @@ const envSchema = z.object({
   // `Authorization: Bearer ${CRON_SECRET}` when CRON_SECRET is set in the
   // project env. The cron route compares constant-time and 401s on mismatch.
   CRON_SECRET: z.string().min(32).optional(),
+  // Venue location for Hebcal candle-lighting (Friday early-close). GeoNames id
+  // of the venue's city — candle times are city-specific, so set this to the
+  // REAL venue. Defaults to Tel Aviv (293397). See
+  // _plans/2026-07-07-jewish-holidays-closures.md.
+  HEBCAL_VENUE_GEONAMEID: z.coerce.number().int().positive().default(293397),
   // WooCommerce REST API credentials, used only by the reconciliation cron
   // to fetch completed orders from the last N hours and heal missing cards.
   // Generated in WC admin → Settings → Advanced → REST API → Add key.

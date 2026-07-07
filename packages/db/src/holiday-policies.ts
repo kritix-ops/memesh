@@ -15,7 +15,7 @@
 // confirmed and non-normal. Newly-discovered holidays land as 'normal' +
 // unconfirmed and produce nothing. An empty occurrence list generates no rows.
 
-import { and, eq, gte, isNotNull, lte, ne, sql } from 'drizzle-orm';
+import { and, asc, eq, gte, isNotNull, lte, ne, sql } from 'drizzle-orm';
 import type { PgDatabase } from 'drizzle-orm/pg-core';
 import { holidayPolicies, type HolidayPolicy, roundScheduleRules } from './schema/index';
 
@@ -41,6 +41,82 @@ export interface ShabbatFriday {
   date: string;
   candleTime: string;
 }
+
+const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+/** All policy rows, holiday key order — the admin calendar joins dates onto these. */
+export const listHolidayPolicies = async (db: AnyPgDatabase): Promise<HolidayPolicy[]> =>
+  db.select().from(holidayPolicies).orderBy(asc(holidayPolicies.holidayKey));
+
+export interface HolidayPolicyPatch {
+  policy?: 'normal' | 'closed' | 'special_hours';
+  openTime?: string | null;
+  closeTime?: string | null;
+  shabbatCloseOffsetMinutes?: number | null;
+  note?: string | null;
+  /** Toggles confirmed_at (now / null). Confirming gates rule generation. */
+  confirmed?: boolean;
+}
+
+export type SetHolidayPolicyResult =
+  | { ok: true; policy: HolidayPolicy }
+  | { ok: false; error: 'not_found' | 'time_invalid' | 'special_hours_needs_times' | 'offset_invalid' };
+
+/**
+ * Update one holiday's decision (Yanay's action from the browse view). Validates
+ * that special-hours holidays carry an open+close time (Shabbat is exempt — its
+ * close is computed per-Friday from candle-lighting). Caller regenerates rules
+ * afterward so the change reaches the resolver.
+ */
+export const setHolidayPolicy = async (
+  db: AnyPgDatabase,
+  holidayKey: string,
+  patch: HolidayPolicyPatch,
+  now: Date = new Date(),
+): Promise<SetHolidayPolicyResult> => {
+  if (patch.openTime != null && !HHMM_RE.test(patch.openTime)) return { ok: false, error: 'time_invalid' };
+  if (patch.closeTime != null && !HHMM_RE.test(patch.closeTime)) return { ok: false, error: 'time_invalid' };
+  if (
+    patch.shabbatCloseOffsetMinutes != null &&
+    (!Number.isInteger(patch.shabbatCloseOffsetMinutes) ||
+      patch.shabbatCloseOffsetMinutes < 0 ||
+      patch.shabbatCloseOffsetMinutes > 300)
+  ) {
+    return { ok: false, error: 'offset_invalid' };
+  }
+
+  const existing = (
+    await db.select().from(holidayPolicies).where(eq(holidayPolicies.holidayKey, holidayKey)).limit(1)
+  )[0];
+  if (!existing) return { ok: false, error: 'not_found' };
+
+  const effPolicy = patch.policy ?? existing.policy;
+  const effOpen = patch.openTime !== undefined ? patch.openTime : existing.openTime;
+  const effClose = patch.closeTime !== undefined ? patch.closeTime : existing.closeTime;
+  // A special-hours holiday needs both times; Shabbat's close comes from candle
+  // lighting so it is exempt.
+  if (effPolicy === 'special_hours' && holidayKey !== SHABBAT_KEY && (!effOpen || !effClose)) {
+    return { ok: false, error: 'special_hours_needs_times' };
+  }
+  if (effPolicy === 'special_hours' && effOpen && effClose && effClose.slice(0, 5) <= effOpen.slice(0, 5)) {
+    return { ok: false, error: 'time_invalid' };
+  }
+
+  const set: Record<string, unknown> = { updatedAt: now };
+  if (patch.policy !== undefined) set.policy = patch.policy;
+  if (patch.openTime !== undefined) set.openTime = patch.openTime;
+  if (patch.closeTime !== undefined) set.closeTime = patch.closeTime;
+  if (patch.shabbatCloseOffsetMinutes !== undefined) set.shabbatCloseOffsetMinutes = patch.shabbatCloseOffsetMinutes;
+  if (patch.note !== undefined) set.note = patch.note;
+  if (patch.confirmed !== undefined) set.confirmedAt = patch.confirmed ? now : null;
+
+  const updated = await db
+    .update(holidayPolicies)
+    .set(set)
+    .where(eq(holidayPolicies.holidayKey, holidayKey))
+    .returning();
+  return { ok: true, policy: updated[0]! };
+};
 
 /** "HH:MM" minus N minutes, clamped to 00:00. Pure. */
 export const subtractMinutes = (hhmm: string, minutes: number): string => {

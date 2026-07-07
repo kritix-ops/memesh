@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import { PGlite } from '@electric-sql/pglite';
 import { drizzle } from 'drizzle-orm/pglite';
 import { migrate } from 'drizzle-orm/pglite/migrator';
-import { and, eq } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import {
   DEFAULT_SHABBAT_OFFSET_MIN,
   regenerateHolidaySyncRules,
