@@ -793,8 +793,8 @@ function Cards() {
 
   const showActions = status === 'active';
   const head = showActions
-    ? ['מספר סידורי', 'לקוח', 'ניצול', 'תוקף', 'סטטוס', '']
-    : ['מספר סידורי', 'לקוח', 'ניצול', 'תוקף', 'סטטוס'];
+    ? ['מספר סידורי', 'לקוח', 'ניצול', 'הונפקה', 'תוקף', 'סטטוס', '']
+    : ['מספר סידורי', 'לקוח', 'ניצול', 'הונפקה', 'תוקף', 'סטטוס'];
 
   const submitEdit = async (input: EditCardSubmit) => {
     if (!detail) return;
@@ -999,6 +999,7 @@ function Cards() {
                 <Td muted>
                   {c.usedEntries} / {c.totalEntries}
                 </Td>
+                <Td muted>{fmtDate(c.createdAt.slice(0, 10))}</Td>
                 <Td muted>{c.expiresAt === null ? 'ללא תפוגה' : fmtDate(c.expiresAt.slice(0, 10))}</Td>
                 <Td>
                   <Badge text={badge.text} bg={badge.bg} color={badge.color} />

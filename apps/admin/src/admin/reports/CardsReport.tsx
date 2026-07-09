@@ -5,6 +5,7 @@ import {
   type CardsReportRow,
 } from '../../lib/api/reports';
 import { downloadCsv, presetRange, printReport, toCsv } from '../../lib/export';
+import { parseDaysInput, parsePctInput } from './filter-inputs';
 import {
   DateRangeField,
   EmptyState,
@@ -54,12 +55,12 @@ export function CardsReport() {
     if (source) f.source = source;
     if (sold.range.from) f.soldFrom = sold.range.from.toISOString();
     if (sold.range.to) f.soldTo = sold.range.to.toISOString();
-    const e = Number(expiringWithinDays);
-    if (Number.isInteger(e) && e > 0) f.expiringWithinDays = e;
-    const lo = Number(usageMin);
-    const hi = Number(usageMax);
-    if (Number.isInteger(lo) && lo >= 0 && lo <= 100) f.usageMinPct = lo;
-    if (Number.isInteger(hi) && hi >= 0 && hi <= 100) f.usageMaxPct = hi;
+    const e = parseDaysInput(expiringWithinDays);
+    if (e !== undefined) f.expiringWithinDays = e;
+    const lo = parsePctInput(usageMin);
+    const hi = parsePctInput(usageMax);
+    if (lo !== undefined) f.usageMinPct = lo;
+    if (hi !== undefined) f.usageMaxPct = hi;
     return f;
   }, [q, status, source, sold, expiringWithinDays, usageMin, usageMax, sort, sortDir]);
 
