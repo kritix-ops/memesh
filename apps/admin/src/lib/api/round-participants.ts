@@ -65,3 +65,37 @@ export const addWalkIn = (
   input: { customerId: string; ticketType?: 'child_under_walking' | 'child_over_walking' },
 ): Promise<ApiResult<WalkInResponse>> =>
   apiRequest(`/staff/rounds/${roundInstanceId}/walk-in`, { method: 'POST', body: input });
+
+export interface ArrivalResponse {
+  arrived: boolean;
+  usedAt: string | null;
+  /** False when the booking was already in the requested state (idempotent). */
+  changed: boolean;
+}
+
+/** Mark a booking arrived (or undo). Server allows venue-today rounds only. */
+export const setTicketArrival = (
+  bookingId: string,
+  arrived: boolean,
+): Promise<ApiResult<ArrivalResponse>> =>
+  apiRequest(`/staff/rounds/bookings/${bookingId}/arrival`, { method: 'POST', body: { arrived } });
+
+export interface MoveTargetRound {
+  roundInstanceId: string;
+  label: string;
+  startTime: string;
+  endTime: string;
+  taken: number;
+  capacity: number;
+  isClosed: boolean;
+}
+
+/**
+ * The rounds running on a given date — move targets for a booking on that
+ * date. Uses the staff floor read (`?date=` reads any day) so already-started
+ * rounds stay listed, unlike the public picker.
+ */
+export const listRoundsForDate = (
+  date: string,
+): Promise<ApiResult<{ date: string; rounds: MoveTargetRound[] }>> =>
+  apiRequest(`/staff/rounds/today?date=${encodeURIComponent(date)}`);

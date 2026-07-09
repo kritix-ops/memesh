@@ -499,3 +499,39 @@ export const methodLabel = (m: string): string => {
   if (m === 'manual') return 'ידני';
   return m;
 };
+
+// Entrance-ticket (booking) labels — shared by ניהול כרטיסים, the tickets
+// report, and the round attendees panel so the same value never reads
+// differently on two screens.
+export const ticketTypeLabel = (t: 'child_under_walking' | 'child_over_walking'): string =>
+  t === 'child_under_walking' ? 'תינוק' : 'ילד/ה';
+
+export const ticketSourceLabel = (s: string): string => {
+  if (s === 'paid') return 'אתר';
+  if (s === 'punchcard') return 'כרטיסייה';
+  if (s === 'gift') return 'מתנה';
+  if (s === 'manual') return 'ידני';
+  return s;
+};
+
+export interface TicketStatusMeta {
+  label: string;
+  color: string;
+  bg: string;
+}
+
+/**
+ * Status presentation for a ticket. A confirmed booking whose round date has
+ * passed is a derived no-show — nobody scanned it and nobody cancelled it.
+ */
+export const ticketStatusMeta = (
+  status: 'confirmed' | 'used' | 'cancelled' | 'expired',
+  dateIso: string,
+  todayIso: string,
+): TicketStatusMeta => {
+  if (status === 'used') return { label: 'הגיע/ה', color: '#0f7a44', bg: '#eef7ee' };
+  if (status === 'cancelled') return { label: 'בוטל', color: '#a23a3a', bg: '#fdf0ee' };
+  if (status === 'expired') return { label: 'פג תוקף', color: MUTED, bg: '#f1f2f2' };
+  if (dateIso < todayIso) return { label: 'לא הגיע/ה', color: '#b9772a', bg: '#fdf3e3' };
+  return { label: 'הזמנה פעילה', color: '#c97a52', bg: '#fff4ee' };
+};

@@ -8,7 +8,7 @@ import {
   removeBooking,
   type RoundAttendee,
 } from '../lib/api/round-participants';
-import { card, INK, MUTED, ORANGE } from './reports/shared';
+import { card, INK, MUTED, ORANGE, ticketTypeLabel } from './reports/shared';
 
 // ---------------------------------------------------------------------------
 // Round participant panel (Yanay 2026-07-07). Opens under a round tile on the
@@ -39,9 +39,6 @@ const primaryBtn: CSSProperties = {
   fontSize: 13,
   cursor: 'pointer',
 };
-
-const ticketLabel = (t: RoundAttendee['ticketType']): string =>
-  t === 'child_under_walking' ? 'תינוק' : 'ילד/ה';
 
 function removeError(code: string): string {
   if (code === 'not_confirmed') return 'ההזמנה כבר בוטלה או נוצלה — רעננו.';
@@ -179,7 +176,7 @@ export function RoundAttendeesPanel({
             )}
           </div>
           <div style={{ fontSize: 12.5, color: MUTED, marginTop: 2 }}>
-            {a.phone} · {ticketLabel(a.ticketType)}
+            {a.phone} · {ticketTypeLabel(a.ticketType)}
             {a.additionalCompanions > 0 && ' · מלווה נוסף'}
             {a.bookingNumber && ` · ${a.bookingNumber}`}
           </div>

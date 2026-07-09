@@ -23,6 +23,8 @@ import {
   customers,
   punchCardEntries,
   punchCards,
+  roundInstances,
+  rounds,
   staff,
 } from './schema/index';
 
@@ -926,4 +928,208 @@ export const cancellationsReport = async (
     cardCount: cardRows.length,
     entryCount: entryRows.length,
   };
+};
+
+// ---------------------------------------------------------------------------
+// Tickets (entrance tickets = bookings) — feeds BOTH the admin ניהול כרטיסים
+// screen and the דוחות section, so the two surfaces can never disagree.
+// `held` rows are always excluded: a hold is a transient WC-checkout state
+// with a TTL, not a ticket anyone should list or act on.
+// ---------------------------------------------------------------------------
+
+export type TicketStatus = 'confirmed' | 'used' | 'cancelled' | 'expired';
+export type TicketSource = 'paid' | 'punchcard' | 'gift' | 'manual';
+export type TicketType = 'child_under_walking' | 'child_over_walking';
+
+const TICKET_STATUSES: TicketStatus[] = ['confirmed', 'used', 'cancelled', 'expired'];
+
+export interface TicketsReportFilters {
+  /** ILIKE across booking number + customer name / phone / number. */
+  q?: string;
+  status?: TicketStatus;
+  source?: TicketSource;
+  ticketType?: TicketType;
+  /** Inclusive round-instance date bounds, YYYY-MM-DD. */
+  dateFrom?: string;
+  dateTo?: string;
+  limit?: number;
+  offset?: number;
+  sort?: 'date' | 'createdAt' | 'bookingNumber';
+  sortDir?: 'asc' | 'desc';
+}
+
+export interface TicketsReportRow {
+  bookingId: string;
+  bookingNumber: string | null;
+  customerId: string;
+  customerNumber: string | null;
+  customerFirstName: string | null;
+  customerLastName: string | null;
+  customerPhone: string | null;
+  roundInstanceId: string;
+  /** YYYY-MM-DD */
+  date: string;
+  roundLabel: string;
+  /** "HH:MM" */
+  startTime: string;
+  endTime: string;
+  ticketType: TicketType;
+  additionalCompanions: number;
+  source: TicketSource;
+  status: TicketStatus;
+  /** Serial of the card that paid for this ticket (source='punchcard'). */
+  punchCardSerial: string | null;
+  wcOrderId: string | null;
+  createdAt: string;
+  usedAt: string | null;
+}
+
+/**
+ * Status distribution of the filtered set, computed WITHOUT the status filter
+ * so the tiles/chips keep showing the whole picture while one bucket is open.
+ */
+export interface TicketsReportSummary {
+  confirmed: number;
+  used: number;
+  cancelled: number;
+  expired: number;
+  /** Additional companions across the same (status-agnostic) set. */
+  companions: number;
+}
+
+export interface TicketsReportPage {
+  rows: TicketsReportRow[];
+  /** Rows matching ALL filters (pre-pagination). */
+  total: number;
+  summary: TicketsReportSummary;
+}
+
+const hhmm = (t: string): string => t.slice(0, 5);
+
+export const ticketsReport = async (
+  db: AnyPgDatabase,
+  filters: TicketsReportFilters = {},
+): Promise<TicketsReportPage> => {
+  const limit = Math.min(filters.limit ?? REPORT_DEFAULT_LIMIT, REPORT_MAX_LIMIT);
+  const offset = Math.max(0, filters.offset ?? 0);
+
+  // Conditions shared by the rows query and the summary query — everything
+  // except the status filter, which the summary deliberately ignores.
+  const baseConds = [inArray(bookings.status, TICKET_STATUSES)];
+  const q = filters.q?.trim();
+  if (q) {
+    const p = `%${q}%`;
+    const qC = or(
+      ilike(bookings.bookingNumber, p),
+      ilike(customers.firstName, p),
+      ilike(customers.lastName, p),
+      ilike(customers.phone, p),
+      ilike(customers.customerNumber, p),
+    );
+    if (qC) baseConds.push(qC);
+  }
+  if (filters.source) baseConds.push(eq(bookings.source, filters.source));
+  if (filters.ticketType) baseConds.push(eq(bookings.ticketType, filters.ticketType));
+  if (filters.dateFrom) baseConds.push(gte(roundInstances.date, filters.dateFrom));
+  if (filters.dateTo) baseConds.push(lte(roundInstances.date, filters.dateTo));
+
+  const rowConds = [...baseConds];
+  if (filters.status) rowConds.push(eq(bookings.status, filters.status));
+
+  const sortDirFn = filters.sortDir === 'asc' ? asc : desc;
+  const orderBy =
+    filters.sort === 'createdAt'
+      ? [sortDirFn(bookings.createdAt)]
+      : filters.sort === 'bookingNumber'
+        ? [sortDirFn(bookings.bookingNumber)]
+        : // Default: by round date, mornings before evenings inside a day,
+          // newest booking first within the same round.
+          [sortDirFn(roundInstances.date), asc(rounds.startTime), desc(bookings.createdAt)];
+
+  const rawRows = await db
+    .select({
+      bookingId: bookings.id,
+      bookingNumber: bookings.bookingNumber,
+      customerId: bookings.customerId,
+      customerNumber: customers.customerNumber,
+      customerFirstName: customers.firstName,
+      customerLastName: customers.lastName,
+      customerPhone: customers.phone,
+      roundInstanceId: bookings.roundInstanceId,
+      date: roundInstances.date,
+      roundLabel: rounds.displayName,
+      startTime: rounds.startTime,
+      endTime: rounds.endTime,
+      ticketType: bookings.ticketType,
+      additionalCompanions: bookings.additionalCompanions,
+      source: bookings.source,
+      status: bookings.status,
+      punchCardSerial: punchCards.serialNumber,
+      wcOrderId: bookings.wcOrderId,
+      createdAt: bookings.createdAt,
+      usedAt: bookings.usedAt,
+    })
+    .from(bookings)
+    .innerJoin(roundInstances, eq(roundInstances.id, bookings.roundInstanceId))
+    .innerJoin(rounds, eq(rounds.id, roundInstances.roundId))
+    .innerJoin(customers, eq(customers.id, bookings.customerId))
+    .leftJoin(punchCards, eq(punchCards.id, bookings.punchCardId))
+    .where(and(...rowConds))
+    .orderBy(...orderBy)
+    .limit(limit)
+    .offset(offset);
+
+  // One grouped pass covers the summary AND the total: with a status filter,
+  // total = that status's bucket; without one, total = the sum of buckets.
+  const grouped = await db
+    .select({
+      status: bookings.status,
+      n: count(),
+      companions: sql<string>`coalesce(sum(${bookings.additionalCompanions}), 0)`,
+    })
+    .from(bookings)
+    .innerJoin(roundInstances, eq(roundInstances.id, bookings.roundInstanceId))
+    .innerJoin(customers, eq(customers.id, bookings.customerId))
+    .where(and(...baseConds))
+    .groupBy(bookings.status);
+
+  const summary: TicketsReportSummary = {
+    confirmed: 0,
+    used: 0,
+    cancelled: 0,
+    expired: 0,
+    companions: 0,
+  };
+  for (const g of grouped) {
+    summary[g.status as TicketStatus] = Number(g.n);
+    summary.companions += Number(g.companions);
+  }
+  const total = filters.status
+    ? summary[filters.status]
+    : summary.confirmed + summary.used + summary.cancelled + summary.expired;
+
+  const rows: TicketsReportRow[] = rawRows.map((r) => ({
+    bookingId: r.bookingId,
+    bookingNumber: r.bookingNumber,
+    customerId: r.customerId,
+    customerNumber: r.customerNumber,
+    customerFirstName: r.customerFirstName,
+    customerLastName: r.customerLastName,
+    customerPhone: r.customerPhone,
+    roundInstanceId: r.roundInstanceId,
+    date: r.date,
+    roundLabel: r.roundLabel,
+    startTime: hhmm(r.startTime),
+    endTime: hhmm(r.endTime),
+    ticketType: r.ticketType as TicketType,
+    additionalCompanions: r.additionalCompanions,
+    source: r.source as TicketSource,
+    status: r.status as TicketStatus,
+    punchCardSerial: r.punchCardSerial,
+    wcOrderId: r.wcOrderId,
+    createdAt: r.createdAt instanceof Date ? r.createdAt.toISOString() : String(r.createdAt),
+    usedAt: r.usedAt instanceof Date ? r.usedAt.toISOString() : (r.usedAt as string | null),
+  }));
+
+  return { rows, total, summary };
 };

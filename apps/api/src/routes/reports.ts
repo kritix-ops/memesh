@@ -5,11 +5,13 @@ import {
   db,
   entriesReport,
   revenueReport,
+  ticketsReport,
   type CancellationsReportFilters,
   type CardsReportFilters,
   type CustomersReportFilters,
   type EntriesReportFilters,
   type RevenueReportFilters,
+  type TicketsReportFilters,
 } from '@memesh/db';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
@@ -74,6 +76,23 @@ const cancellationsQuery = z.object({
   q: z.string().trim().min(1).max(120).optional(),
   limit: z.coerce.number().int().min(1).max(1000).optional(),
   offset: z.coerce.number().int().min(0).optional(),
+});
+
+// Round-instance dates are calendar days, not instants — a plain YYYY-MM-DD
+// compared against the DATE column, no timezone math.
+const plainDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+
+const ticketsQuery = z.object({
+  q: z.string().trim().min(1).max(120).optional(),
+  status: z.enum(['confirmed', 'used', 'cancelled', 'expired']).optional(),
+  source: z.enum(['paid', 'punchcard', 'gift', 'manual']).optional(),
+  ticketType: z.enum(['child_under_walking', 'child_over_walking']).optional(),
+  dateFrom: plainDate.optional(),
+  dateTo: plainDate.optional(),
+  limit: z.coerce.number().int().min(1).max(1000).optional(),
+  offset: z.coerce.number().int().min(0).optional(),
+  sort: z.enum(['date', 'createdAt', 'bookingNumber']).optional(),
+  sortDir: z.enum(['asc', 'desc']).optional(),
 });
 
 const toDate = (s: string | undefined): Date | undefined =>
@@ -209,6 +228,30 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
         { rows: page.rows.length, total: page.total, cards: page.cardCount, entries: page.entryCount },
         '[reports.cancellations]',
       );
+      return page;
+    },
+  );
+
+  fastify.get(
+    '/admin/reports/tickets',
+    { preHandler: requireRoleHook(...MANAGER_OR_ADMIN) },
+    async (request, reply) => {
+      const parsed = ticketsQuery.safeParse(request.query);
+      if (!parsed.success) return reply.code(400).send({ error: 'invalid_query' });
+      const f: TicketsReportFilters = {};
+      if (parsed.data.q !== undefined) f.q = parsed.data.q;
+      if (parsed.data.status) f.status = parsed.data.status;
+      if (parsed.data.source) f.source = parsed.data.source;
+      if (parsed.data.ticketType) f.ticketType = parsed.data.ticketType;
+      if (parsed.data.dateFrom) f.dateFrom = parsed.data.dateFrom;
+      if (parsed.data.dateTo) f.dateTo = parsed.data.dateTo;
+      if (parsed.data.limit !== undefined) f.limit = parsed.data.limit;
+      if (parsed.data.offset !== undefined) f.offset = parsed.data.offset;
+      if (parsed.data.sort) f.sort = parsed.data.sort;
+      if (parsed.data.sortDir) f.sortDir = parsed.data.sortDir;
+
+      const page = await ticketsReport(db, f);
+      request.log.info({ rows: page.rows.length, total: page.total }, '[reports.tickets]');
       return page;
     },
   );
