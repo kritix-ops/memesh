@@ -217,3 +217,71 @@ export const fetchCancellationsReport = (
   f: CancellationsReportFilters = {},
 ): Promise<ApiResult<CancellationsReportPage>> =>
   apiRequest(`/admin/reports/cancellations${buildQS(f)}`);
+
+// ---------------------------------------------------------------------------
+// Tickets report — entrance tickets (bookings). The single data source for
+// both ניהול כרטיסים and the דוחות section.
+// ---------------------------------------------------------------------------
+
+export type TicketStatus = 'confirmed' | 'used' | 'cancelled' | 'expired';
+export type TicketSource = 'paid' | 'punchcard' | 'gift' | 'manual';
+export type TicketType = 'child_under_walking' | 'child_over_walking';
+
+export interface TicketsReportRow {
+  bookingId: string;
+  bookingNumber: string | null;
+  customerId: string;
+  customerNumber: string | null;
+  customerFirstName: string | null;
+  customerLastName: string | null;
+  customerPhone: string | null;
+  roundInstanceId: string;
+  /** YYYY-MM-DD round date. */
+  date: string;
+  roundLabel: string;
+  /** "HH:MM" */
+  startTime: string;
+  endTime: string;
+  ticketType: TicketType;
+  additionalCompanions: number;
+  source: TicketSource;
+  status: TicketStatus;
+  punchCardSerial: string | null;
+  wcOrderId: string | null;
+  createdAt: string;
+  usedAt: string | null;
+}
+
+export interface TicketsReportFilters {
+  q?: string;
+  status?: TicketStatus;
+  source?: TicketSource;
+  ticketType?: TicketType;
+  /** Inclusive round-date bounds, YYYY-MM-DD. */
+  dateFrom?: string;
+  dateTo?: string;
+  limit?: number;
+  offset?: number;
+  sort?: 'date' | 'createdAt' | 'bookingNumber';
+  sortDir?: 'asc' | 'desc';
+}
+
+/** Status distribution of the filtered set, computed WITHOUT the status filter. */
+export interface TicketsReportSummary {
+  confirmed: number;
+  used: number;
+  cancelled: number;
+  expired: number;
+  companions: number;
+}
+
+export interface TicketsReportPage {
+  rows: TicketsReportRow[];
+  total: number;
+  summary: TicketsReportSummary;
+}
+
+export const fetchTicketsReport = (
+  f: TicketsReportFilters = {},
+): Promise<ApiResult<TicketsReportPage>> =>
+  apiRequest(`/admin/reports/tickets${buildQS(f)}`);

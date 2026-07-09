@@ -160,3 +160,16 @@ export const fromDateInput = (s: string): Date | null => {
   if (!m) return null;
   return startOfDay(new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
 };
+
+/**
+ * Today's date at the venue (Asia/Jerusalem), YYYY-MM-DD — the client-side
+ * mirror of the server's venueTodayIso. Round dates are venue-calendar days,
+ * so "is this booking today?" must never use the browser's local day.
+ */
+export const venueTodayIso = (now: Date = new Date()): string =>
+  new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Jerusalem',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(now);

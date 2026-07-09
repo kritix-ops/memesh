@@ -67,6 +67,7 @@ import { ReassignCardModal } from './ReassignCardModal';
 import { Reports } from './reports/Reports';
 import { Rounds } from './Rounds';
 import { Settings } from './settings/Settings';
+import { Tickets } from './Tickets';
 
 const ORANGE = '#ffa983';
 const INK = '#2d3436';
@@ -108,7 +109,16 @@ const ghostBtn: CSSProperties = {
   cursor: 'pointer',
 };
 
-type View = 'dashboard' | 'rounds' | 'holidays' | 'customers' | 'cards' | 'staff' | 'reports' | 'settings';
+type View =
+  | 'dashboard'
+  | 'rounds'
+  | 'holidays'
+  | 'customers'
+  | 'cards'
+  | 'tickets'
+  | 'staff'
+  | 'reports'
+  | 'settings';
 // `adminOnly` items are filtered out of the nav for managers (and any other
 // non-admin role). The server enforces the same gate; this is UX only.
 const NAV: { key: View; label: string; adminOnly?: boolean }[] = [
@@ -117,6 +127,7 @@ const NAV: { key: View; label: string; adminOnly?: boolean }[] = [
   { key: 'holidays', label: 'חגים ושבתות', adminOnly: true },
   { key: 'customers', label: 'ניהול לקוחות' },
   { key: 'cards', label: 'ניהול כרטיסיות' },
+  { key: 'tickets', label: 'ניהול כרטיסים' },
   { key: 'staff', label: 'ניהול צוות' },
   { key: 'reports', label: 'דוחות' },
   { key: 'settings', label: 'הגדרות', adminOnly: true },
@@ -258,6 +269,7 @@ export function AdminApp() {
         {view === 'holidays' && <Holidays />}
         {view === 'customers' && <Customers />}
         {view === 'cards' && <Cards />}
+        {view === 'tickets' && <Tickets />}
         {view === 'staff' && <Staff />}
         {view === 'reports' && <Reports />}
         {view === 'settings' && <Settings />}

@@ -5,14 +5,23 @@ import { CustomersReport } from './CustomersReport';
 import { EntriesReport } from './EntriesReport';
 import { OverviewReport } from './OverviewReport';
 import { RevenueReport } from './RevenueReport';
+import { TicketsReport } from './TicketsReport';
 import { card as cardStyle, MUTED, ORANGE, SHADOW } from './shared';
 
-type SectionKey = 'overview' | 'customers' | 'cards' | 'entries' | 'cancellations' | 'revenue';
+type SectionKey =
+  | 'overview'
+  | 'customers'
+  | 'cards'
+  | 'tickets'
+  | 'entries'
+  | 'cancellations'
+  | 'revenue';
 
 const SECTIONS: { key: SectionKey; label: string }[] = [
   { key: 'overview', label: 'סקירה' },
   { key: 'customers', label: 'לקוחות' },
   { key: 'cards', label: 'כרטיסיות' },
+  { key: 'tickets', label: 'כרטיסים' },
   { key: 'entries', label: 'כניסות' },
   { key: 'cancellations', label: 'ביטולים' },
   { key: 'revenue', label: 'הכנסות' },
@@ -84,6 +93,7 @@ export function Reports() {
         {active === 'overview' && <OverviewReport />}
         {active === 'customers' && <CustomersReport />}
         {active === 'cards' && <CardsReport />}
+        {active === 'tickets' && <TicketsReport />}
         {active === 'entries' && <EntriesReport />}
         {active === 'cancellations' && <CancellationsReport />}
         {active === 'revenue' && <RevenueReport />}
