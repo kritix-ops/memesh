@@ -304,12 +304,51 @@ test('listCustomerRoundBookings: confirmed upcoming only, owner-scoped', async (
     { roundInstanceId: instId, customerId: other.id, ticketType: 'child_over_walking', source: 'paid', status: 'confirmed', confirmedAt: NOW, barcodeToken: 'tok-b' },
   ]);
 
-  const rows = await listCustomerRoundBookings(db, mine.id, NOW);
+  const rows = await listCustomerRoundBookings(db, mine.id, {}, NOW);
   assert.equal(rows.length, 1, 'only my confirmed upcoming booking');
   assert.equal(rows[0]!.barcodeToken, 'tok-a');
   assert.equal(rows[0]!.status, 'confirmed');
   assert.equal(rows[0]!.date, '2026-07-01');
   assert.equal(rows[0]!.startTime, '16:00');
+});
+
+test('listCustomerRoundBookings: scopes — upcoming / past / cancelled / all + period', async () => {
+  const db = await freshDb();
+  const created = await createRound(db, baseInput, NOW);
+  assert.equal(created.ok, true);
+  if (!created.ok) return;
+  const todayId = await todayInstanceId(db, created.round.id);
+  // Materialization only runs forward, so insert a past instance by hand.
+  const pastId = (
+    await db
+      .insert(roundInstances)
+      .values({ roundId: created.round.id, date: '2026-06-15', capacity: 10 })
+      .returning({ id: roundInstances.id })
+  )[0]!.id;
+  const mine = await createCustomer(db, { firstName: 'א', lastName: 'ב', phone: '0500000401' });
+
+  await db.insert(bookings).values([
+    { roundInstanceId: todayId, customerId: mine.id, ticketType: 'child_over_walking', source: 'paid', status: 'confirmed', confirmedAt: NOW, barcodeToken: 'up' },
+    { roundInstanceId: pastId, customerId: mine.id, ticketType: 'child_over_walking', source: 'punchcard', status: 'used', usedAt: new Date('2026-06-15T12:00:00Z'), barcodeToken: 'past' },
+    { roundInstanceId: todayId, customerId: mine.id, ticketType: 'child_over_walking', source: 'paid', status: 'cancelled', barcodeToken: 'cx' },
+  ]);
+
+  const up = await listCustomerRoundBookings(db, mine.id, { scope: 'upcoming' }, NOW);
+  assert.deepEqual(up.map((r) => r.barcodeToken), ['up']);
+
+  const past = await listCustomerRoundBookings(db, mine.id, { scope: 'past' }, NOW);
+  assert.deepEqual(past.map((r) => r.barcodeToken), ['past']);
+  assert.equal(past[0]!.status, 'used');
+
+  const cancelled = await listCustomerRoundBookings(db, mine.id, { scope: 'cancelled' }, NOW);
+  assert.deepEqual(cancelled.map((r) => r.status), ['cancelled']);
+
+  const all = await listCustomerRoundBookings(db, mine.id, { scope: 'all' }, NOW);
+  assert.equal(all.length, 3, 'confirmed + used + cancelled');
+
+  // A period lower-bound after the historic booking excludes it.
+  const bounded = await listCustomerRoundBookings(db, mine.id, { scope: 'past', sinceIso: '2026-06-20' }, NOW);
+  assert.equal(bounded.length, 0);
 });
 
 test('countUpcomingInstances buckets by round', async () => {

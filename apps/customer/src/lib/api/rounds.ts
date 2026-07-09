@@ -8,13 +8,15 @@ export interface CustomerRoundBooking {
   /** Human-friendly ticket number (R-YYYYMMDD-NNNN) — the manual door fallback. */
   bookingNumber: string | null;
   roundInstanceId: string;
+  /** The card this booking was made from (source='punchcard'), else null. */
+  punchCardId: string | null;
   label: string;
   /** YYYY-MM-DD */
   date: string;
   /** "HH:MM" */
   startTime: string;
   endTime: string;
-  status: 'confirmed' | 'used';
+  status: 'confirmed' | 'used' | 'cancelled';
   ticketType: 'child_under_walking' | 'child_over_walking';
   additionalCompanions: number;
   source: 'paid' | 'punchcard' | 'gift' | 'manual';
@@ -33,8 +35,19 @@ export interface AvailabilityRound {
   isClosed: boolean;
 }
 
-export const getMyRoundBookings = (): Promise<ApiResult<{ bookings: CustomerRoundBooking[] }>> =>
-  apiRequest('/rounds/my-bookings', { audience: 'customer' });
+/** Booking slice for the customer-area filters (Yanay 2026-07-08). Default
+ *  'upcoming' preserves the personal-area view; `since` is the period bound. */
+export type CustomerBookingScope = 'upcoming' | 'past' | 'cancelled' | 'all';
+
+export const getMyRoundBookings = (
+  opts: { scope?: CustomerBookingScope; since?: string } = {},
+): Promise<ApiResult<{ bookings: CustomerRoundBooking[] }>> => {
+  const params = new URLSearchParams();
+  if (opts.scope && opts.scope !== 'upcoming') params.set('scope', opts.scope);
+  if (opts.since) params.set('since', opts.since);
+  const qs = params.toString();
+  return apiRequest(`/rounds/my-bookings${qs ? `?${qs}` : ''}`, { audience: 'customer' });
+};
 
 export const getRoundAvailability = (
   date: string,

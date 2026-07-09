@@ -397,18 +397,21 @@ export interface CustomerRoundBooking {
   bookingNumber: string | null;
   /** The round_instance this booking currently sits on (for the swap picker). */
   roundInstanceId: string;
+  /** The punch card this booking was made from (source='punchcard'), else null
+   *  — lets the cards screen badge a card with its upcoming reservation. */
+  punchCardId: string | null;
   label: string;
   /** YYYY-MM-DD */
   date: string;
   /** "HH:MM" */
   startTime: string;
   endTime: string;
-  status: 'confirmed' | 'used';
+  status: 'confirmed' | 'used' | 'cancelled';
   ticketType: 'child_under_walking' | 'child_over_walking';
   additionalCompanions: number;
   /** How it was paid for — drives the cancel copy (money refund vs punch return). */
   source: 'paid' | 'punchcard' | 'gift' | 'manual';
-  /** The scannable barcode. Always present for confirmed/used bookings. */
+  /** The scannable barcode. Present for confirmed/used; null once cancelled. */
   barcodeToken: string | null;
   /**
    * A companion checkout was started but not paid yet (punchcard booking with
@@ -418,22 +421,54 @@ export interface CustomerRoundBooking {
   companionPending: boolean;
 }
 
+/** Which slice of a customer's bookings to return (customer-area filters,
+ *  Yanay 2026-07-08). Default 'upcoming' preserves the §11.3 personal-area view. */
+export type CustomerBookingScope = 'upcoming' | 'past' | 'cancelled' | 'all';
+
+export interface ListCustomerBookingsOpts {
+  scope?: CustomerBookingScope;
+  /** Lower date bound (YYYY-MM-DD) for the period chips — e.g. last 3 months. */
+  sinceIso?: string | null;
+}
+
 /**
- * A customer's active/upcoming round bookings + barcode (super-brief §11.3).
- * Confirmed or used bookings on today or a future date, chronological. Held /
- * expired / cancelled are never shown. Owner-scoped by customerId.
+ * A customer's round bookings + barcode (super-brief §11.3), sliced by `scope`:
+ *   - upcoming (default): confirmed/used on today or later — the active view.
+ *   - past: confirmed/used before today — attendance history.
+ *   - cancelled: cancelled bookings.
+ *   - all: any of the above (a cancelled booking with a future date included).
+ * `sinceIso` further bounds the date from below (period filter). Owner-scoped.
+ * Upcoming sorts soonest-first; the history scopes sort most-recent-first.
  */
 export const listCustomerRoundBookings = async (
   db: AnyPgDatabase,
   customerId: string,
+  opts: ListCustomerBookingsOpts = {},
   now: Date = new Date(),
 ): Promise<CustomerRoundBooking[]> => {
+  const scope = opts.scope ?? 'upcoming';
   const todayIso = venueTodayIso(now);
+
+  const conds = [eq(bookings.customerId, customerId)];
+  if (scope === 'upcoming') {
+    conds.push(sql`${bookings.status} IN ('confirmed','used')`);
+    conds.push(gte(roundInstances.date, todayIso));
+  } else if (scope === 'past') {
+    conds.push(sql`${bookings.status} IN ('confirmed','used')`);
+    conds.push(sql`${roundInstances.date} < ${todayIso}`);
+  } else if (scope === 'cancelled') {
+    conds.push(eq(bookings.status, 'cancelled'));
+  } else {
+    conds.push(sql`${bookings.status} IN ('confirmed','used','cancelled')`);
+  }
+  if (opts.sinceIso) conds.push(gte(roundInstances.date, opts.sinceIso));
+
   const rows = await db
     .select({
       bookingId: bookings.id,
       bookingNumber: bookings.bookingNumber,
       roundInstanceId: bookings.roundInstanceId,
+      punchCardId: bookings.punchCardId,
       label: rounds.displayName,
       date: roundInstances.date,
       startTime: rounds.startTime,
@@ -448,24 +483,20 @@ export const listCustomerRoundBookings = async (
     .from(bookings)
     .innerJoin(roundInstances, eq(roundInstances.id, bookings.roundInstanceId))
     .innerJoin(rounds, eq(rounds.id, roundInstances.roundId))
-    .where(
-      and(
-        eq(bookings.customerId, customerId),
-        sql`${bookings.status} IN ('confirmed','used')`,
-        gte(roundInstances.date, todayIso),
-      ),
-    );
+    .where(and(...conds));
 
+  const dir = scope === 'upcoming' ? 1 : -1; // history reads newest-first
   return rows
     .map((r) => ({
       bookingId: r.bookingId,
       bookingNumber: r.bookingNumber,
       roundInstanceId: r.roundInstanceId,
+      punchCardId: r.punchCardId,
       label: r.label,
       date: r.date,
       startTime: hhmm(r.startTime),
       endTime: hhmm(r.endTime),
-      status: r.status as 'confirmed' | 'used',
+      status: r.status as 'confirmed' | 'used' | 'cancelled',
       ticketType: r.ticketType,
       additionalCompanions: r.additionalCompanions,
       source: r.source,
@@ -473,7 +504,7 @@ export const listCustomerRoundBookings = async (
       companionPending:
         r.source === 'punchcard' && r.wcOrderId !== null && r.additionalCompanions === 0,
     }))
-    .sort((a, b) => `${a.date} ${a.startTime}`.localeCompare(`${b.date} ${b.startTime}`));
+    .sort((a, b) => dir * `${a.date} ${a.startTime}`.localeCompare(`${b.date} ${b.startTime}`));
 };
 
 // ---------------------------------------------------------------------------
