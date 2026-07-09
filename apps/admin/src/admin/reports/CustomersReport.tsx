@@ -5,6 +5,7 @@ import {
   type CustomersReportRow,
 } from '../../lib/api/reports';
 import { downloadCsv, presetRange, printReport, toCsv } from '../../lib/export';
+import { parseDaysInput } from './filter-inputs';
 import {
   DateRangeField,
   EmptyState,
@@ -54,8 +55,8 @@ export function CustomersReport() {
     if (source) f.source = source;
     if (marketing) f.marketingConsent = marketing === 'true';
     if (hasActive) f.hasActiveCard = hasActive === 'true';
-    const dd = Number(dormantDays);
-    if (Number.isInteger(dd) && dd > 0) f.dormantSinceDays = dd;
+    const dd = parseDaysInput(dormantDays);
+    if (dd !== undefined) f.dormantSinceDays = dd;
     return f;
   }, [q, registered, source, marketing, hasActive, dormantDays, sort, sortDir]);
 
