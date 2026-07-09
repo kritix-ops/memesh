@@ -134,7 +134,7 @@ test('record + confirm: pending order is stamped, paid order flips companions to
   assert.equal(stamped.ok, true);
 
   // Pending state is visible to the personal area.
-  const listed = await listCustomerRoundBookings(db, customerId, NOW);
+  const listed = await listCustomerRoundBookings(db, customerId, {}, NOW);
   const mine = listed.find((b) => b.bookingId === bookingId);
   assert.equal(mine?.companionPending, true);
   assert.equal(mine?.additionalCompanions, 0);
@@ -147,7 +147,7 @@ test('record + confirm: pending order is stamped, paid order flips companions to
   assert.equal(row!.additionalCompanions, 1);
   assert.equal(row!.wcOrderId, 'wc-777');
 
-  const after = await listCustomerRoundBookings(db, customerId, NOW);
+  const after = await listCustomerRoundBookings(db, customerId, {}, NOW);
   assert.equal(after.find((b) => b.bookingId === bookingId)?.companionPending, false);
 });
 

@@ -28,6 +28,7 @@ import {
   startCompanionCheckout,
   swapRoundBooking,
   type AvailabilityRound,
+  type CustomerBookingScope,
   type CustomerRoundBooking,
   type CustomerWaitlistEntry,
   type DayAvailability,
@@ -50,6 +51,27 @@ const RESEND_COOLDOWN_SEC = 60;
 const ORANGE = '#ffa983';
 const MUTED = '#636e72';
 const SHADOW = '0 4px 20px rgba(0,0,0,0.08)';
+// Design tokens from the customer-area brief (memesh-customer-area-brief.md §3).
+const INK = '#2d3436'; // primary text
+const BG = '#f5f3f0'; // page ground
+const BORDER = '#e0e0e0'; // card / divider lines
+const ORANGE_SOFT = '#fff4ef'; // active chip / nav background
+const ORANGE_INK = '#c9743f'; // orange text on light (contrast-safe)
+
+/** True below the 768px desktop breakpoint (brief §8) — drives sidebar vs. bottom-nav. */
+function useIsMobile(breakpoint = 768): boolean {
+  const [isMobile, setIsMobile] = useState(
+    typeof window !== 'undefined' ? window.innerWidth < breakpoint : false,
+  );
+  useEffect(() => {
+    const mq = window.matchMedia(`(max-width: ${breakpoint - 1}px)`);
+    const onChange = () => setIsMobile(mq.matches);
+    onChange();
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, [breakpoint]);
+  return isMobile;
+}
 
 const card: CSSProperties = {
   background: '#fff',
@@ -152,7 +174,9 @@ export function CustomerApp() {
     );
   }
   if (state.status === 'signed-out') return wrap(<CustomerLogin />);
-  return wrap(<CustomerHome profile={state.profile} />);
+  // The signed-in area brings its own full-width shell (sidebar / bottom-nav),
+  // so it is NOT wrapped in the narrow centered column used by login/loading.
+  return <CustomerHome profile={state.profile} />;
 }
 
 // ---------------------------------------------------------------------------
@@ -591,184 +615,691 @@ function humanizeCustomerAuthError(code: string): string {
 // Signed-in: home (cards + history) and profile edit
 // ---------------------------------------------------------------------------
 
-type HomeScreen = 'home' | 'profile';
+// ---------------------------------------------------------------------------
+// App shell — the signed-in area (brief §2, §8): three screens (הזמנות /
+// כרטיסיות / פרופיל) behind a desktop sidebar or a mobile bottom-nav. Data
+// (cards, bookings, waitlist) loads once here so the nav can show counts and
+// every screen reads the same lists; each screen gets its reload callbacks.
+// ---------------------------------------------------------------------------
 
-function CustomerHome({ profile }: { profile: CustomerProfile }) {
-  const [screen, setScreen] = useState<HomeScreen>('home');
-  const [savedAt, setSavedAt] = useState<number | null>(null);
+type Screen = 'bookings' | 'cards' | 'profile';
 
-  if (screen === 'profile') {
+const NAV: { key: Screen; label: string }[] = [
+  { key: 'bookings', label: 'הזמנות' },
+  { key: 'cards', label: 'כרטיסיות' },
+  { key: 'profile', label: 'פרופיל' },
+];
+
+const navItemStyle = (active: boolean): CSSProperties => ({
+  display: 'flex',
+  justifyContent: 'space-between',
+  alignItems: 'center',
+  width: '100%',
+  textAlign: 'right',
+  border: 'none',
+  background: active ? ORANGE_SOFT : 'transparent',
+  color: active ? ORANGE_INK : INK,
+  fontWeight: 600,
+  fontSize: 14.5,
+  padding: '11px 12px',
+  borderRadius: 10,
+  cursor: 'pointer',
+});
+
+const navCount = (active: boolean): CSSProperties => ({
+  fontSize: 12.5,
+  fontWeight: 600,
+  color: active ? ORANGE_INK : MUTED,
+  fontVariantNumeric: 'tabular-nums',
+});
+
+const bottomNavStyle: CSSProperties = {
+  position: 'fixed',
+  insetInline: 0,
+  bottom: 0,
+  background: '#fff',
+  borderTop: `1px solid ${BORDER}`,
+  display: 'grid',
+  gridTemplateColumns: 'repeat(3, 1fr)',
+  boxShadow: '0 -2px 12px rgba(0,0,0,0.05)',
+  zIndex: 20,
+};
+
+const bottomItemStyle = (active: boolean): CSSProperties => ({
+  border: 'none',
+  background: 'transparent',
+  cursor: 'pointer',
+  padding: '10px 0 14px',
+  fontSize: 12.5,
+  fontWeight: 600,
+  color: active ? ORANGE_INK : MUTED,
+  display: 'flex',
+  flexDirection: 'column',
+  alignItems: 'center',
+  gap: 3,
+  minHeight: 56,
+});
+
+function NavCountBadge({ n }: { n: number }) {
+  return (
+    <span
+      style={{
+        fontSize: 11,
+        fontWeight: 700,
+        background: ORANGE_SOFT,
+        color: ORANGE_INK,
+        borderRadius: 999,
+        padding: '0 7px',
+        minWidth: 18,
+        textAlign: 'center',
+        fontVariantNumeric: 'tabular-nums',
+      }}
+    >
+      {n}
+    </span>
+  );
+}
+
+function AppShell({
+  profile,
+  active,
+  counts,
+  onNavigate,
+  onSignOut,
+  children,
+}: {
+  profile: CustomerProfile;
+  active: Screen;
+  counts: Partial<Record<Screen, number>>;
+  onNavigate: (s: Screen) => void;
+  onSignOut: () => void;
+  children: ReactNode;
+}) {
+  const isMobile = useIsMobile();
+  const title = NAV.find((n) => n.key === active)?.label ?? '';
+
+  if (isMobile) {
     return (
-      <ProfileEdit
-        profile={profile}
-        onSaved={() => {
-          setSavedAt(Date.now());
-          setScreen('home');
-        }}
-        onBack={() => setScreen('home')}
-      />
+      <div style={{ direction: 'rtl', minHeight: '100vh', background: BG, display: 'flex', flexDirection: 'column' }}>
+        <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '18px 18px 6px' }}>
+          <div style={{ fontSize: 21, fontWeight: 600, color: INK }}>{title}</div>
+          <button onClick={onSignOut} style={{ border: 'none', background: 'transparent', color: MUTED, fontSize: 13, cursor: 'pointer' }}>
+            יציאה
+          </button>
+        </header>
+        <main style={{ flex: 1, width: '100%', maxWidth: 560, margin: '0 auto', padding: '8px 16px 92px', boxSizing: 'border-box' }}>
+          {children}
+        </main>
+        <nav style={bottomNavStyle}>
+          {NAV.map((n) => (
+            <button key={n.key} onClick={() => onNavigate(n.key)} style={bottomItemStyle(active === n.key)} aria-current={active === n.key ? 'page' : undefined}>
+              <span>{n.label}</span>
+              {counts[n.key] ? <NavCountBadge n={counts[n.key]!} /> : null}
+            </button>
+          ))}
+        </nav>
+      </div>
     );
   }
 
-  return <Home profile={profile} savedAt={savedAt} onEdit={() => setScreen('profile')} />;
+  return (
+    <div style={{ direction: 'rtl', minHeight: '100vh', background: BG }}>
+      <div style={{ maxWidth: 860, margin: '0 auto', display: 'flex', gap: 22, padding: '32px 24px 64px', alignItems: 'flex-start' }}>
+        <aside style={{ ...card, width: 176, flex: 'none', position: 'sticky', top: 32, display: 'flex', flexDirection: 'column', gap: 4, padding: 16 }}>
+          <div style={{ marginBottom: 8, padding: '0 4px' }}>
+            <div style={{ fontSize: 15, fontWeight: 600, color: INK }}>
+              {profile.firstName} {profile.lastName}
+            </div>
+            <div style={{ fontSize: 12.5, color: MUTED }} dir="ltr">
+              {profile.phone}
+            </div>
+          </div>
+          {NAV.map((n) => (
+            <button key={n.key} onClick={() => onNavigate(n.key)} style={navItemStyle(active === n.key)} aria-current={active === n.key ? 'page' : undefined}>
+              <span>{n.label}</span>
+              {counts[n.key] ? <span style={navCount(active === n.key)}>{counts[n.key]}</span> : null}
+            </button>
+          ))}
+          <div style={{ borderTop: `1px solid ${BORDER}`, marginTop: 6, paddingTop: 6 }}>
+            <button onClick={onSignOut} style={navItemStyle(false)}>
+              יציאה
+            </button>
+          </div>
+        </aside>
+        <main style={{ flex: 1, minWidth: 0, maxWidth: 600 }}>{children}</main>
+      </div>
+    </div>
+  );
 }
 
-function Home({
-  profile,
-  savedAt,
-  onEdit,
-}: {
-  profile: CustomerProfile;
-  savedAt: number | null;
-  onEdit: () => void;
-}) {
+function CustomerHome({ profile }: { profile: CustomerProfile }) {
   const { signOut } = useCustomerSession();
+  const [screen, setScreen] = useState<Screen>('bookings');
   const [cards, setCards] = useState<ApiPunchCard[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [cardsError, setCardsError] = useState<string | null>(null);
   const [roundBookings, setRoundBookings] = useState<CustomerRoundBooking[] | null>(null);
   const [waitlist, setWaitlist] = useState<CustomerWaitlistEntry[] | null>(null);
+  const [savedAt, setSavedAt] = useState<number | null>(null);
 
-  // The customer's active waitlist entries (waiting + notified offers).
+  const loadCards = async () => {
+    const res = await getMyCards();
+    if (res.ok) setCards(res.data.cards);
+    else setCardsError(res.error);
+  };
+  const loadRoundBookings = async () => {
+    const res = await getMyRoundBookings();
+    if (res.ok) setRoundBookings(res.data.bookings);
+  };
   const loadWaitlist = async () => {
     const res = await getMyWaitlist();
     if (res.ok) setWaitlist(res.data.entries);
   };
 
-  // Load /me/cards. The customer cookie was already proven by the parent
-  // provider's /me hydration; this just pulls the card list. Kept callable so a
-  // punch-card booking can refresh the remaining-entries count.
-  const loadCards = async () => {
-    const res = await getMyCards();
-    if (res.ok) setCards(res.data.cards);
-    else setError(res.error);
-  };
   useEffect(() => {
     void loadCards();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Load the customer's active/upcoming round bookings. Independent of cards —
-  // a failure here just hides the section, it doesn't block the card list.
-  // Kept as a callable so a swap can refresh the list.
-  const loadRoundBookings = async () => {
-    const res = await getMyRoundBookings();
-    if (res.ok) setRoundBookings(res.data.bookings);
-  };
-  useEffect(() => {
     void loadRoundBookings();
     void loadWaitlist();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Per-card diagnostic when the QR actually has a token to render. We log
-  // length, not value: enough to confirm the token reached the client, not
-  // enough to forge a punch from a console screenshot.
+  // Per-card diagnostic: log token length (not value) once the list lands.
   useEffect(() => {
     if (!cards) return;
     for (const c of cards) {
-      console.info('[customer card] qr rendered', {
-        serial: c.serialNumber,
-        tokenLen: c.qrToken.length,
-      });
+      console.info('[customer card] qr rendered', { serial: c.serialNumber, tokenLen: c.qrToken.length });
     }
   }, [cards]);
 
+  const counts: Partial<Record<Screen, number>> = {
+    ...(roundBookings ? { bookings: roundBookings.length } : {}),
+    ...(cards ? { cards: cards.length } : {}),
+  };
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={{ fontSize: 22, fontWeight: 600 }}>שלום, {profile.firstName}</div>
-        <button
-          onClick={() => void signOut()}
+    <AppShell
+      profile={profile}
+      active={screen}
+      counts={counts}
+      onNavigate={(s) => {
+        console.info('[customer nav] switch', { to: s });
+        setScreen(s);
+      }}
+      onSignOut={() => void signOut()}
+    >
+      {screen === 'bookings' && (
+        <BookingsScreen
+          upcoming={roundBookings}
+          waitlist={waitlist}
+          onReloadUpcoming={loadRoundBookings}
+          onReloadWaitlist={loadWaitlist}
+        />
+      )}
+      {screen === 'cards' && (
+        <CardsScreen
+          cards={cards}
+          bookings={roundBookings}
+          error={cardsError}
+          onBooked={async () => {
+            await Promise.all([loadRoundBookings(), loadCards(), loadWaitlist()]);
+          }}
+          onWaitlisted={loadWaitlist}
+          onGoToBookings={() => {
+            console.info('[customer nav] switch', { to: 'bookings', from: 'card-badge' });
+            setScreen('bookings');
+          }}
+        />
+      )}
+      {screen === 'profile' && (
+        <ProfileScreen profile={profile} savedAt={savedAt} onSaved={() => setSavedAt(Date.now())} />
+      )}
+    </AppShell>
+  );
+}
+
+const BOOKING_SCOPES: { key: CustomerBookingScope; label: string }[] = [
+  { key: 'upcoming', label: 'קרובות' },
+  { key: 'past', label: 'עבר' },
+  { key: 'cancelled', label: 'בוטלו' },
+  { key: 'all', label: 'הכל' },
+];
+
+// Period chips for the history scope (brief §4). null = no lower bound.
+const BOOKING_PERIODS: { key: string; label: string; days: number | null }[] = [
+  { key: 'm1', label: 'חודש אחרון', days: 30 },
+  { key: 'm3', label: '3 חודשים', days: 90 },
+  { key: 'm6', label: 'חצי שנה', days: 180 },
+  { key: 'y1', label: 'שנה', days: 365 },
+  { key: 'all', label: 'הכל', days: null },
+];
+
+/** YYYY-MM-DD `days` before today (local) — the period-chip lower bound. */
+function isoDaysAgo(days: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() - days);
+  return d.toISOString().slice(0, 10);
+}
+
+const EMPTY_COPY: Record<CustomerBookingScope, string> = {
+  upcoming: 'אין הזמנות קרובות. אפשר להזמין סבב ממסך הכרטיסיות.',
+  past: 'אין הזמנות שהתקיימו בטווח הזה.',
+  cancelled: 'אין הזמנות שבוטלו.',
+  all: 'עדיין אין הזמנות.',
+};
+
+// One booking as an accordion row (brief §2/§4): a summary header that expands
+// to the full card (QR + actions). The first booking opens by default.
+function CollapsibleBooking({
+  booking,
+  defaultOpen,
+  onChanged,
+}: {
+  booking: CustomerRoundBooking;
+  defaultOpen: boolean;
+  onChanged: () => void | Promise<void>;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  const pill =
+    booking.status === 'cancelled'
+      ? { text: 'בוטל', bg: '#f6e7e7', fg: '#a23a3a' }
+      : booking.status === 'used'
+        ? { text: 'נוצל', bg: '#eef1f4', fg: MUTED }
+        : null;
+  const labelHasT = labelHasTime(booking.label);
+  return (
+    <div style={{ ...card, padding: 0, overflow: 'hidden' }}>
+      <button
+        type="button"
+        onClick={() => {
+          console.info('[customer bookings] toggle card', { open: !open });
+          setOpen((o) => !o);
+        }}
+        aria-expanded={open}
+        style={{
+          width: '100%',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          gap: 10,
+          padding: '14px 16px',
+          background: 'transparent',
+          border: 'none',
+          cursor: 'pointer',
+          textAlign: 'right',
+          font: 'inherit',
+        }}
+      >
+        <span style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+          <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 8 }}>
+            <span style={{ fontSize: 15, fontWeight: 600, color: INK }}>{booking.label}</span>
+            {!labelHasT && (
+              <span style={{ fontSize: 13, color: MUTED }}>
+                {booking.startTime}–{booking.endTime}
+              </span>
+            )}
+          </span>
+          <span style={{ fontSize: 12.5, color: MUTED }}>{fmtDate(booking.date)}</span>
+        </span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {pill && (
+            <span
+              style={{
+                fontSize: 11,
+                fontWeight: 700,
+                borderRadius: 999,
+                padding: '2px 9px',
+                background: pill.bg,
+                color: pill.fg,
+              }}
+            >
+              {pill.text}
+            </span>
+          )}
+          <span
+            aria-hidden
+            style={{
+              color: '#c3bdb4',
+              fontSize: 15,
+              lineHeight: 1,
+              transform: open ? 'rotate(180deg)' : 'none',
+              transition: 'transform 0.15s',
+            }}
+          >
+            ⌄
+          </span>
+        </span>
+      </button>
+      {open && (
+        <div style={{ padding: '6px 16px 18px', borderTop: `1px solid ${BORDER}` }}>
+          <RoundBookingCard booking={booking} onSwapped={onChanged} compact />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BookingsScreen({
+  upcoming,
+  waitlist,
+  onReloadUpcoming,
+  onReloadWaitlist,
+}: {
+  upcoming: CustomerRoundBooking[] | null;
+  waitlist: CustomerWaitlistEntry[] | null;
+  onReloadUpcoming: () => void | Promise<void>;
+  onReloadWaitlist: () => void | Promise<void>;
+}) {
+  const [scope, setScope] = useState<CustomerBookingScope>('upcoming');
+  const [periodKey, setPeriodKey] = useState('all');
+  const [others, setOthers] = useState<CustomerRoundBooking[] | null>(null);
+  const [othersError, setOthersError] = useState(false);
+  const [reloadNonce, setReloadNonce] = useState(0);
+
+  const period = BOOKING_PERIODS.find((p) => p.key === periodKey) ?? BOOKING_PERIODS[4]!;
+  const sinceIso = scope === 'past' && period.days ? isoDaysAgo(period.days) : undefined;
+
+  // Non-upcoming scopes fetch their own slice; upcoming reuses the parent list.
+  useEffect(() => {
+    if (scope === 'upcoming') return;
+    let cancelled = false;
+    setOthers(null);
+    setOthersError(false);
+    console.info('[customer bookings] fetch', { scope, sinceIso });
+    void (async () => {
+      const res = await getMyRoundBookings({ scope, ...(sinceIso ? { since: sinceIso } : {}) });
+      if (cancelled) return;
+      if (res.ok) setOthers(res.data.bookings);
+      else setOthersError(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [scope, sinceIso, reloadNonce]);
+
+  const onCardChanged = async () => {
+    await onReloadUpcoming();
+    if (scope !== 'upcoming') setReloadNonce((n) => n + 1);
+  };
+
+  const list = scope === 'upcoming' ? upcoming : others;
+  const showWaitlist = scope === 'upcoming' && waitlist !== null && waitlist.length > 0;
+
+  const chip = (active: boolean): CSSProperties => ({
+    border: `1.5px solid ${active ? ORANGE : BORDER}`,
+    background: active ? ORANGE_SOFT : '#fff',
+    color: active ? ORANGE_INK : MUTED,
+    borderRadius: 999,
+    padding: '6px 14px',
+    fontSize: 13,
+    fontWeight: 600,
+    cursor: 'pointer',
+  });
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {/* status segmented control */}
+      <div
+        style={{
+          display: 'inline-flex',
+          background: '#fff',
+          border: `1px solid ${BORDER}`,
+          borderRadius: 999,
+          padding: 3,
+          gap: 2,
+          alignSelf: 'flex-start',
+          maxWidth: '100%',
+          overflowX: 'auto',
+        }}
+      >
+        {BOOKING_SCOPES.map((s) => {
+          const active = scope === s.key;
+          return (
+            <button
+              key={s.key}
+              type="button"
+              onClick={() => {
+                console.info('[customer bookings] scope', { to: s.key });
+                setScope(s.key);
+              }}
+              style={{
+                border: 'none',
+                background: active ? ORANGE_SOFT : 'transparent',
+                color: active ? ORANGE_INK : MUTED,
+                borderRadius: 999,
+                padding: '7px 16px',
+                fontSize: 13.5,
+                fontWeight: 600,
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {s.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* period chips — only for the past scope */}
+      {scope === 'past' && (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          {BOOKING_PERIODS.map((p) => (
+            <button key={p.key} type="button" onClick={() => setPeriodKey(p.key)} style={chip(periodKey === p.key)}>
+              {p.label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {othersError ? (
+        <div style={{ ...card, color: '#a23a3a', textAlign: 'center' }}>
+          לא הצלחנו לטעון את ההזמנות. נסו שוב.
+        </div>
+      ) : list === null ? (
+        <div style={{ ...card, color: MUTED, textAlign: 'center' }}>טוען…</div>
+      ) : list.length === 0 && !showWaitlist ? (
+        <div style={{ ...card, color: MUTED, textAlign: 'center' }}>{EMPTY_COPY[scope]}</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {list.map((b, i) => (
+            <CollapsibleBooking
+              key={b.bookingId}
+              booking={b}
+              defaultOpen={i === 0 && scope === 'upcoming'}
+              onChanged={onCardChanged}
+            />
+          ))}
+        </div>
+      )}
+
+      {showWaitlist && (
+        <div>
+          <div style={{ fontWeight: 600, margin: '6px 0 10px', color: INK }}>רשימת ההמתנה שלי</div>
+          {waitlist!.map((w) => (
+            <WaitlistEntryCard key={w.entryId} entry={w} onChanged={onReloadWaitlist} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// One punch card as an accordion row (brief §5): collapsed shows a summary
+// (remaining / total + expiry); open shows the dots visual, QR, a badge for any
+// upcoming reservation made from this card, and the "הזמנת סבב" picker.
+function CollapsibleCard({
+  card: c,
+  defaultOpen,
+  linkedUpcoming,
+  onGoToBookings,
+  onBooked,
+  onWaitlisted,
+}: {
+  card: ApiPunchCard;
+  defaultOpen: boolean;
+  linkedUpcoming: CustomerRoundBooking[];
+  onGoToBookings: () => void;
+  onBooked: () => void | Promise<void>;
+  onWaitlisted: () => void | Promise<void>;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  const remaining = c.totalEntries - c.usedEntries;
+  const expiry = c.expiresAt === null ? 'ללא תפוגה' : `תוקף עד ${fmtDate(yyyyMmDd(c.expiresAt))}`;
+  const next = linkedUpcoming[0];
+  return (
+    <div style={{ ...card, padding: 0, overflow: 'hidden', ...(c.isGift && giftCardAccent) }}>
+      <button
+        type="button"
+        onClick={() => {
+          console.info('[customer cards] toggle card', { open: !open });
+          setOpen((o) => !o);
+        }}
+        aria-expanded={open}
+        style={{
+          width: '100%',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          gap: 10,
+          padding: '14px 16px',
+          background: 'transparent',
+          border: 'none',
+          cursor: 'pointer',
+          textAlign: 'right',
+          font: 'inherit',
+        }}
+      >
+        <span style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+          <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 8 }}>
+            <span style={{ fontSize: 15, fontWeight: 600, color: INK }}>
+              {c.isGift ? 'כרטיסייה במתנה' : 'כרטיסייה'}
+            </span>
+            <span style={{ fontSize: 12, color: MUTED }} dir="ltr">
+              {c.serialNumber}
+            </span>
+          </span>
+          <span style={{ fontSize: 12.5, color: MUTED }}>
+            נותרו {remaining} מתוך {c.totalEntries} כניסות · {expiry}
+          </span>
+        </span>
+        <span
+          aria-hidden
           style={{
-            border: '1.5px solid #e9e0d9',
-            background: '#fff',
-            color: MUTED,
-            borderRadius: 9,
-            padding: '6px 12px',
-            fontSize: 13,
-            cursor: 'pointer',
+            color: '#c3bdb4',
+            fontSize: 15,
+            lineHeight: 1,
+            transform: open ? 'rotate(180deg)' : 'none',
+            transition: 'transform 0.15s',
           }}
         >
-          התנתק
-        </button>
-      </div>
-      {savedAt !== null && (
+          ⌄
+        </span>
+      </button>
+      {open && (
         <div
           style={{
-            ...card,
-            background: '#f0f5e3',
-            boxShadow: 'none',
-            color: '#6f8f37',
-            padding: '12px 16px',
+            padding: '8px 16px 20px',
+            borderTop: `1px solid ${BORDER}`,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: 16,
           }}
         >
+          {c.isGift && <GiftBadge buyerName={c.giftBuyerFirstName ?? null} />}
+          <PunchCard used={c.usedEntries} total={c.totalEntries} compact />
+          <MemeshQr value={c.qrToken} size={180} title={`קוד QR — ${c.serialNumber}`} />
+          {next && (
+            <button
+              type="button"
+              onClick={onGoToBookings}
+              style={{
+                width: '100%',
+                border: `1px solid #f0d9b8`,
+                background: ORANGE_SOFT,
+                color: '#8a5a12',
+                borderRadius: 10,
+                padding: '10px 14px',
+                fontSize: 13,
+                cursor: 'pointer',
+                textAlign: 'right',
+              }}
+            >
+              יש לך הזמנה עתידית מכרטיסייה זו ·{' '}
+              <span dir="ltr" style={{ unicodeBidi: 'isolate' }}>
+                {fmtDate(next.date)} {next.startTime}
+              </span>{' '}
+              ›
+            </button>
+          )}
+          {c.isActive && remaining > 0 && (
+            <PunchRoundBooking punchCard={c} onBooked={onBooked} onWaitlisted={onWaitlisted} />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CardsScreen({
+  cards,
+  bookings,
+  error,
+  onBooked,
+  onWaitlisted,
+  onGoToBookings,
+}: {
+  cards: ApiPunchCard[] | null;
+  bookings: CustomerRoundBooking[] | null;
+  error: string | null;
+  onBooked: () => void | Promise<void>;
+  onWaitlisted: () => void | Promise<void>;
+  onGoToBookings: () => void;
+}) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {error ? (
+        <div style={{ ...card, color: '#a23a3a', textAlign: 'center' }}>
+          לא הצלחנו לטעון את הכרטיסיות. רעננו את הדף.
+        </div>
+      ) : cards === null ? (
+        <div style={{ ...card, color: MUTED, textAlign: 'center' }}>טוען…</div>
+      ) : cards.length === 0 ? (
+        <div style={{ ...card, color: MUTED, textAlign: 'center' }}>אין כרטיסיות פעילות.</div>
+      ) : (
+        cards.map((c, i) => (
+          <CollapsibleCard
+            key={c.id}
+            card={c}
+            defaultOpen={i === 0}
+            linkedUpcoming={(bookings ?? []).filter(
+              (b) => b.punchCardId === c.id && b.status === 'confirmed',
+            )}
+            onGoToBookings={onGoToBookings}
+            onBooked={onBooked}
+            onWaitlisted={onWaitlisted}
+          />
+        ))
+      )}
+    </div>
+  );
+}
+
+function ProfileScreen({
+  profile,
+  savedAt,
+  onSaved,
+}: {
+  profile: CustomerProfile;
+  savedAt: number | null;
+  onSaved: () => void;
+}) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {savedAt !== null && (
+        <div style={{ ...card, background: '#f0f5e3', boxShadow: 'none', color: '#6f8f37', padding: '12px 16px' }}>
           הפרטים נשמרו
         </div>
       )}
-      {roundBookings && roundBookings.length > 0 && (
-        <div>
-          <div style={{ fontWeight: 600, marginBottom: 10 }}>הסבבים שלי</div>
-          {roundBookings.map((b) => (
-            <RoundBookingCard key={b.bookingId} booking={b} onSwapped={loadRoundBookings} />
-          ))}
-        </div>
-      )}
-      {waitlist && waitlist.length > 0 && (
-        <div>
-          <div style={{ fontWeight: 600, marginBottom: 10 }}>רשימת ההמתנה שלי</div>
-          {waitlist.map((w) => (
-            <WaitlistEntryCard key={w.entryId} entry={w} onChanged={loadWaitlist} />
-          ))}
-        </div>
-      )}
-      <div>
-        <div style={{ fontWeight: 600, marginBottom: 10 }}>כרטיסיות פעילות</div>
-        {error && (
-          <div style={{ ...card, color: '#a23a3a', textAlign: 'center' }}>
-            לא הצלחנו לטעון את הכרטיסיות. רעננו את הדף.
-          </div>
-        )}
-        {!error && cards === null && (
-          <div style={{ ...card, color: MUTED, textAlign: 'center' }}>טוען…</div>
-        )}
-        {cards && cards.length === 0 && (
-          <div style={{ ...card, color: MUTED, textAlign: 'center' }}>אין כרטיסיות פעילות.</div>
-        )}
-        {cards?.map((c) => (
-          <div
-            key={c.id}
-            style={{
-              ...card,
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              gap: 16,
-              marginBottom: 12,
-              ...(c.isGift && giftCardAccent),
-            }}
-          >
-            {c.isGift && <GiftBadge buyerName={c.giftBuyerFirstName ?? null} />}
-            <PunchCard used={c.usedEntries} total={c.totalEntries} compact />
-            <MemeshQr value={c.qrToken} size={180} title={`קוד QR — ${c.serialNumber}`} />
-            <div style={{ fontSize: 13, color: MUTED }}>{c.serialNumber}</div>
-            <div style={{ fontSize: 13, color: MUTED }}>
-              {c.expiresAt === null ? 'ללא תפוגה' : `תוקף עד ${fmtDate(yyyyMmDd(c.expiresAt))}`}
-            </div>
-            {c.isActive && c.usedEntries < c.totalEntries && (
-              <PunchRoundBooking
-                punchCard={c}
-                onBooked={async () => {
-                  await Promise.all([loadRoundBookings(), loadCards(), loadWaitlist()]);
-                }}
-                onWaitlisted={loadWaitlist}
-              />
-            )}
-          </div>
-        ))}
-      </div>
-      <button style={primaryBtn} onClick={onEdit}>
-        עריכת פרטים
-      </button>
+      <ProfileEdit profile={profile} onSaved={onSaved} />
     </div>
   );
 }
@@ -1717,9 +2248,13 @@ function WaitlistEntryCard({
 function RoundBookingCard({
   booking,
   onSwapped,
+  compact = false,
 }: {
   booking: CustomerRoundBooking;
   onSwapped: () => void | Promise<void>;
+  /** Inside the accordion: drop the card chrome + the label/date lines (the
+   *  collapsible header carries them) and render only the body. */
+  compact?: boolean;
 }) {
   const [picking, setPicking] = useState(false);
   const [confirmingCancel, setConfirmingCancel] = useState(false);
@@ -1828,22 +2363,21 @@ function RoundBookingCard({
 
   return (
     <div
-      style={{
-        ...card,
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        gap: 14,
-        marginBottom: 12,
-      }}
+      style={
+        compact
+          ? { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14, width: '100%' }
+          : { ...card, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14, marginBottom: 12 }
+      }
     >
-      <div style={{ fontSize: 16, fontWeight: 600 }}>{booking.label}</div>
-      <div style={{ fontSize: 13, color: MUTED }}>
-        {labelHasTime(booking.label)
-          ? fmtDate(booking.date)
-          : `${fmtDate(booking.date)} · ${booking.startTime}–${booking.endTime}`}
-      </div>
-      {booking.barcodeToken && (
+      {!compact && <div style={{ fontSize: 16, fontWeight: 600 }}>{booking.label}</div>}
+      {!compact && (
+        <div style={{ fontSize: 13, color: MUTED }}>
+          {labelHasTime(booking.label)
+            ? fmtDate(booking.date)
+            : `${fmtDate(booking.date)} · ${booking.startTime}–${booking.endTime}`}
+        </div>
+      )}
+      {booking.barcodeToken && booking.status !== 'cancelled' && (
         <MemeshQr value={booking.barcodeToken} size={180} title={`ברקוד — ${booking.label}`} />
       )}
       {booking.bookingNumber && (
@@ -2038,7 +2572,8 @@ function ProfileEdit({
 }: {
   profile: CustomerProfile;
   onSaved: () => void;
-  onBack: () => void;
+  /** Omitted inside the app shell, where the nav replaces a back button. */
+  onBack?: () => void;
 }) {
   const { setProfile } = useCustomerSession();
   const [firstName, setFirstName] = useState(profile.firstName);
@@ -2080,7 +2615,7 @@ function ProfileEdit({
 
   return (
     <div>
-      <BackButton onClick={onBack} />
+      {onBack && <BackButton onClick={onBack} />}
       <form onSubmit={onSubmit} style={card}>
         <div style={{ fontSize: 20, fontWeight: 600, marginBottom: 14 }}>עריכת פרטים</div>
         <Labeled label="שם פרטי">

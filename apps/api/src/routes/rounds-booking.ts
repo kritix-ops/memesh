@@ -249,13 +249,19 @@ export const roundsBookingRoutes: FastifyPluginAsync = async (fastify) => {
     },
   );
 
-  // The signed-in customer's active/upcoming round bookings + barcodes
-  // (super-brief §11.3). Owner-scoped to the session customer.
+  // The signed-in customer's round bookings + barcodes (super-brief §11.3).
+  // Owner-scoped. `?scope=upcoming|past|cancelled|all` drives the customer-area
+  // filters (Yanay 2026-07-08); default upcoming keeps the original view.
+  // `?since=YYYY-MM-DD` is the period lower-bound for the history chips.
   fastify.get('/rounds/my-bookings', { preHandler: requireCustomer }, async (request, reply) => {
     const customerId = request.customer?.id;
     if (!customerId) return reply.code(401).send({ error: 'unauthorized' });
-    const rows = await listCustomerRoundBookings(db, customerId);
-    request.log.info({ customerId, bookings: rows.length }, '[rounds my-bookings]');
+    const q = request.query as { scope?: string; since?: string };
+    const scope =
+      q.scope === 'past' || q.scope === 'cancelled' || q.scope === 'all' ? q.scope : 'upcoming';
+    const sinceIso = q.since && DATE_RE.test(q.since) ? q.since : null;
+    const rows = await listCustomerRoundBookings(db, customerId, { scope, sinceIso });
+    request.log.info({ customerId, scope, bookings: rows.length }, '[rounds my-bookings]');
     return { bookings: rows };
   });
 
