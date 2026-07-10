@@ -98,6 +98,30 @@ Manual QA after pasting into WP:
 9. Bump quantity via any leftover foreign stepper → snaps to 1 with the notice.
 10. Rounds switched off globally → plain "1", no modal markup in the page.
 
+## Revision 2 (2026-07-11, after Yanay's video)
+
+Yanay's 2026-07-10 23:45 video (first live test) showed three gaps:
+the checkout items table draws ITS OWN steppers and ignores
+`woocommerce_cart_item_quantity` (ticket "+" disabled via sold_individually,
+companion "+" clickable), the modal opened with no product/date attached
+(landed on a closed "today"), and a day with a single round still demanded a
+tap — the add button sat disabled on "בחרו סבב כדי להמשיך", which read as
+"doesn't let me add". Fixes, all snippet-side:
+
+1. `woocommerce_quantity_input_args` pins min/max to 1 for tickets AND the
+   companion, disabling native steppers everywhere. sold_individually was not
+   usable for the companion — WC would refuse the second companion line when
+   two children each bring an extra adult.
+2. A snippet-owned "הוספת כרטיס לילד/ה נוסף/ת" button on classic WC hooks
+   (`woocommerce_after_cart_table`, `woocommerce_review_order_before_payment`)
+   opens the modal with the first ticket line's product + date — independent
+   of theme markup.
+3. The modal root carries server-rendered fallback product/date; any opener
+   without its own data inherits them instead of submitting empty.
+4. A single mandatory round auto-selects in the picker (all picker surfaces:
+   product page, price-list popup, add-ticket modal). Real choices (2+
+   rounds, optional free-play days) still require the tap.
+
 ## Deploy
 
 - Branch `fix/wp-snippet-cart-plus-modal` → PR into `main`. Repo merge does NOT
