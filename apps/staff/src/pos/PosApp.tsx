@@ -288,6 +288,13 @@ export function PosApp() {
   const [pricing, setPricing] = useState<CardPricing>(FALLBACK_PRICING);
   const [formRules, setFormRules] = useState<CustomerFormRules>(FALLBACK_FORM_RULES);
   const [sellControls, setSellControls] = useState<PosSellControls>(FALLBACK_SELL_CONTROLS);
+  // False until getPosSellControls() settles (either way). Home hides the
+  // cashier-PIN strip while false: rendering it straight from the fail-closed
+  // fallback flashed the two PIN buttons for a second on venues that have the
+  // requirement OFF, then yanked them away when the fetch landed (Yanay
+  // 2026-07-09). The sell flow itself keeps using the fallback meanwhile —
+  // fail-closed matters there; only the Home strip waits for the truth.
+  const [sellControlsLoaded, setSellControlsLoaded] = useState(false);
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -319,6 +326,7 @@ export function PosApp() {
       } else {
         console.warn('[web pos sell-controls] fallback (fail-closed)', { error: s.error });
       }
+      setSellControlsLoaded(true);
     })();
     return () => {
       cancelled = true;
@@ -929,7 +937,7 @@ export function PosApp() {
         {screen === 'home' && (
           <Home
             firstName={sessionUser?.firstName}
-            requireSellerPin={sellControls.requireSellerPin}
+            requireSellerPin={sellControlsLoaded && sellControls.requireSellerPin}
             onGoSearch={() => setScreen('search')}
             onGoNew={() => setScreen('new')}
             onGoScan={() => setScreen('scan')}
@@ -1114,6 +1122,8 @@ function Home({
   onOpenSelfPinModal,
 }: {
   firstName: string | undefined;
+  /** True only once sell-controls have settled AND the venue requires a PIN —
+   *  the parent gates on load so the strip never flashes in and out. */
   requireSellerPin: boolean;
   onGoSearch: () => void;
   onGoNew: () => void;
