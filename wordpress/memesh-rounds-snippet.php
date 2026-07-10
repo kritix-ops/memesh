@@ -23,8 +23,10 @@
 //     "−" removes the line. Lines themselves never exceed quantity 1. A
 //     snippet-owned "הוספת כרטיס לילד/ה נוסף/ת" button (classic WC hooks)
 //     opens the same modal on themes that draw their own cart steppers and
-//     ignore the quantity filter (Yanay's 2026-07-10 video); native steppers
-//     are pinned to max 1 for tickets AND the companion line.
+//     ignore the quantity filter (Yanay's 2026-07-10 video). On such themes
+//     the behavior script also swaps each TICKET row's dead native +/- for
+//     live memesh controls, and sold_individually (now covering the companion
+//     product too — Yanay 2026-07-11) greys the companion row natively.
 //   - Punch-card upsell notice when a 2nd entry ticket is added.
 //   - Holds the seat at checkout via /rounds/hold/wc and tags the order.
 //   - Rounds mandatory ONLY when the rounds system is on: global switch via
@@ -94,19 +96,35 @@ function memesh_rounds_required_for_date($date) {
     return $required;
 }
 
-/** One-seat-per-line: quantity locked to 1 on the product page. */
+/**
+ * One-seat-per-line: quantity locked to 1. Covers the companion product too
+ * (Yanay 2026-07-11): sold_individually is the ONE signal the live theme's
+ * cart steppers actually respect — the quantity-input args below and the WC
+ * cart-quantity filter are both ignored there — so without it the companion
+ * row kept a live "+" while the ticket rows sat greyed out, exactly backwards.
+ */
 add_filter('woocommerce_is_sold_individually', function ($sold, $product) {
-    return memesh_is_round_product($product->get_id()) ? true : $sold;
+    $pid = (int) $product->get_id();
+    return memesh_is_round_product($pid) || $pid === MEMESH_COMPANION_PRODUCT_ID ? true : $sold;
+}, 10, 2);
+
+/**
+ * ...but sold_individually must NOT block the SECOND companion line: two
+ * children each bringing an extra adult means two auto-added companion lines
+ * (their distinct memesh_companion_of keys keep them separate in the cart).
+ * This filter stops WooCommerce treating the first line as "already in cart"
+ * and refusing the add. Manual companion purchases stay blocked by the
+ * validation guard further down — only the snippet's own auto-add gets here.
+ */
+add_filter('woocommerce_add_to_cart_sold_individually_found_in_cart', function ($found, $product_id) {
+    return (int) $product_id === MEMESH_COMPANION_PRODUCT_ID ? false : $found;
 }, 10, 2);
 
 /**
  * Pin the NATIVE quantity widget to exactly 1 for tickets AND the companion
  * line. Themes/plugins that draw their own +/- around
- * woocommerce_quantity_input() read these args — on the live theme's checkout
- * table the ticket's "+" was already disabled by sold_individually while the
- * companion's stayed clickable (Yanay's 2026-07-10 video). sold_individually
- * is NOT an option for the companion product: WooCommerce would then refuse
- * the SECOND companion line when two children each bring an extra adult.
+ * woocommerce_quantity_input() read these args; the live theme ignores them
+ * (it reads only sold_individually, above), but stock themes honor them.
  */
 add_filter('woocommerce_quantity_input_args', function ($args, $product) {
     $pid = $product ? (int) $product->get_id() : 0;
@@ -388,7 +406,25 @@ add_action('wp_footer', function () {
     $first = memesh_first_ticket_line();
     if (!$first) return;
     memesh_picker_script_needed(true);
+    // Cart-key → line map for the behavior script: the theme's item rows are
+    // identified by their remove link (?remove_item=<key>), and this map says
+    // which key is a ticket (t:1) vs a companion (t:0), with the ticket's
+    // product + date for the modal. Keys are WC cart-id hashes — no PII.
+    $lines = [];
+    foreach (WC()->cart->get_cart() as $key => $item) {
+        $pid = (int) $item['product_id'];
+        if (memesh_is_round_product($pid)) {
+            $lines[$key] = [
+                'p' => $pid,
+                'd' => isset($item['memesh_date']) ? $item['memesh_date'] : '',
+                't' => 1,
+            ];
+        } elseif ($pid === MEMESH_COMPANION_PRODUCT_ID) {
+            $lines[$key] = ['p' => $pid, 'd' => '', 't' => 0];
+        }
+    }
     ?>
+    <script>window.memeshCartLines = <?php echo wp_json_encode($lines); ?>;</script>
     <div class="memesh-modal" data-memesh-add-modal style="display:none"
          data-fallback-product-id="<?php echo esc_attr($first['product_id']); ?>"
          data-fallback-date="<?php echo esc_attr($first['date']); ?>">
@@ -944,6 +980,68 @@ add_action('wp_footer', function () {
             if (e.key === 'Escape') closeAddModal();
         });
 
+        // Ticket rows get a WORKING +/- even on themes that draw their own
+        // steppers and ignore every WC quantity filter (Yanay 2026-07-11: the
+        // plus belongs on the ticket, never on the companion). Each item row
+        // is identified by its remove link's cart key against the server-
+        // printed memeshCartLines map; on ticket rows the native (disabled)
+        // +/- are swapped for live memesh controls — "+" opens the add-ticket
+        // modal with the line's product and date, "−" removes the line.
+        // Companion rows are left to sold_individually, which greys them.
+        // Runs under the same observer as initAll, so AJAX re-renders re-wire.
+        var swappedRows = new WeakSet();
+        var MINUS_GLYPHS = { '-': 1, '−': 1, '–': 1 };
+        function swapNativeSteppers() {
+            var lines = window.memeshCartLines;
+            if (!lines) return;
+            var anchors = document.querySelectorAll('a[href*="remove_item="]');
+            for (var i = 0; i < anchors.length; i += 1) {
+                var a = anchors[i];
+                var m = (a.getAttribute('href') || '').match(/[?&]remove_item=([^&]+)/);
+                var line = m && lines[m[1]];
+                if (!line || line.t !== 1) continue;
+                // Walk up from the remove link to the smallest ancestor that
+                // holds a "+" control; stop before spanning a second row.
+                var row = a.parentElement;
+                var plus = null;
+                var minus = null;
+                for (var up = 0; up < 5 && row; up += 1, row = row.parentElement) {
+                    if (row.querySelector('.memesh-qty-plus')) { plus = null; break; } // already ours
+                    if (row.querySelectorAll('a[href*="remove_item="]').length > 1) break;
+                    var btns = row.querySelectorAll('button');
+                    for (var j = 0; j < btns.length; j += 1) {
+                        var txt = (btns[j].textContent || '').trim();
+                        if (txt === '+') plus = btns[j];
+                        else if (MINUS_GLYPHS[txt]) minus = btns[j];
+                    }
+                    if (plus) break;
+                }
+                if (!plus || !row || swappedRows.has(row)) continue;
+                swappedRows.add(row);
+                console.info('[memesh qty] ticket-row stepper swapped in', {
+                    productId: line.p, date: line.d || null,
+                });
+                var ours = document.createElement('button');
+                ours.type = 'button';
+                ours.className = 'memesh-qty-plus';
+                ours.setAttribute('data-product-id', String(line.p));
+                ours.setAttribute('data-date', line.d || '');
+                ours.textContent = '+';
+                ours.title = 'הוספת כרטיס נוסף';
+                plus.style.display = 'none';
+                plus.parentNode.insertBefore(ours, plus);
+                if (minus) {
+                    var rm = document.createElement('a');
+                    rm.className = 'memesh-qty-minus';
+                    rm.href = a.href;
+                    rm.textContent = '−';
+                    rm.title = 'הסרת הכרטיס מהסל';
+                    minus.style.display = 'none';
+                    minus.parentNode.insertBefore(rm, minus);
+                }
+            }
+        }
+
         // Track initialized roots in a WeakSet, not a DOM attribute: Elementor
         // opens a popup by CLONING its content into a fresh visible node, and a
         // DOM-attribute guard clones along with it — so we would skip the very
@@ -974,6 +1072,7 @@ add_action('wp_footer', function () {
                 wiredForms.add(forms[j]);
                 wireCartForm(forms[j]);
             }
+            swapNativeSteppers();
             if (fresh > 0) {
                 console.info('[memesh picker] init', { onPage: roots.length, newlyInitialized: fresh });
             }
