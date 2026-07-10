@@ -120,3 +120,23 @@ test('both pickers share the one availability window (SSOT guard)', async () => 
     `expected the hook declared once and used by both flows, found ${uses} occurrences`,
   );
 });
+
+test('a successful reschedule lands with visible feedback (Yanay 2026-07-10)', async () => {
+  // The swapped booking re-sorts into its new date slot; without a ribbon,
+  // a scroll-to and a forced-open card, the change read as "it just jumped
+  // somewhere". These pins keep the landing point visible.
+  const src = await readFile(SOURCE, 'utf8');
+  assert.match(src, /המועד שונה בהצלחה/, 'the success ribbon must exist');
+  assert.match(
+    src,
+    /scrollIntoView\(\{ behavior: 'smooth', block: 'center' \}\)/,
+    'the moved card must scroll into view',
+  );
+  // onMoved must fire only AFTER the list reload, so the highlight targets
+  // the re-sorted list, not the stale one.
+  assert.match(
+    src,
+    /await onSwapped\(\);\n(\s*\/\/[^\n]*\n)*\s*onMoved\?\.\(\);/,
+    'onMoved must follow the awaited onSwapped reload',
+  );
+});
