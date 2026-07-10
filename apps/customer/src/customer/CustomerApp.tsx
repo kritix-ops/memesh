@@ -890,13 +890,28 @@ const EMPTY_COPY: Record<CustomerBookingScope, string> = {
 function CollapsibleBooking({
   booking,
   defaultOpen,
+  justMoved = false,
   onChanged,
+  onMoved,
 }: {
   booking: CustomerRoundBooking;
   defaultOpen: boolean;
+  /** This booking was just rescheduled — open it, scroll to it, ribbon it. */
+  justMoved?: boolean;
   onChanged: () => void | Promise<void>;
+  /** Reports a successful reschedule up to the list (with this booking's id). */
+  onMoved?: (bookingId: string) => void;
 }) {
   const [open, setOpen] = useState(defaultOpen);
+  const rootRef = useRef<HTMLDivElement>(null);
+  // A rescheduled booking re-sorts into its new date slot, so without a
+  // visible landing point the swap read as "the card just jumped somewhere"
+  // (Yanay 2026-07-10). Pull the customer's eye to where it landed.
+  useEffect(() => {
+    if (!justMoved) return;
+    setOpen(true);
+    rootRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [justMoved]);
   const pill =
     booking.status === 'cancelled'
       ? { text: 'בוטל', bg: '#f6e7e7', fg: '#a23a3a' }
@@ -905,7 +920,15 @@ function CollapsibleBooking({
         : null;
   const labelHasT = labelHasTime(booking.label);
   return (
-    <div style={{ ...card, padding: 0, overflow: 'hidden' }}>
+    <div
+      ref={rootRef}
+      style={{
+        ...card,
+        padding: 0,
+        overflow: 'hidden',
+        ...(justMoved && { border: '1.5px solid #cfe0a8', background: '#f7fbee' }),
+      }}
+    >
       <button
         type="button"
         onClick={() => {
@@ -969,7 +992,28 @@ function CollapsibleBooking({
       </button>
       {open && (
         <div style={{ padding: '6px 16px 18px', borderTop: `1px solid ${BORDER}` }}>
-          <RoundBookingCard booking={booking} onSwapped={onChanged} compact />
+          {justMoved && (
+            <div
+              style={{
+                margin: '8px 0 14px',
+                padding: '10px 14px',
+                borderRadius: 10,
+                background: '#eef4e2',
+                color: '#5b7a34',
+                fontSize: 13.5,
+                fontWeight: 600,
+                textAlign: 'center',
+              }}
+            >
+              המועד שונה בהצלחה! שימו לב — זה הברקוד החדש לכניסה.
+            </div>
+          )}
+          <RoundBookingCard
+            booking={booking}
+            onSwapped={onChanged}
+            {...(onMoved ? { onMoved: () => onMoved(booking.bookingId) } : {})}
+            compact
+          />
         </div>
       )}
     </div>
@@ -992,6 +1036,15 @@ function BookingsScreen({
   const [others, setOthers] = useState<CustomerRoundBooking[] | null>(null);
   const [othersError, setOthersError] = useState(false);
   const [reloadNonce, setReloadNonce] = useState(0);
+  // The booking that just rescheduled — its card gets the success ribbon and
+  // the scroll-to. Cleared after a beat: long enough to read, short enough
+  // that the highlight never reads as a permanent status.
+  const [movedId, setMovedId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!movedId) return;
+    const t = setTimeout(() => setMovedId(null), 8000);
+    return () => clearTimeout(t);
+  }, [movedId]);
 
   const period = BOOKING_PERIODS.find((p) => p.key === periodKey) ?? BOOKING_PERIODS[4]!;
   const sinceIso = scope === 'past' && period.days ? isoDaysAgo(period.days) : undefined;
@@ -1103,7 +1156,12 @@ function BookingsScreen({
               key={b.bookingId}
               booking={b}
               defaultOpen={i === 0 && scope === 'upcoming'}
+              justMoved={b.bookingId === movedId}
               onChanged={onCardChanged}
+              onMoved={(bookingId) => {
+                console.info('[customer bookings] booking rescheduled', { bookingId });
+                setMovedId(bookingId);
+              }}
             />
           ))}
         </div>
@@ -2399,10 +2457,14 @@ function WaitlistEntryCard({
 function RoundBookingCard({
   booking,
   onSwapped,
+  onMoved,
   compact = false,
 }: {
   booking: CustomerRoundBooking;
   onSwapped: () => void | Promise<void>;
+  /** Fired after a successful reschedule, once the list has reloaded — the
+   *  parent highlights and scrolls to the booking's new slot in the list. */
+  onMoved?: () => void;
   /** Inside the accordion: drop the card chrome + the label/date lines (the
    *  collapsible header carries them) and render only the body. */
   compact?: boolean;
@@ -2468,6 +2530,8 @@ function RoundBookingCard({
     console.info('[customer reschedule] swap done', { bookingId: booking.bookingId });
     setPicking(false);
     await onSwapped();
+    // Only after the reload: the highlight must land on the re-sorted list.
+    onMoved?.();
   };
 
   const doCompanionPay = async () => {
