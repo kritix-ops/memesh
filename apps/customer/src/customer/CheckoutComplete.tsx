@@ -90,7 +90,9 @@ function LoadingCard() {
           <Sun size={56} spin />
         </div>
         <div style={titleStyle}>משלים התחברות…</div>
-        <div style={subtitleStyle}>הכרטיסייה שלך כבר כמעט שם.</div>
+        {/* Purchase-agnostic wording (Yanay 2026-07-09): this page lands after
+            ticket checkouts too, not only punch cards. */}
+        <div style={subtitleStyle}>ההזמנה שלך כבר כמעט שם.</div>
       </Card>
     </main>
   );
@@ -126,8 +128,8 @@ function FailedCard() {
         </div>
         <h1 style={readyTitleStyle}>תודה רבה על הרכישה! 🎉</h1>
         <p style={bodyStyle}>
-          הקישור האוטומטי כבר נוצל או פג תוקפו. כדי לראות את הכרטיסייה החדשה שלך,
-          היכנסו לאזור האישי עם מספר הטלפון שלכם וקוד SMS חד-פעמי.
+          הקישור האוטומטי כבר נוצל או פג תוקפו. כדי לראות את ההזמנה שלך, היכנסו
+          לאזור האישי עם מספר הטלפון שלכם וקוד SMS חד-פעמי.
         </p>
         <a href="/" style={ctaStyle}>
           כניסה לאזור האישי
