@@ -153,11 +153,16 @@ add_filter('woocommerce_cart_item_quantity', function ($html, $cart_item_key, $c
     if (!memesh_is_round_product($pid)) return $html;
     if (!memesh_rounds_enabled()) return '1'; // plain-product mode — no picker to open
     $date = isset($cart_item['memesh_date']) ? $cart_item['memesh_date'] : '';
-    return '<span class="memesh-qty" dir="ltr">'
-        . '<a class="memesh-qty-minus" href="' . esc_url(wc_get_cart_remove_url($cart_item_key)) . '"'
+    // NAMESPACE NOTE: these classes are memesh-TICKET-*, not memesh-qty-* —
+    // the site runs a separate, unversioned cart-quantity snippet whose
+    // buttons are .memesh-qty-plus/.memesh-qty-minus (discovered 2026-07-11
+    // via DevTools). Sharing its names made our click handler hijack every
+    // line's stepper, punch cards included.
+    return '<span class="memesh-ticket-qty" dir="ltr">'
+        . '<a class="memesh-ticket-minus" href="' . esc_url(wc_get_cart_remove_url($cart_item_key)) . '"'
         . ' title="הסרת הכרטיס מהסל" aria-label="הסרת הכרטיס מהסל">−</a>'
-        . '<span class="memesh-qty-num">1</span>'
-        . '<button type="button" class="memesh-qty-plus"'
+        . '<span class="memesh-ticket-num">1</span>'
+        . '<button type="button" class="memesh-ticket-plus"'
         . ' data-product-id="' . esc_attr($pid) . '" data-date="' . esc_attr($date) . '"'
         . ' title="הוספת כרטיס נוסף" aria-label="הוספת כרטיס נוסף">+</button>'
         . '</span>';
@@ -967,11 +972,29 @@ add_action('wp_footer', function () {
         document.addEventListener('click', function (e) {
             var t = e.target;
             if (!t || !t.closest) return;
-            var plus = t.closest('.memesh-qty-plus, .memesh-add-ticket');
+            // Only OUR classes — .memesh-qty-plus belongs to the site's own
+            // cart-quantity widget (punch cards bump quantity through it) and
+            // must never be intercepted.
+            var plus = t.closest('.memesh-ticket-plus, .memesh-add-ticket');
             if (plus) {
                 e.preventDefault();
                 e.stopPropagation();
                 openAddModal(plus.getAttribute('data-product-id'), plus.getAttribute('data-date'));
+                return;
+            }
+            // The rewired ticket "−" (a BUTTON, inside the site widget's
+            // controls) delegates to that row's native remove. The WC-filter
+            // markup's "−" is an <a> with the remove URL — left to navigate.
+            var minus = t.closest('button.memesh-ticket-minus');
+            if (minus) {
+                e.preventDefault();
+                e.stopPropagation();
+                var ctrl = minus.closest('.memesh-qty-controls');
+                var rm = ctrl && ctrl.querySelector('.memesh-qty-remove');
+                if (rm) {
+                    console.info('[memesh qty] ticket-row minus → native remove');
+                    rm.click();
+                }
                 return;
             }
             if (t.closest('[data-memesh-modal-close]')) closeAddModal();
@@ -980,64 +1003,54 @@ add_action('wp_footer', function () {
             if (e.key === 'Escape') closeAddModal();
         });
 
-        // Ticket rows get a WORKING +/- even on themes that draw their own
-        // steppers and ignore every WC quantity filter (Yanay 2026-07-11: the
-        // plus belongs on the ticket, never on the companion). Each item row
-        // is identified by its remove link's cart key against the server-
-        // printed memeshCartLines map; on ticket rows the native (disabled)
-        // +/- are swapped for live memesh controls — "+" opens the add-ticket
-        // modal with the line's product and date, "−" removes the line.
-        // Companion rows are left to sold_individually, which greys them.
-        // Runs under the same observer as initAll, so AJAX re-renders re-wire.
-        var swappedRows = new WeakSet();
-        var MINUS_GLYPHS = { '-': 1, '−': 1, '–': 1 };
-        function swapNativeSteppers() {
+        // Ticket rows get a WORKING +/- inside the site's own cart-quantity
+        // widget (an unversioned WP snippet, discovered 2026-07-11: it renders
+        // .memesh-qty-controls[data-cart-key] with .memesh-qty-plus/-minus/
+        // -remove buttons into the product-name cell, and respects only
+        // sold_individually — so ticket rows sat disabled while the plus
+        // belongs there, per Yanay). Each control block is matched to its
+        // line via data-cart-key against the server-printed memeshCartLines
+        // map; on TICKET rows the disabled native +/- are hidden and replaced:
+        // "+" (memesh-ticket-plus) opens the add-ticket modal with the line's
+        // product and date, "−" (memesh-ticket-minus) fires the row's own
+        // native remove. Punch-card and companion rows keep their native
+        // controls untouched — punch cards legitimately bump quantity, and
+        // the companion is greyed by sold_individually. Runs under the same
+        // observer as initAll, so AJAX re-renders re-wire.
+        var wiredControls = new WeakSet();
+        function wireCartControls() {
             var lines = window.memeshCartLines;
             if (!lines) return;
-            var anchors = document.querySelectorAll('a[href*="remove_item="]');
-            for (var i = 0; i < anchors.length; i += 1) {
-                var a = anchors[i];
-                var m = (a.getAttribute('href') || '').match(/[?&]remove_item=([^&]+)/);
-                var line = m && lines[m[1]];
+            var controls = document.querySelectorAll('.memesh-qty-controls[data-cart-key]');
+            for (var i = 0; i < controls.length; i += 1) {
+                var ctrl = controls[i];
+                if (wiredControls.has(ctrl)) continue;
+                var line = lines[ctrl.getAttribute('data-cart-key')];
                 if (!line || line.t !== 1) continue;
-                // Walk up from the remove link to the smallest ancestor that
-                // holds a "+" control; stop before spanning a second row.
-                var row = a.parentElement;
-                var plus = null;
-                var minus = null;
-                for (var up = 0; up < 5 && row; up += 1, row = row.parentElement) {
-                    if (row.querySelector('.memesh-qty-plus')) { plus = null; break; } // already ours
-                    if (row.querySelectorAll('a[href*="remove_item="]').length > 1) break;
-                    var btns = row.querySelectorAll('button');
-                    for (var j = 0; j < btns.length; j += 1) {
-                        var txt = (btns[j].textContent || '').trim();
-                        if (txt === '+') plus = btns[j];
-                        else if (MINUS_GLYPHS[txt]) minus = btns[j];
-                    }
-                    if (plus) break;
-                }
-                if (!plus || !row || swappedRows.has(row)) continue;
-                swappedRows.add(row);
-                console.info('[memesh qty] ticket-row stepper swapped in', {
+                wiredControls.add(ctrl);
+                var nativePlus = ctrl.querySelector('.memesh-qty-plus');
+                if (!nativePlus || ctrl.querySelector('.memesh-ticket-plus')) continue;
+                console.info('[memesh qty] ticket-row plus rewired to the add-ticket modal', {
                     productId: line.p, date: line.d || null,
                 });
                 var ours = document.createElement('button');
                 ours.type = 'button';
-                ours.className = 'memesh-qty-plus';
+                ours.className = 'memesh-ticket-plus';
                 ours.setAttribute('data-product-id', String(line.p));
                 ours.setAttribute('data-date', line.d || '');
                 ours.textContent = '+';
                 ours.title = 'הוספת כרטיס נוסף';
-                plus.style.display = 'none';
-                plus.parentNode.insertBefore(ours, plus);
-                if (minus) {
-                    var rm = document.createElement('a');
-                    rm.className = 'memesh-qty-minus';
-                    rm.href = a.href;
+                nativePlus.style.display = 'none';
+                nativePlus.parentNode.insertBefore(ours, nativePlus);
+                var nativeMinus = ctrl.querySelector('.memesh-qty-minus');
+                if (nativeMinus && ctrl.querySelector('.memesh-qty-remove')) {
+                    var rm = document.createElement('button');
+                    rm.type = 'button';
+                    rm.className = 'memesh-ticket-minus';
                     rm.textContent = '−';
                     rm.title = 'הסרת הכרטיס מהסל';
-                    minus.style.display = 'none';
-                    minus.parentNode.insertBefore(rm, minus);
+                    nativeMinus.style.display = 'none';
+                    nativeMinus.parentNode.insertBefore(rm, nativeMinus);
                 }
             }
         }
@@ -1072,7 +1085,7 @@ add_action('wp_footer', function () {
                 wiredForms.add(forms[j]);
                 wireCartForm(forms[j]);
             }
-            swapNativeSteppers();
+            wireCartControls();
             if (fresh > 0) {
                 console.info('[memesh picker] init', { onPage: roots.length, newlyInitialized: fresh });
             }
@@ -1275,20 +1288,22 @@ add_action('wp_head', function () {
     }
     .memesh-added-again:hover { background: #fdf3e3; }
 
-    /* Cart/checkout quantity stepper on ticket lines (Yanay 2026-07-09):
-       "+" opens the add-ticket modal, "−" removes the line. */
-    .memesh-qty { display: inline-flex; align-items: center; gap: 8px; }
-    .memesh-qty-num { min-width: 18px; text-align: center; font-weight: 600; color: #2d3436; }
-    .memesh-qty-plus, .memesh-qty-minus {
+    /* Cart/checkout quantity controls on ticket lines (Yanay 2026-07-09):
+       "+" opens the add-ticket modal, "−" removes the line. memesh-TICKET-*
+       on purpose — memesh-qty-* belongs to the site's own cart widget. Sized
+       32px to sit flush beside that widget's buttons when rewired into it. */
+    .memesh-ticket-qty { display: inline-flex; align-items: center; gap: 8px; }
+    .memesh-ticket-num { min-width: 18px; text-align: center; font-weight: 600; color: #2d3436; }
+    .memesh-ticket-plus, .memesh-ticket-minus {
         appearance: none; -webkit-appearance: none; box-shadow: none; margin: 0;
         font-family: inherit; cursor: pointer; box-sizing: border-box;
         display: inline-flex; align-items: center; justify-content: center;
-        width: 30px; height: 30px; border: 1.5px solid #e9e0d9; border-radius: 9px;
-        background: #fff; color: #2d3436; font-size: 17px; line-height: 1;
-        text-decoration: none; padding: 0;
+        width: 32px; height: 32px; border: 1.5px solid #e7a33e; border-radius: 9px;
+        background: #fff; color: #b9772a; font-size: 17px; line-height: 1;
+        text-decoration: none; padding: 0; font-weight: 600;
     }
-    .memesh-qty-plus:hover, .memesh-qty-minus:hover {
-        border-color: #e7a33e; background: #fdf3e3; color: #b9772a;
+    .memesh-ticket-plus:hover, .memesh-ticket-minus:hover {
+        background: #fdf3e3; color: #8a5a12;
     }
 
     /* The snippet-owned "add another ticket" button (cart + checkout). */

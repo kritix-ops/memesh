@@ -142,6 +142,30 @@ live "+". Yanay: the plus belongs on the ticket, the companion must be frozen.
    sold_individually greys them natively. Fails silently on unrecognizable
    markup; the owned dashed button remains the fallback entry point.
 
+## Revision 4 (2026-07-11, after Yoav's DevTools capture)
+
+The mystery renderer is neither theme nor plugin: an UNVERSIONED WP snippet
+on the site draws `.memesh-qty-controls[data-cart-key]` (with .memesh-qty-
+plus/-minus/-input/-remove buttons) into the product-name cell — and its
+class names collide with ours. That collision was the root of everything:
+our capture-phase listener hijacked EVERY line's "+" (companion, punch card)
+into the add-ticket modal, dateless.
+
+1. Our controls renamed to memesh-TICKET-* (markup, CSS, listener). The
+   listener now touches only our classes — the site widget's punch-card
+   quantity bump works again.
+2. The generic text-based stepper swap is replaced by precise wiring:
+   `.memesh-qty-controls[data-cart-key]` matched against memeshCartLines; on
+   TICKET rows the disabled native +/- are hidden and replaced — "+" opens
+   the modal with the line's product/date, "−" fires the row's own native
+   remove. Punch-card and companion rows stay fully native (companion greyed
+   by sold_individually from revision 3).
+
+Follow-up owed: retrieve the site's cart-quantity snippet from WP admin
+(Code Snippets / WPCode / Elementor custom code / functions.php — its CSS is
+scoped to body.elementor-page-247) and version it under wordpress/ so the
+next collision is impossible.
+
 ## Deploy
 
 - Branch `fix/wp-snippet-cart-plus-modal` → PR into `main`. Repo merge does NOT
