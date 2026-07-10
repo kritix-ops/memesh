@@ -20,7 +20,11 @@
 //     render exactly like a product-page purchase.
 //   - Cart/checkout +/- on ticket lines: "+" opens an add-ticket modal with
 //     the same picker (defaulting to that line's date — Yanay 2026-07-09),
-//     "−" removes the line. Lines themselves never exceed quantity 1.
+//     "−" removes the line. Lines themselves never exceed quantity 1. A
+//     snippet-owned "הוספת כרטיס לילד/ה נוסף/ת" button (classic WC hooks)
+//     opens the same modal on themes that draw their own cart steppers and
+//     ignore the quantity filter (Yanay's 2026-07-10 video); native steppers
+//     are pinned to max 1 for tickets AND the companion line.
 //   - Punch-card upsell notice when a 2nd entry ticket is added.
 //   - Holds the seat at checkout via /rounds/hold/wc and tags the order.
 //   - Rounds mandatory ONLY when the rounds system is on: global switch via
@@ -93,6 +97,24 @@ function memesh_rounds_required_for_date($date) {
 /** One-seat-per-line: quantity locked to 1 on the product page. */
 add_filter('woocommerce_is_sold_individually', function ($sold, $product) {
     return memesh_is_round_product($product->get_id()) ? true : $sold;
+}, 10, 2);
+
+/**
+ * Pin the NATIVE quantity widget to exactly 1 for tickets AND the companion
+ * line. Themes/plugins that draw their own +/- around
+ * woocommerce_quantity_input() read these args — on the live theme's checkout
+ * table the ticket's "+" was already disabled by sold_individually while the
+ * companion's stayed clickable (Yanay's 2026-07-10 video). sold_individually
+ * is NOT an option for the companion product: WooCommerce would then refuse
+ * the SECOND companion line when two children each bring an extra adult.
+ */
+add_filter('woocommerce_quantity_input_args', function ($args, $product) {
+    $pid = $product ? (int) $product->get_id() : 0;
+    if (memesh_is_round_product($pid) || $pid === MEMESH_COMPANION_PRODUCT_ID) {
+        $args['min_value'] = 1;
+        $args['max_value'] = 1;
+    }
+    return $args;
 }, 10, 2);
 
 /**
@@ -308,27 +330,68 @@ add_action('wc_ajax_memesh_add_to_cart', function () {
     ]);
 });
 
+/** The first entry-ticket line in the cart — the "add another ticket" button
+ *  and the modal's fallback default derive their product + date from it. */
+function memesh_first_ticket_line() {
+    if (!function_exists('WC') || !WC()->cart) return null;
+    foreach (WC()->cart->get_cart() as $item) {
+        if (memesh_is_round_product($item['product_id'])) {
+            return [
+                'product_id' => (int) $item['product_id'],
+                'date'       => isset($item['memesh_date']) ? $item['memesh_date'] : '',
+            ];
+        }
+    }
+    return null;
+}
+
+/**
+ * A snippet-OWNED "add another ticket" button for the cart and checkout
+ * pages. The per-line "+" only works where the theme renders our quantity
+ * markup; the live checkout table draws its own stepper and ignores the
+ * filter (Yanay's 2026-07-10 video), so this button — hung on classic WC
+ * hooks, not theme markup — is the reliable entry point to the add-ticket
+ * modal. It carries the first ticket line's product + date so the picker
+ * opens on the right day with a valid product every time.
+ */
+function memesh_render_add_ticket_button() {
+    if (!memesh_rounds_enabled()) return;
+    $first = memesh_first_ticket_line();
+    if (!$first) return;
+    ?>
+    <button type="button" class="memesh-add-ticket"
+            data-product-id="<?php echo esc_attr($first['product_id']); ?>"
+            data-date="<?php echo esc_attr($first['date']); ?>">
+        + הוספת כרטיס לילד/ה נוסף/ת
+    </button>
+    <?php
+}
+add_action('woocommerce_review_order_before_payment', 'memesh_render_add_ticket_button');
+add_action('woocommerce_after_cart_table', 'memesh_render_add_ticket_button');
+
 /**
  * The add-ticket modal for the cart/checkout "+" (Yanay 2026-07-09): a hidden
  * overlay hosting the same picker + AJAX form as the price-list popups, so a
  * ticket added mid-checkout still picks a real date and round — never a bare
- * quantity bump. The "+" that opens it passes the clicked line's product and
- * date; the picker preselects that date (data-default-date / memeshSelectDate
- * in the behavior script), per Yanay: the original ticket's date is the
- * default. Rendered only where it can be used: cart/checkout, rounds on, and
- * at least one ticket line to add next to.
+ * quantity bump. The opener passes the clicked line's product and date; the
+ * picker preselects that date (data-default-date / memeshSelectDate in the
+ * behavior script), per Yanay: the original ticket's date is the default. The
+ * data-default-* attributes are the server-rendered fallback — if any opener
+ * arrives without its own product/date, the first ticket line's values apply
+ * instead of an empty submit (Yanay's 2026-07-10 video: the modal opened on
+ * a closed "today" with no product attached). Rendered only where it can be
+ * used: cart/checkout, rounds on, and at least one ticket line to add to.
  */
 add_action('wp_footer', function () {
     if (!function_exists('is_cart') || (!is_cart() && !is_checkout())) return;
     if (!memesh_rounds_enabled() || !WC()->cart) return;
-    $has_ticket = false;
-    foreach (WC()->cart->get_cart() as $item) {
-        if (memesh_is_round_product($item['product_id'])) { $has_ticket = true; break; }
-    }
-    if (!$has_ticket) return;
+    $first = memesh_first_ticket_line();
+    if (!$first) return;
     memesh_picker_script_needed(true);
     ?>
-    <div class="memesh-modal" data-memesh-add-modal style="display:none">
+    <div class="memesh-modal" data-memesh-add-modal style="display:none"
+         data-fallback-product-id="<?php echo esc_attr($first['product_id']); ?>"
+         data-fallback-date="<?php echo esc_attr($first['date']); ?>">
         <div class="memesh-modal-backdrop" data-memesh-modal-close></div>
         <div class="memesh-modal-card">
             <button type="button" class="memesh-modal-close" data-memesh-modal-close
@@ -539,6 +602,14 @@ add_action('wp_footer', function () {
                     setCanBuy(false);
                 }
                 open.forEach(function (x) { roundsEl.appendChild(roundRow(x, optional)); });
+                // A single mandatory round selects itself — a lone option that
+                // still demands a tap left the button disabled and read as
+                // "לא נותן להוסיף" (Yanay's 2026-07-10 video). With a real
+                // choice (2+ rounds, or optional free play) the tap stays.
+                if (!optional && open.length === 1) {
+                    var only = roundsEl.querySelector('.memesh-round-row');
+                    if (only) only.click();
+                }
             }
 
             // Single entry point for picking a day (strip chip OR calendar
@@ -831,6 +902,12 @@ add_action('wp_footer', function () {
         function openAddModal(productId, dateIso) {
             var modal = document.querySelector('[data-memesh-add-modal]');
             if (!modal) return;
+            // Openers without their own line data (or a stray trigger — seen
+            // in Yanay's 2026-07-10 video) fall back to the first ticket
+            // line's product + date, server-rendered on the modal root, so
+            // the picker never opens dateless with an unset product.
+            productId = productId || modal.getAttribute('data-fallback-product-id');
+            dateIso = dateIso || modal.getAttribute('data-fallback-date');
             var btn = modal.querySelector('.single_add_to_cart_button');
             if (btn) btn.value = productId || '';
             modal.style.display = '';
@@ -854,7 +931,7 @@ add_action('wp_footer', function () {
         document.addEventListener('click', function (e) {
             var t = e.target;
             if (!t || !t.closest) return;
-            var plus = t.closest('.memesh-qty-plus');
+            var plus = t.closest('.memesh-qty-plus, .memesh-add-ticket');
             if (plus) {
                 e.preventDefault();
                 e.stopPropagation();
@@ -1114,6 +1191,17 @@ add_action('wp_head', function () {
     .memesh-qty-plus:hover, .memesh-qty-minus:hover {
         border-color: #e7a33e; background: #fdf3e3; color: #b9772a;
     }
+
+    /* The snippet-owned "add another ticket" button (cart + checkout). */
+    .memesh-add-ticket {
+        appearance: none; -webkit-appearance: none; box-shadow: none; margin: 12px 0;
+        font-family: inherit; cursor: pointer; direction: rtl;
+        display: block; width: 100%; padding: 12px 16px;
+        border: 1.5px dashed #b18a5a; border-radius: 10px;
+        background: #fdf8f0; color: #8a5a12;
+        font-size: 14.5px; font-weight: 600; text-align: center;
+    }
+    .memesh-add-ticket:hover { background: #fdf3e3; }
 
     /* The add-ticket modal opened by the cart/checkout "+". */
     .memesh-modal {
