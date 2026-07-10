@@ -122,6 +122,26 @@ tap — the add button sat disabled on "בחרו סבב כדי להמשיך", wh
    product page, price-list popup, add-ticket modal). Real choices (2+
    rounds, optional free-play days) still require the tap.
 
+## Revision 3 (2026-07-11, after Yanay's second live test)
+
+With rev 2 pasted, the +/- sat on the WRONG line: the theme's steppers read
+ONLY sold_individually (quantity-input args and the WC cart-quantity filter
+are both ignored), so ticket rows were greyed while the companion row kept a
+live "+". Yanay: the plus belongs on the ticket, the companion must be frozen.
+
+1. sold_individually now covers the companion product too — the one signal
+   this theme respects. A new
+   `woocommerce_add_to_cart_sold_individually_found_in_cart` bypass keeps the
+   second auto-added companion line possible (two children, two extra adults);
+   distinct memesh_companion_of keys already keep the lines separate.
+2. The behavior script swaps each TICKET row's dead native +/- for live
+   memesh controls: rows are identified by their remove link's cart key
+   against a server-printed `memeshCartLines` map (key → product/date/ticket
+   flag; no PII). "+" opens the add-ticket modal with the line's own product
+   and date; "−" is the line's remove URL. Companion rows are skipped —
+   sold_individually greys them natively. Fails silently on unrecognizable
+   markup; the owned dashed button remains the fallback entry point.
+
 ## Deploy
 
 - Branch `fix/wp-snippet-cart-plus-modal` → PR into `main`. Repo merge does NOT
