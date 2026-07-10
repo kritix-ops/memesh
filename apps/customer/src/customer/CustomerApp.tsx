@@ -21,7 +21,6 @@ import {
   cancelRoundBooking,
   getMyRoundBookings,
   getMyWaitlist,
-  getRoundAvailability,
   getRoundAvailabilityRange,
   joinWaitlist,
   leaveWaitlist,
@@ -1469,6 +1468,410 @@ function MonthCalendar({
   );
 }
 
+// ---------------------------------------------------------------------------
+// Shared day-window plumbing for every round picker in the personal area: the
+// punch-booking flow and the reschedule flow (Yanay 2026-07-09 — changing a
+// booking must offer other DATES, not just other times). One availability-
+// range fetch feeds the strip, the month calendar pages the rest of the
+// booking window, and every fetched day lands in one cache so strip, calendar
+// and the day pane never disagree. Single source of truth — a second copy of
+// this logic is how two pickers drift apart.
+// ---------------------------------------------------------------------------
+
+/** Which date gets selected once the range loads: keep the current pick while
+ *  it's still in the window, then prefer the caller's default (the reschedule
+ *  flow passes the booking's own date), then fall back to the first day
+ *  (today). Pure — pinned by unit tests. */
+export function pickInitialDate(
+  windowDates: string[],
+  current: string | null,
+  defaultDate?: string,
+): string | null {
+  if (current && windowDates.includes(current)) return current;
+  if (defaultDate && windowDates.includes(defaultDate)) return defaultDate;
+  return windowDates[0] ?? null;
+}
+
+/** Open rounds a booking can move into on a given day: bookable ones minus
+ *  the round the booking already sits in. Any date within the booking window
+ *  is fair game — the SERVER holds the timing rule (a swap is allowed until
+ *  the original round starts, rounds-swap.ts). Pure — pinned by unit tests. */
+export function swapTargetsForDay(
+  day: DayAvailability,
+  currentRoundInstanceId: string,
+): AvailabilityRound[] {
+  return day.rounds.filter(
+    (r) => r.available > 0 && !r.isClosed && r.roundInstanceId !== currentRoundInstanceId,
+  );
+}
+
+function useRoundAvailabilityWindow(open: boolean, logNs: string, defaultDate?: string) {
+  const [days, setDays] = useState<DayAvailability[] | null>(null);
+  const [daysError, setDaysError] = useState(false);
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const [calOpen, setCalOpen] = useState(false);
+  const [calMonth, setCalMonth] = useState<string | null>(null);
+  const [calLoading, setCalLoading] = useState(false);
+  const [maxDate, setMaxDate] = useState<string | null>(null);
+  const [companionPriceIls, setCompanionPriceIls] = useState<number | null>(null);
+  const [dayCache, setDayCache] = useState<Map<string, DayAvailability>>(new Map());
+
+  const todayIso = days?.[0]?.date ?? null;
+  // Everything below the strip derives from the selected day. The cache holds
+  // every fetched day (strip + calendar months), so a far date picked in the
+  // calendar renders exactly like a strip chip.
+  const selectedDay =
+    (selectedDate ? dayCache.get(selectedDate) : undefined) ??
+    days?.find((d) => d.date === selectedDate) ??
+    null;
+
+  // Fresh dots every time the picker opens — availability moves under our feet.
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    void (async () => {
+      setDays(null);
+      setDaysError(false);
+      // The strip keeps a month of chips; the calendar pages the rest of the
+      // booking window (up to maxDate) month by month.
+      const res = await getRoundAvailabilityRange(30);
+      console.info(`${logNs} range loaded`, {
+        ok: res.ok,
+        days: res.ok ? res.data.days.length : 0,
+        error: res.ok ? undefined : res.error,
+      });
+      if (cancelled) return;
+      if (!res.ok) {
+        setDaysError(true);
+        setDays([]);
+        return;
+      }
+      setDays(res.data.days);
+      setMaxDate(res.data.maxDate);
+      setDayCache(new Map(res.data.days.map((d) => [d.date, d])));
+      setCalOpen(false);
+      setCalMonth(null);
+      setCompanionPriceIls(res.data.companionPriceIls);
+      const stripDates = res.data.days.map((d) => d.date);
+      setSelectedDate((cur) => pickInitialDate(stripDates, cur, defaultDate));
+      // A default date past the strip (a booking weeks out) loads its month
+      // too, so "keep the day, change the time" still opens on the right day.
+      const lastStripDate = stripDates[stripDates.length - 1];
+      if (
+        !defaultDate ||
+        stripDates.includes(defaultDate) ||
+        lastStripDate === undefined ||
+        defaultDate < lastStripDate ||
+        defaultDate > res.data.maxDate
+      ) {
+        return;
+      }
+      const ym = monthOfIso(defaultDate);
+      const monthRes = await getRoundAvailabilityRange(
+        monthGrid(ym).dates.length,
+        firstOfMonth(ym),
+      );
+      console.info(`${logNs} default-date month`, { month: ym, ok: monthRes.ok });
+      if (cancelled || !monthRes.ok) return;
+      setDayCache((cur) => {
+        const next = new Map(cur);
+        for (const d of monthRes.data.days) next.set(d.date, d);
+        return next;
+      });
+      if (monthRes.data.days.some((d) => d.date === defaultDate)) {
+        setSelectedDate(defaultDate);
+        setCalMonth(ym);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  // The calendar pages the booking window one month per fetch; each month is
+  // remembered for as long as the picker stays open.
+  useEffect(() => {
+    if (!calOpen || !calMonth) return;
+    const { dates } = monthGrid(calMonth);
+    if (!dates.some((d) => !dayCache.has(d))) return;
+    let cancelled = false;
+    setCalLoading(true);
+    void (async () => {
+      const res = await getRoundAvailabilityRange(dates.length, firstOfMonth(calMonth));
+      console.info(`${logNs} calendar month`, {
+        month: calMonth,
+        ok: res.ok,
+        days: res.ok ? res.data.days.length : 0,
+        error: res.ok ? undefined : res.error,
+      });
+      if (cancelled) return;
+      setCalLoading(false);
+      if (!res.ok) return;
+      setDayCache((cur) => {
+        const next = new Map(cur);
+        for (const d of res.data.days) next.set(d.date, d);
+        return next;
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [calOpen, calMonth]);
+
+  const toggleCalendar = () => {
+    if (!todayIso) return;
+    setCalMonth((m) => m ?? monthOfIso(selectedDate ?? todayIso));
+    setCalOpen((v) => {
+      console.info(`${logNs} calendar toggle`, { open: !v });
+      return !v;
+    });
+  };
+
+  return {
+    days,
+    daysError,
+    todayIso,
+    maxDate,
+    dayCache,
+    companionPriceIls,
+    selectedDate,
+    setSelectedDate,
+    selectedDay,
+    calOpen,
+    setCalOpen,
+    calMonth,
+    setCalMonth,
+    calLoading,
+    toggleCalendar,
+  };
+}
+
+/** The horizontal day chips + the calendar toggle beside them. Pure
+ *  presentation — selection state and fetching live in the window hook. */
+function DayStrip({
+  days,
+  selectedDate,
+  calOpen,
+  onToggleCalendar,
+  onPick,
+}: {
+  days: DayAvailability[];
+  selectedDate: string | null;
+  calOpen: boolean;
+  onToggleCalendar: () => void;
+  onPick: (dateIso: string) => void;
+}) {
+  return (
+    <div style={{ display: 'flex', gap: 6, alignItems: 'stretch' }}>
+      {/* Fixed beside the strip so far-future dates are one tap away
+          without scrolling (Yanay 2026-07-05). */}
+      <button
+        onClick={onToggleCalendar}
+        title="בחירת תאריך מלוח שנה"
+        style={{
+          flex: '0 0 auto',
+          minWidth: 52,
+          border: `1.5px solid ${calOpen ? '#e7a33e' : '#e9e0d9'}`,
+          background: calOpen ? '#fdf3e3' : '#fff',
+          borderRadius: 12,
+          padding: '8px 6px',
+          cursor: 'pointer',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 4,
+        }}
+      >
+        <span style={{ fontSize: 17, lineHeight: 1 }}>📅</span>
+        <span style={{ fontSize: 9.5, color: MUTED, fontWeight: 600 }}>לוח שנה</span>
+      </button>
+      <div
+        style={{
+          display: 'flex',
+          gap: 6,
+          overflowX: 'auto',
+          padding: '2px 2px 4px',
+          flex: 1,
+          minWidth: 0,
+        }}
+      >
+        {days.map((d, i) => {
+          const active = selectedDate === d.date;
+          return (
+            <button
+              key={d.date}
+              onClick={() => onPick(d.date)}
+              style={{
+                flex: '0 0 auto',
+                minWidth: 52,
+                border: `1.5px solid ${active ? '#e7a33e' : '#e9e0d9'}`,
+                background: active ? '#fdf3e3' : '#fff',
+                borderRadius: 12,
+                padding: '8px 6px',
+                cursor: 'pointer',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                gap: 4,
+              }}
+            >
+              <span style={{ fontSize: 10.5, color: MUTED, fontWeight: 600 }}>
+                {i === 0 ? 'היום' : `${dowLetter(d.date)}׳`}
+              </span>
+              <span
+                style={{
+                  fontSize: 15,
+                  fontWeight: 700,
+                  color: active ? '#b9772a' : '#2d3436',
+                }}
+              >
+                {dayOfMonth(d.date)}
+              </span>
+              <span
+                style={{
+                  width: 7,
+                  height: 7,
+                  borderRadius: '50%',
+                  background: DAY_DOT[dayStatus(d)],
+                }}
+              />
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/** The dot legend under a picker — what green/amber/red/grey mean. */
+function DayDotLegend() {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flexWrap: 'wrap',
+        gap: '4px 12px',
+        justifyContent: 'center',
+        fontSize: 11.5,
+        color: MUTED,
+        borderTop: '1px solid #f3efea',
+        paddingTop: 10,
+      }}
+    >
+      {(
+        [
+          ['ok', 'הרבה מקום'],
+          ['warn', 'נשארו מעט'],
+          ['full', 'מלא'],
+          ['free', 'כניסה חופשית'],
+          ['closed', 'סגור'],
+        ] as const
+      ).map(([k, label]) => (
+        <span key={k} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+          <span
+            style={{
+              width: 7,
+              height: 7,
+              borderRadius: '50%',
+              background: DAY_DOT[k],
+            }}
+          />
+          {label}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/** One tappable round row: label, hours (when the label lacks them), the
+ *  seats-left pill and the fill bar. Shared by the punch flow (selects the
+ *  round) and the reschedule flow (swaps into it on tap). */
+function RoundChoiceRow({
+  round,
+  selected = false,
+  disabled = false,
+  onClick,
+}: {
+  round: AvailabilityRound;
+  selected?: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  const scarce = round.capacity > 0 && round.available / round.capacity <= 0.25;
+  return (
+    <button
+      disabled={disabled}
+      onClick={onClick}
+      style={{
+        border: `1.5px solid ${selected ? '#e7a33e' : '#e9e0d9'}`,
+        background: selected ? '#fdf3e3' : '#fff',
+        borderRadius: 10,
+        padding: '10px 14px',
+        fontSize: 14,
+        cursor: disabled ? 'default' : 'pointer',
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        gap: 10,
+      }}
+    >
+      <span style={{ display: 'flex', flexDirection: 'column', gap: 2, textAlign: 'start' }}>
+        <span style={{ fontWeight: 600 }}>{round.label}</span>
+        {!labelHasTime(round.label) && (
+          <span style={{ color: MUTED, fontSize: 12.5 }}>
+            {round.startTime}–{round.endTime}
+          </span>
+        )}
+      </span>
+      <span
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'flex-end',
+          gap: 6,
+        }}
+      >
+        <span
+          style={{
+            fontSize: 12,
+            fontWeight: 700,
+            borderRadius: 999,
+            padding: '3px 9px',
+            whiteSpace: 'nowrap',
+            background: scarce ? '#fdf3e3' : '#eef4e2',
+            color: scarce ? '#b9772a' : '#5b7a34',
+          }}
+        >
+          {round.available} פנויים
+        </span>
+        <span
+          style={{
+            width: 64,
+            height: 5,
+            borderRadius: 999,
+            background: '#f0ebe4',
+            overflow: 'hidden',
+            display: 'block',
+          }}
+        >
+          <span
+            style={{
+              display: 'block',
+              height: '100%',
+              borderRadius: 999,
+              width: `${round.capacity > 0 ? Math.max(6, Math.round((round.available / round.capacity) * 100)) : 0}%`,
+              background: scarce ? '#e7a33e' : '#8fae5d',
+            }}
+          />
+        </span>
+      </span>
+    </button>
+  );
+}
+
 // Book a round using this card's entries (super-brief §3.4). No WooCommerce — the
 // customer already paid for the card. Lives inside the punch-card card so the
 // "this card → book with it" link is obvious (Yanay feedback, 2026-07-04). The
@@ -1486,9 +1889,6 @@ function PunchRoundBooking({
   onWaitlisted: () => void | Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
-  const [days, setDays] = useState<DayAvailability[] | null>(null);
-  const [daysError, setDaysError] = useState(false);
-  const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [joinMsg, setJoinMsg] = useState<string | null>(null);
   const [count, setCount] = useState(1);
   const [chosen, setChosen] = useState<AvailabilityRound | null>(null);
@@ -1496,31 +1896,28 @@ function PunchRoundBooking({
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
   const [addCompanion, setAddCompanion] = useState(false);
-  const [companionPrice, setCompanionPrice] = useState<number | null>(null);
   // Set when the booking succeeded but the companion payment couldn't start —
   // the done screen tells the customer to retry from the booking card.
   const [companionNote, setCompanionNote] = useState<string | null>(null);
-  // Month calendar (Yanay 2026-07-05): the strip shows the next month; the
-  // calendar pages the whole booking window. Every fetched day lands in
-  // dayCache so a picked far date renders through the same selectedDay path.
-  const [calOpen, setCalOpen] = useState(false);
-  const [calMonth, setCalMonth] = useState<string | null>(null);
-  const [calLoading, setCalLoading] = useState(false);
-  const [maxDate, setMaxDate] = useState<string | null>(null);
-  const [dayCache, setDayCache] = useState<Map<string, DayAvailability>>(new Map());
+  // Strip + month calendar + day cache all live in the shared window hook
+  // (also used by the reschedule flow) — fetched fresh on every open.
+  const win = useRoundAvailabilityWindow(open, '[customer punch-booking]');
+  const { days, daysError, todayIso, selectedDay } = win;
+  const companionPrice = win.companionPriceIls;
+
+  // A reopened form starts from a clean selection — the range reload is the
+  // hook's; the punch-specific picks are ours to reset.
+  useEffect(() => {
+    if (!open) return;
+    setChosen(null);
+    setError(null);
+    setJoinMsg(null);
+  }, [open]);
 
   const remaining = punchCard.totalEntries - punchCard.usedEntries;
   // The stepper can never promise more than the card holds or the round seats.
   const maxCount = chosen ? Math.max(1, Math.min(remaining, chosen.available)) : remaining;
 
-  // Everything below the strip derives from the selected day. The cache holds
-  // every fetched day (strip + calendar months), so a far date picked in the
-  // calendar renders exactly like a strip chip.
-  const todayIso = days?.[0]?.date ?? null;
-  const selectedDay =
-    (selectedDate ? dayCache.get(selectedDate) : undefined) ??
-    days?.find((d) => d.date === selectedDate) ??
-    null;
   const openRounds = selectedDay
     ? selectedDay.rounds.filter((r) => r.available > 0 && !r.isClosed)
     : [];
@@ -1557,75 +1954,6 @@ function PunchRoundBooking({
     fontSize: 20,
     lineHeight: '38px',
   };
-
-  const loadRange = async () => {
-    setDays(null);
-    setDaysError(false);
-    setChosen(null);
-    setError(null);
-    setJoinMsg(null);
-    // The strip keeps a month of chips; the calendar pages the rest of the
-    // booking window (up to maxDate) month by month.
-    const res = await getRoundAvailabilityRange(30);
-    console.info('[customer punch-booking] range loaded', {
-      ok: res.ok,
-      days: res.ok ? res.data.days.length : 0,
-      error: res.ok ? undefined : res.error,
-    });
-    if (!res.ok) {
-      setDaysError(true);
-      setDays([]);
-      return;
-    }
-    setDays(res.data.days);
-    setMaxDate(res.data.maxDate);
-    setDayCache(new Map(res.data.days.map((d) => [d.date, d])));
-    setCalOpen(false);
-    setCalMonth(null);
-    setCompanionPrice(res.data.companionPriceIls);
-    // Keep the current selection only while it's still in the window;
-    // otherwise fall back to the first day (today).
-    setSelectedDate((cur) =>
-      cur && res.data.days.some((d) => d.date === cur) ? cur : (res.data.days[0]?.date ?? null),
-    );
-  };
-
-  // Fresh dots every time the form opens — availability moves under our feet.
-  useEffect(() => {
-    if (open) void loadRange();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
-
-  // The calendar pages the booking window one month per fetch; each month is
-  // remembered for as long as the form stays open.
-  useEffect(() => {
-    if (!calOpen || !calMonth) return;
-    const { dates } = monthGrid(calMonth);
-    if (!dates.some((d) => !dayCache.has(d))) return;
-    let cancelled = false;
-    setCalLoading(true);
-    void (async () => {
-      const res = await getRoundAvailabilityRange(dates.length, firstOfMonth(calMonth));
-      console.info('[customer punch-booking] calendar month', {
-        month: calMonth,
-        ok: res.ok,
-        days: res.ok ? res.data.days.length : 0,
-        error: res.ok ? undefined : res.error,
-      });
-      if (cancelled) return;
-      setCalLoading(false);
-      if (!res.ok) return;
-      setDayCache((cur) => {
-        const next = new Map(cur);
-        for (const d of res.data.days) next.set(d.date, d);
-        return next;
-      });
-    })();
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [calOpen, calMonth]);
 
   const doJoin = async (r: AvailabilityRound) => {
     setBusy(true);
@@ -1761,111 +2089,34 @@ function PunchRoundBooking({
           )}
           {days && days.length > 0 && (
             <>
-              <div style={{ display: 'flex', gap: 6, alignItems: 'stretch' }}>
-                {/* Fixed beside the strip so far-future dates are one tap away
-                    without scrolling (Yanay 2026-07-05). */}
-                <button
-                  onClick={() => {
-                    if (!todayIso) return;
-                    setCalMonth((m) => m ?? monthOfIso(selectedDate ?? todayIso));
-                    setCalOpen((v) => !v);
-                    console.info('[customer punch-booking] calendar toggle', { open: !calOpen });
-                  }}
-                  title="בחירת תאריך מלוח שנה"
-                  style={{
-                    flex: '0 0 auto',
-                    minWidth: 52,
-                    border: `1.5px solid ${calOpen ? '#e7a33e' : '#e9e0d9'}`,
-                    background: calOpen ? '#fdf3e3' : '#fff',
-                    borderRadius: 12,
-                    padding: '8px 6px',
-                    cursor: 'pointer',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: 4,
-                  }}
-                >
-                  <span style={{ fontSize: 17, lineHeight: 1 }}>📅</span>
-                  <span style={{ fontSize: 9.5, color: MUTED, fontWeight: 600 }}>לוח שנה</span>
-                </button>
-                <div
-                  style={{
-                    display: 'flex',
-                    gap: 6,
-                    overflowX: 'auto',
-                    padding: '2px 2px 4px',
-                    flex: 1,
-                    minWidth: 0,
-                  }}
-                >
-                  {days.map((d, i) => {
-                    const active = selectedDate === d.date;
-                    return (
-                      <button
-                        key={d.date}
-                        onClick={() => {
-                          setSelectedDate(d.date);
-                          setChosen(null);
-                          setError(null);
-                          setJoinMsg(null);
-                        }}
-                        style={{
-                          flex: '0 0 auto',
-                          minWidth: 52,
-                          border: `1.5px solid ${active ? '#e7a33e' : '#e9e0d9'}`,
-                          background: active ? '#fdf3e3' : '#fff',
-                          borderRadius: 12,
-                          padding: '8px 6px',
-                          cursor: 'pointer',
-                          display: 'flex',
-                          flexDirection: 'column',
-                          alignItems: 'center',
-                          gap: 4,
-                        }}
-                      >
-                        <span style={{ fontSize: 10.5, color: MUTED, fontWeight: 600 }}>
-                          {i === 0 ? 'היום' : `${dowLetter(d.date)}׳`}
-                        </span>
-                        <span
-                          style={{
-                            fontSize: 15,
-                            fontWeight: 700,
-                            color: active ? '#b9772a' : '#2d3436',
-                          }}
-                        >
-                          {dayOfMonth(d.date)}
-                        </span>
-                        <span
-                          style={{
-                            width: 7,
-                            height: 7,
-                            borderRadius: '50%',
-                            background: DAY_DOT[dayStatus(d)],
-                          }}
-                        />
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-              {calOpen && calMonth && todayIso && (
+              <DayStrip
+                days={days}
+                selectedDate={win.selectedDate}
+                calOpen={win.calOpen}
+                onToggleCalendar={win.toggleCalendar}
+                onPick={(d) => {
+                  win.setSelectedDate(d);
+                  setChosen(null);
+                  setError(null);
+                  setJoinMsg(null);
+                }}
+              />
+              {win.calOpen && win.calMonth && todayIso && (
                 <MonthCalendar
-                  month={calMonth}
+                  month={win.calMonth}
                   todayIso={todayIso}
-                  maxDate={maxDate}
-                  selectedDate={selectedDate}
-                  loading={calLoading}
-                  dayFor={(d) => dayCache.get(d)}
-                  onMonthChange={setCalMonth}
+                  maxDate={win.maxDate}
+                  selectedDate={win.selectedDate}
+                  loading={win.calLoading}
+                  dayFor={(d) => win.dayCache.get(d)}
+                  onMonthChange={win.setCalMonth}
                   onPick={(d) => {
                     console.info('[customer punch-booking] calendar pick', { date: d });
-                    setSelectedDate(d);
+                    win.setSelectedDate(d);
                     setChosen(null);
                     setError(null);
                     setJoinMsg(null);
-                    setCalOpen(false);
+                    win.setCalOpen(false);
                   }}
                 />
               )}
@@ -1891,85 +2142,18 @@ function PunchRoundBooking({
             </div>
           )}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {openRounds.map((r) => {
-              const scarce = r.capacity > 0 && r.available / r.capacity <= 0.25;
-              const selected = chosen?.roundInstanceId === r.roundInstanceId;
-              return (
-                <button
-                  key={r.roundInstanceId}
-                  onClick={() => {
-                    setChosen(r);
-                    setError(null);
-                    setCount((c) => Math.min(c, Math.max(1, Math.min(remaining, r.available))));
-                  }}
-                  style={{
-                    border: `1.5px solid ${selected ? '#e7a33e' : '#e9e0d9'}`,
-                    background: selected ? '#fdf3e3' : '#fff',
-                    borderRadius: 10,
-                    padding: '10px 14px',
-                    fontSize: 14,
-                    cursor: 'pointer',
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    gap: 10,
-                  }}
-                >
-                  <span
-                    style={{ display: 'flex', flexDirection: 'column', gap: 2, textAlign: 'start' }}
-                  >
-                    <span style={{ fontWeight: 600 }}>{r.label}</span>
-                    {!labelHasTime(r.label) && (
-                      <span style={{ color: MUTED, fontSize: 12.5 }}>
-                        {r.startTime}–{r.endTime}
-                      </span>
-                    )}
-                  </span>
-                  <span
-                    style={{
-                      display: 'flex',
-                      flexDirection: 'column',
-                      alignItems: 'flex-end',
-                      gap: 6,
-                    }}
-                  >
-                    <span
-                      style={{
-                        fontSize: 12,
-                        fontWeight: 700,
-                        borderRadius: 999,
-                        padding: '3px 9px',
-                        whiteSpace: 'nowrap',
-                        background: scarce ? '#fdf3e3' : '#eef4e2',
-                        color: scarce ? '#b9772a' : '#5b7a34',
-                      }}
-                    >
-                      {r.available} פנויים
-                    </span>
-                    <span
-                      style={{
-                        width: 64,
-                        height: 5,
-                        borderRadius: 999,
-                        background: '#f0ebe4',
-                        overflow: 'hidden',
-                        display: 'block',
-                      }}
-                    >
-                      <span
-                        style={{
-                          display: 'block',
-                          height: '100%',
-                          borderRadius: 999,
-                          width: `${r.capacity > 0 ? Math.max(6, Math.round((r.available / r.capacity) * 100)) : 0}%`,
-                          background: scarce ? '#e7a33e' : '#8fae5d',
-                        }}
-                      />
-                    </span>
-                  </span>
-                </button>
-              );
-            })}
+            {openRounds.map((r) => (
+              <RoundChoiceRow
+                key={r.roundInstanceId}
+                round={r}
+                selected={chosen?.roundInstanceId === r.roundInstanceId}
+                onClick={() => {
+                  setChosen(r);
+                  setError(null);
+                  setCount((c) => Math.min(c, Math.max(1, Math.min(remaining, r.available))));
+                }}
+              />
+            ))}
           </div>
 
           {fullRounds.length > 0 && (
@@ -2123,42 +2307,7 @@ function PunchRoundBooking({
             <div style={{ color: '#a23a3a', fontSize: 13, textAlign: 'center' }}>{error}</div>
           )}
 
-          {days && days.length > 0 && (
-            <div
-              style={{
-                display: 'flex',
-                flexWrap: 'wrap',
-                gap: '4px 12px',
-                justifyContent: 'center',
-                fontSize: 11.5,
-                color: MUTED,
-                borderTop: '1px solid #f3efea',
-                paddingTop: 10,
-              }}
-            >
-              {(
-                [
-                  ['ok', 'הרבה מקום'],
-                  ['warn', 'נשארו מעט'],
-                  ['full', 'מלא'],
-                  ['free', 'כניסה חופשית'],
-                  ['closed', 'סגור'],
-                ] as const
-              ).map(([k, label]) => (
-                <span key={k} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-                  <span
-                    style={{
-                      width: 7,
-                      height: 7,
-                      borderRadius: '50%',
-                      background: DAY_DOT[k],
-                    }}
-                  />
-                  {label}
-                </span>
-              ))}
-            </div>
-          )}
+          {days && days.length > 0 && <DayDotLegend />}
         </>
       )}
     </div>
@@ -2243,8 +2392,10 @@ function WaitlistEntryCard({
   );
 }
 
-// A single round booking with its barcode + a "change time" flow: pick another
-// available round on the same day and swap into it (super-brief §6.1).
+// A single round booking with its barcode + a reschedule flow: pick another
+// round on ANY open day in the booking window and swap into it (super-brief
+// §6.1; Yanay 2026-07-09 — date change, not only time). The server allows the
+// swap until the ORIGINAL round starts and re-mints the QR on success.
 function RoundBookingCard({
   booking,
   onSwapped,
@@ -2258,9 +2409,16 @@ function RoundBookingCard({
 }) {
   const [picking, setPicking] = useState(false);
   const [confirmingCancel, setConfirmingCancel] = useState(false);
-  const [alternatives, setAlternatives] = useState<AvailabilityRound[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The same strip+calendar window as the punch flow, preselected to the
+  // booking's own date — "keep the day, change the time" is the common case,
+  // but any open day is a tap away (Yanay 2026-07-09: date change, not just
+  // time; the server allows a swap until the ORIGINAL round starts).
+  const win = useRoundAvailabilityWindow(picking, '[customer reschedule]', booking.date);
+  const swapTargets = win.selectedDay
+    ? swapTargetsForDay(win.selectedDay, booking.roundInstanceId)
+    : [];
 
   const secondaryBtn: CSSProperties = {
     border: '1.5px solid #e9e0d9',
@@ -2283,38 +2441,31 @@ function RoundBookingCard({
     cursor: 'pointer',
   };
 
-  const openPicker = async () => {
-    setPicking(true);
-    setError(null);
-    setAlternatives(null);
-    const res = await getRoundAvailability(booking.date);
-    if (!res.ok) {
-      setError('לא ניתן לטעון זמנים פנויים כרגע.');
-      setAlternatives([]);
-      return;
-    }
-    setAlternatives(
-      res.data.rounds.filter(
-        (r) => r.roundInstanceId !== booking.roundInstanceId && r.available > 0 && !r.isClosed,
-      ),
-    );
-  };
-
   const doSwap = async (targetRoundInstanceId: string) => {
     setBusy(true);
     setError(null);
+    console.info('[customer reschedule] swapping', {
+      bookingId: booking.bookingId,
+      from: booking.roundInstanceId,
+      to: targetRoundInstanceId,
+    });
     const res = await swapRoundBooking(booking.bookingId, targetRoundInstanceId);
     setBusy(false);
     if (!res.ok) {
+      console.warn('[customer reschedule] swap rejected', {
+        bookingId: booking.bookingId,
+        error: res.error,
+      });
       setError(
         res.error === 'target_full'
-          ? 'הסבב התמלא. בחרו זמן אחר.'
+          ? 'הסבב התמלא. בחרו מועד אחר.'
           : res.error === 'too_late'
-            ? 'כבר מאוחר מדי לשנות את הזמן.'
+            ? 'כבר מאוחר מדי לשנות — אפשר עד שעת ההתחלה של ההזמנה המקורית.'
             : 'לא ניתן לשנות כרגע. נסו שוב.',
       );
       return;
     }
+    console.info('[customer reschedule] swap done', { bookingId: booking.bookingId });
     setPicking(false);
     await onSwapped();
   };
@@ -2445,8 +2596,18 @@ function RoundBookingCard({
 
       {booking.status === 'confirmed' && !picking && !confirmingCancel && (
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
-          <button onClick={() => void openPicker()} style={secondaryBtn}>
-            שנה שעה
+          <button
+            onClick={() => {
+              console.info('[customer reschedule] picker opened', {
+                bookingId: booking.bookingId,
+                date: booking.date,
+              });
+              setPicking(true);
+              setError(null);
+            }}
+            style={secondaryBtn}
+          >
+            שנה מועד
           </button>
           <button
             onClick={() => {
@@ -2500,46 +2661,92 @@ function RoundBookingCard({
       )}
 
       {picking && (
-        <div style={{ width: '100%', borderTop: '1px solid #f3efea', paddingTop: 12 }}>
-          <div style={{ fontSize: 13.5, fontWeight: 600, marginBottom: 8, textAlign: 'center' }}>
-            בחרו זמן אחר לאותו יום
+        <div
+          style={{
+            width: '100%',
+            borderTop: '1px solid #f3efea',
+            paddingTop: 12,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 12,
+          }}
+        >
+          <div style={{ fontSize: 13.5, fontWeight: 600, textAlign: 'center' }}>
+            בחרו מועד אחר — שעה אחרת או יום אחר
           </div>
-          {alternatives === null && (
+          {win.daysError && (
+            <div style={{ textAlign: 'center', color: '#a23a3a', fontSize: 13 }}>
+              לא ניתן לטעון זמינות כרגע. נסו לרענן את הדף.
+            </div>
+          )}
+          {!win.daysError && win.days === null && (
             <div style={{ textAlign: 'center', color: MUTED, fontSize: 13 }}>טוען…</div>
           )}
-          {alternatives && alternatives.length === 0 && (
-            <div style={{ textAlign: 'center', color: MUTED, fontSize: 13 }}>
-              אין זמנים פנויים אחרים היום.
+          {win.days && win.days.length > 0 && (
+            <>
+              <DayStrip
+                days={win.days}
+                selectedDate={win.selectedDate}
+                calOpen={win.calOpen}
+                onToggleCalendar={win.toggleCalendar}
+                onPick={(d) => {
+                  win.setSelectedDate(d);
+                  setError(null);
+                }}
+              />
+              {win.calOpen && win.calMonth && win.todayIso && (
+                <MonthCalendar
+                  month={win.calMonth}
+                  todayIso={win.todayIso}
+                  maxDate={win.maxDate}
+                  selectedDate={win.selectedDate}
+                  loading={win.calLoading}
+                  dayFor={(d) => win.dayCache.get(d)}
+                  onMonthChange={win.setCalMonth}
+                  onPick={(d) => {
+                    console.info('[customer reschedule] calendar pick', { date: d });
+                    win.setSelectedDate(d);
+                    setError(null);
+                    win.setCalOpen(false);
+                  }}
+                />
+              )}
+            </>
+          )}
+          {win.selectedDay && (
+            <div style={{ fontSize: 14, fontWeight: 700, textAlign: 'center' }}>
+              יום {dowLetter(win.selectedDay.date)}׳, {fmtDate(win.selectedDay.date)}
+              {win.selectedDay.date === booking.date ? ' (התאריך של ההזמנה)' : ''}
             </div>
           )}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {alternatives?.map((r) => (
-              <button
-                key={r.roundInstanceId}
-                disabled={busy}
-                onClick={() => void doSwap(r.roundInstanceId)}
-                style={{
-                  border: '1.5px solid #e9e0d9',
-                  background: '#fff',
-                  borderRadius: 10,
-                  padding: '10px 14px',
-                  fontSize: 14,
-                  cursor: busy ? 'default' : 'pointer',
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                }}
-              >
-                <span style={{ fontWeight: 600 }}>
-                  {roundTitle(r.label, r.startTime, r.endTime)}
-                </span>
-                <span style={{ color: MUTED, fontSize: 13 }}>{r.available} פנויים</span>
-              </button>
-            ))}
+          {win.selectedDay && swapTargets.length === 0 && (
+            <div style={{ textAlign: 'center', color: MUTED, fontSize: 13 }}>
+              {win.selectedDay.closed
+                ? 'המקום סגור בתאריך זה — בחרו יום אחר.'
+                : !win.selectedDay.roundsRequired
+                  ? 'בתאריך זה הכניסה חופשית — אין סבבים להזמנה.'
+                  : win.selectedDay.date === booking.date
+                    ? 'אין סבב אחר פנוי ביום זה — אפשר לבחור יום אחר מהפס למעלה.'
+                    : 'אין סבבים פנויים ביום זה — בחרו יום אחר.'}
+            </div>
+          )}
+          {swapTargets.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {swapTargets.map((r) => (
+                <RoundChoiceRow
+                  key={r.roundInstanceId}
+                  round={r}
+                  disabled={busy}
+                  onClick={() => void doSwap(r.roundInstanceId)}
+                />
+              ))}
+            </div>
+          )}
+          <div style={{ textAlign: 'center', color: MUTED, fontSize: 12 }}>
+            אפשר לשנות מועד עד שעת ההתחלה של ההזמנה המקורית.
           </div>
           {error && (
-            <div style={{ color: '#a23a3a', fontSize: 13, marginTop: 8, textAlign: 'center' }}>
-              {error}
-            </div>
+            <div style={{ color: '#a23a3a', fontSize: 13, textAlign: 'center' }}>{error}</div>
           )}
           <button
             onClick={() => {
@@ -2548,7 +2755,6 @@ function RoundBookingCard({
             }}
             disabled={busy}
             style={{
-              marginTop: 10,
               border: 'none',
               background: 'transparent',
               color: MUTED,
@@ -2557,7 +2763,7 @@ function RoundBookingCard({
               width: '100%',
             }}
           >
-            ביטול
+            חזרה
           </button>
         </div>
       )}
