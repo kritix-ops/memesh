@@ -938,31 +938,59 @@ add_action('wp_footer', function () {
         // updater). We do NOT render competing controls — we only DECORATE its
         // rows, keyed by data-cart-key against the server-printed
         // memeshCartLines map, so it stays the single owner of that UI:
-        //   • companion line (t=0) → frozen: its whole controls block is
-        //     hidden (auto-managed with the ticket; never changed by hand).
-        //   • round-ticket line (t=1) → the +/− input is hidden (one seat per
-        //     line) and only the "+" and "×" remain; the click handler routes
-        //     that "+" to the add-ticket picker instead of a quantity bump.
+        //   • companion line (t=0, or the widget's own data-is-companion) →
+        //     frozen: the whole controls block is hidden (auto-managed with
+        //     the ticket; never changed by hand).
+        //   • round-ticket line (t=1) → the −/input are hidden (one seat per
+        //     line) and only the "+" and "×" remain; the "+" is force-enabled
+        //     (our sold_individually made the widget render it disabled) and
+        //     the click handler routes it to the add-ticket picker.
         //   • punch cards / other products → not in the map, left fully native.
-        // Purely presentational; correctness lives in the capture-phase click
-        // handler above, which reads the map directly so a not-yet-decorated
-        // row (mid AJAX re-render) still behaves right.
+        //
+        // Hiding/enabling is done with INLINE styles, not a stylesheet: the
+        // classes-only approach failed live because LiteSpeed served a stale
+        // combined CSS bundle without our rules (Yanay 2026-07-11 — the classes
+        // were on the elements, but the CSS never hid them). Inline styles set
+        // at runtime can't be cache-stripped and beat the widget's own CSS.
+        // Correctness also lives in the capture-phase click handler above,
+        // which reads the map directly regardless of decoration timing.
         function memeshDecorateCheckoutRows() {
-            var lines = window.memeshCartLines;
-            if (!lines) return;
+            var lines = window.memeshCartLines || {};
             var blocks = document.querySelectorAll('.memesh-qty-controls[data-cart-key]');
             for (var i = 0; i < blocks.length; i += 1) {
                 var ctrl = blocks[i];
                 var line = lines[ctrl.getAttribute('data-cart-key')];
-                if (!line) continue;
-                if (line.t === 0 && !ctrl.classList.contains('memesh-companion-frozen')) {
-                    ctrl.classList.add('memesh-companion-frozen');
-                    console.info('[memesh qty] companion row frozen');
-                } else if (line.t === 1 && !ctrl.classList.contains('memesh-ticket-row')) {
-                    ctrl.classList.add('memesh-ticket-row');
-                    console.info('[memesh qty] ticket row: "+" routed to the picker', {
-                        productId: line.p, date: line.d || null,
-                    });
+                var isCompanion = (line && line.t === 0) || ctrl.getAttribute('data-is-companion') === '1';
+                if (isCompanion) {
+                    if (ctrl.style.display !== 'none') {
+                        ctrl.style.display = 'none';
+                        console.info('[memesh qty] companion row frozen (hidden)');
+                    }
+                    continue;
+                }
+                if (line && line.t === 1) {
+                    var minus = ctrl.querySelector('.memesh-qty-minus');
+                    var input = ctrl.querySelector('.memesh-qty-input');
+                    var plus  = ctrl.querySelector('.memesh-qty-plus');
+                    if (minus) minus.style.display = 'none';
+                    if (input) input.style.display = 'none';
+                    if (plus) {
+                        // Force the "+" back to clickable — WE own it now (it
+                        // opens the picker, never bumps qty), so the widget's
+                        // max=1 disabling is irrelevant.
+                        plus.removeAttribute('disabled');
+                        plus.classList.remove('memesh-qty-disabled');
+                        plus.style.display = '';
+                        plus.style.opacity = '1';
+                        plus.style.pointerEvents = 'auto';
+                        plus.style.cursor = 'pointer';
+                    }
+                    if (!ctrl.classList.contains('memesh-ticket-row')) {
+                        ctrl.classList.add('memesh-ticket-row');
+                        console.info('[memesh qty] ticket row: "+" routed to the picker', {
+                            productId: line.p, date: line.d || null,
+                        });
+                    }
                 }
             }
         }
@@ -1210,14 +1238,11 @@ add_action('wp_head', function () {
     }
     .memesh-added-again:hover { background: #fdf3e3; }
 
-    /* Decoration of the site checkout widget's own rows (Yanay 2026-07-11).
-       We add these classes from memeshDecorateCheckoutRows(); the widget's own
-       CSS still styles the buttons. Companion rows are frozen (auto-managed
-       with the ticket); ticket rows keep only "+" (→ picker) and "×" (remove),
-       since each child is one seat on its own line. */
-    .memesh-qty-controls.memesh-companion-frozen { display: none !important; }
-    .memesh-ticket-row .memesh-qty-minus,
-    .memesh-ticket-row .memesh-qty-input { display: none !important; }
+    /* Note: freezing the companion row and trimming the ticket row to "+"/"×"
+       is done with INLINE styles in memeshDecorateCheckoutRows(), not here —
+       an embedded stylesheet got cache-stripped by LiteSpeed on the live site
+       (Yanay 2026-07-11). Keep the visual contract in the JS so it can't drift
+       from a stale CSS bundle. */
 
     /* The snippet-owned "add another ticket" button (cart + checkout). */
     .memesh-add-ticket {

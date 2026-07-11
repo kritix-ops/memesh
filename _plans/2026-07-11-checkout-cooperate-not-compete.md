@@ -63,6 +63,23 @@ Merging deploys nothing. Rollout: paste the regenerated
 The Memesh Checkout snippet is not modified — do not re-paste it. Rollback:
 re-paste `2026-07-07-yanay-snippet.txt`.
 
+## Revision (2026-07-11, after the first live test of this approach)
+
+A console dump proved the JS ran perfectly — both rows carried the right
+classes (`memesh-ticket-row`, `memesh-companion-frozen`) — but the companion
+stayed visible and the ticket "+" was greyed. Two causes:
+1. The embedded `<style>` rules never applied: LiteSpeed served a stale
+   combined CSS bundle without them (JS wasn't combined, so it ran fresh).
+2. Our `sold_individually` makes the round ticket max-purchase 1, so the
+   Memesh Checkout widget rendered the ticket "+" `disabled`.
+
+Fix: do the freezing/trimming with INLINE styles inside
+`memeshDecorateCheckoutRows()` (immune to CSS cache-stripping, beats the
+widget's CSS), and force-enable the ticket "+" (remove `disabled` +
+`memesh-qty-disabled`), since we own its behavior. Companion detection now also
+honors the widget's own `data-is-companion="1"` as a fallback. The embedded CSS
+rules for these were removed so the visual contract lives entirely in the JS.
+
 ## Follow-up
 
 Version the site's own cart snippets (now exported under `WP SNIPPETS/`) into
