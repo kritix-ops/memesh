@@ -960,10 +960,15 @@ add_action('wp_footer', function () {
             for (var i = 0; i < blocks.length; i += 1) {
                 var ctrl = blocks[i];
                 var line = lines[ctrl.getAttribute('data-cart-key')];
+                // hide()/show() with the 'important' priority: the widget's own
+                // CSS uses `display: … !important`, which beats a plain inline
+                // style — only an inline !important wins (Yanay 2026-07-11: the
+                // −/companion stayed visible until this).
+                var hide = function (el) { if (el) el.style.setProperty('display', 'none', 'important'); };
                 var isCompanion = (line && line.t === 0) || ctrl.getAttribute('data-is-companion') === '1';
                 if (isCompanion) {
                     if (ctrl.style.display !== 'none') {
-                        ctrl.style.display = 'none';
+                        hide(ctrl);
                         console.info('[memesh qty] companion row frozen (hidden)');
                     }
                     continue;
@@ -972,18 +977,18 @@ add_action('wp_footer', function () {
                     var minus = ctrl.querySelector('.memesh-qty-minus');
                     var input = ctrl.querySelector('.memesh-qty-input');
                     var plus  = ctrl.querySelector('.memesh-qty-plus');
-                    if (minus) minus.style.display = 'none';
-                    if (input) input.style.display = 'none';
+                    hide(minus);
+                    hide(input);
                     if (plus) {
                         // Force the "+" back to clickable — WE own it now (it
                         // opens the picker, never bumps qty), so the widget's
                         // max=1 disabling is irrelevant.
                         plus.removeAttribute('disabled');
                         plus.classList.remove('memesh-qty-disabled');
-                        plus.style.display = '';
-                        plus.style.opacity = '1';
-                        plus.style.pointerEvents = 'auto';
-                        plus.style.cursor = 'pointer';
+                        plus.style.setProperty('display', 'inline-flex', 'important');
+                        plus.style.setProperty('opacity', '1', 'important');
+                        plus.style.setProperty('pointer-events', 'auto', 'important');
+                        plus.style.setProperty('cursor', 'pointer', 'important');
                     }
                     if (!ctrl.classList.contains('memesh-ticket-row')) {
                         ctrl.classList.add('memesh-ticket-row');
