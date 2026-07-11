@@ -906,21 +906,25 @@ add_action('wp_footer', function () {
 
             // The site checkout widget's own buttons. We decide per line via the
             // memeshCartLines map (read live, so a row not yet class-decorated
-            // still behaves right): companion → swallow every click (frozen);
-            // round-ticket "+" → open the picker instead of bumping quantity.
-            // Ticket "−"/"×", punch cards and other products fall through to the
-            // site widget untouched.
+            // still behaves right): companion → block +/− (can't add or change),
+            // but let "×" remove it (Yanay 2026-07-11: removing the second adult
+            // is allowed, adding one isn't); round-ticket "+" → open the picker
+            // instead of bumping quantity. Ticket "−"/"×", punch cards and other
+            // products fall through to the site widget untouched.
             var siteBtn = t.closest('.memesh-qty-controls .memesh-qty-btn, .memesh-qty-controls .memesh-qty-remove');
             if (siteBtn) {
                 var ctrl = siteBtn.closest('.memesh-qty-controls');
                 var lines = window.memeshCartLines || {};
                 var line = lines[ctrl.getAttribute('data-cart-key')];
+                var action = siteBtn.getAttribute('data-action');
                 if (line && line.t === 0) {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    return;
+                    if (action === 'plus' || action === 'minus') {
+                        e.preventDefault();
+                        e.stopPropagation();
+                    }
+                    return; // "remove" passes through to the widget's own handler
                 }
-                if (line && line.t === 1 && siteBtn.getAttribute('data-action') === 'plus') {
+                if (line && line.t === 1 && action === 'plus') {
                     e.preventDefault();
                     e.stopPropagation();
                     openAddModal(line.p, line.d || '');
@@ -939,8 +943,9 @@ add_action('wp_footer', function () {
         // rows, keyed by data-cart-key against the server-printed
         // memeshCartLines map, so it stays the single owner of that UI:
         //   • companion line (t=0, or the widget's own data-is-companion) →
-        //     frozen: the whole controls block is hidden (auto-managed with
-        //     the ticket; never changed by hand).
+        //     +/−/input hidden (auto-managed with the ticket; can't add or
+        //     change one), but the "×" is kept so the second adult can be
+        //     removed (Yanay 2026-07-11).
         //   • round-ticket line (t=1) → the −/input are hidden (one seat per
         //     line) and only the "+" and "×" remain; the "+" is force-enabled
         //     (our sold_individually made the widget render it disabled) and
@@ -967,9 +972,15 @@ add_action('wp_footer', function () {
                 var hide = function (el) { if (el) el.style.setProperty('display', 'none', 'important'); };
                 var isCompanion = (line && line.t === 0) || ctrl.getAttribute('data-is-companion') === '1';
                 if (isCompanion) {
-                    if (ctrl.style.display !== 'none') {
-                        hide(ctrl);
-                        console.info('[memesh qty] companion row frozen (hidden)');
+                    // Companion: no add / no decrement (auto-managed 1:1 with its
+                    // ticket), but KEEP the "×" so the second adult can be
+                    // removed (Yanay 2026-07-11). Hide only +, −, and the input.
+                    hide(ctrl.querySelector('.memesh-qty-minus'));
+                    hide(ctrl.querySelector('.memesh-qty-plus'));
+                    hide(ctrl.querySelector('.memesh-qty-input'));
+                    if (!ctrl.classList.contains('memesh-companion-frozen')) {
+                        ctrl.classList.add('memesh-companion-frozen');
+                        console.info('[memesh qty] companion row: +/− hidden, remove kept');
                     }
                     continue;
                 }
