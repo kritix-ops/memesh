@@ -18,15 +18,13 @@
 //     card gets a buy button that opens an Elementor popup with this
 //     shortcode. The form posts to the product page, so errors and notices
 //     render exactly like a product-page purchase.
-//   - Cart/checkout +/- on ticket lines: "+" opens an add-ticket modal with
-//     the same picker (defaulting to that line's date — Yanay 2026-07-09),
-//     "−" removes the line. Lines themselves never exceed quantity 1. A
-//     snippet-owned "הוספת כרטיס לילד/ה נוסף/ת" button (classic WC hooks)
-//     opens the same modal on themes that draw their own cart steppers and
-//     ignore the quantity filter (Yanay's 2026-07-10 video). On such themes
-//     the behavior script also swaps each TICKET row's dead native +/- for
-//     live memesh controls, and sold_individually (now covering the companion
-//     product too — Yanay 2026-07-11) greys the companion row natively.
+//   - Checkout quantity UX (Yanay 2026-07-09..11): the site's OWN "Memesh
+//     Checkout" snippet renders the .memesh-qty-controls rows; this snippet
+//     does NOT compete with it — it decorates them (memeshDecorateCheckoutRows)
+//     so the companion line is frozen and a round-ticket "+" opens the
+//     add-ticket picker modal (one seat per line) instead of bumping quantity.
+//     A "הוספת כרטיס לילד/ה נוסף/ת" button gives the same modal a guaranteed
+//     entry point on cart + checkout.
 //   - Punch-card upsell notice when a 2nd entry ticket is added.
 //   - Holds the seat at checkout via /rounds/hold/wc and tags the order.
 //   - Rounds mandatory ONLY when the rounds system is on: global switch via
@@ -97,97 +95,16 @@ function memesh_rounds_required_for_date($date) {
 }
 
 /**
- * One-seat-per-line: quantity locked to 1. Covers the companion product too
- * (Yanay 2026-07-11): sold_individually is the ONE signal the live theme's
- * cart steppers actually respect — the quantity-input args below and the WC
- * cart-quantity filter are both ignored there — so without it the companion
- * row kept a live "+" while the ticket rows sat greyed out, exactly backwards.
+ * One-seat-per-line on the PRODUCT PAGE: a round ticket can't be bought at
+ * quantity > 1 (each child is its own line with its own round + hold). The
+ * cart/checkout quantity UI is NOT ours — the site's "Memesh Checkout" snippet
+ * renders those .memesh-qty-controls rows; this snippet only decorates them
+ * from the behavior script (freeze companion, route the ticket "+" to the
+ * round picker). See memeshDecorateCheckoutRows() in wp_footer.
  */
 add_filter('woocommerce_is_sold_individually', function ($sold, $product) {
-    $pid = (int) $product->get_id();
-    return memesh_is_round_product($pid) || $pid === MEMESH_COMPANION_PRODUCT_ID ? true : $sold;
+    return memesh_is_round_product($product->get_id()) ? true : $sold;
 }, 10, 2);
-
-/**
- * ...but sold_individually must NOT block the SECOND companion line: two
- * children each bringing an extra adult means two auto-added companion lines
- * (their distinct memesh_companion_of keys keep them separate in the cart).
- * This filter stops WooCommerce treating the first line as "already in cart"
- * and refusing the add. Manual companion purchases stay blocked by the
- * validation guard further down — only the snippet's own auto-add gets here.
- */
-add_filter('woocommerce_add_to_cart_sold_individually_found_in_cart', function ($found, $product_id) {
-    return (int) $product_id === MEMESH_COMPANION_PRODUCT_ID ? false : $found;
-}, 10, 2);
-
-/**
- * Pin the NATIVE quantity widget to exactly 1 for tickets AND the companion
- * line. Themes/plugins that draw their own +/- around
- * woocommerce_quantity_input() read these args; the live theme ignores them
- * (it reads only sold_individually, above), but stock themes honor them.
- */
-add_filter('woocommerce_quantity_input_args', function ($args, $product) {
-    $pid = $product ? (int) $product->get_id() : 0;
-    if (memesh_is_round_product($pid) || $pid === MEMESH_COMPANION_PRODUCT_ID) {
-        $args['min_value'] = 1;
-        $args['max_value'] = 1;
-    }
-    return $args;
-}, 10, 2);
-
-/**
- * Cart/checkout quantity for entry tickets: our own +/- (Yanay 2026-07-09,
- * reversing the 2026-07-07 plain-text lock — the stepper can bring more
- * sales). The line itself is still ALWAYS quantity 1 (one seat, one hold):
- *   - "+" opens the add-ticket modal (below) so the extra child gets a real
- *     date + round, defaulting to this line's date, and lands as its own line.
- *   - "−" removes the line via the standard WC remove URL, which also drops
- *     its auto-added companion line (woocommerce_cart_item_removed hook).
- * The companion line shows a plain "1" — it is auto-managed per ticket and
- * never adjusted by hand. A theme/plugin stepper that bypasses this filter is
- * neutralized by the quantity clamp right below.
- */
-add_filter('woocommerce_cart_item_quantity', function ($html, $cart_item_key, $cart_item) {
-    $pid = isset($cart_item['product_id']) ? (int) $cart_item['product_id'] : 0;
-    if ($pid === MEMESH_COMPANION_PRODUCT_ID) return '1';
-    if (!memesh_is_round_product($pid)) return $html;
-    if (!memesh_rounds_enabled()) return '1'; // plain-product mode — no picker to open
-    $date = isset($cart_item['memesh_date']) ? $cart_item['memesh_date'] : '';
-    // NAMESPACE NOTE: these classes are memesh-TICKET-*, not memesh-qty-* —
-    // the site runs a separate, unversioned cart-quantity snippet whose
-    // buttons are .memesh-qty-plus/.memesh-qty-minus (discovered 2026-07-11
-    // via DevTools). Sharing its names made our click handler hijack every
-    // line's stepper, punch cards included.
-    return '<span class="memesh-ticket-qty" dir="ltr">'
-        . '<a class="memesh-ticket-minus" href="' . esc_url(wc_get_cart_remove_url($cart_item_key)) . '"'
-        . ' title="הסרת הכרטיס מהסל" aria-label="הסרת הכרטיס מהסל">−</a>'
-        . '<span class="memesh-ticket-num">1</span>'
-        . '<button type="button" class="memesh-ticket-plus"'
-        . ' data-product-id="' . esc_attr($pid) . '" data-date="' . esc_attr($date) . '"'
-        . ' title="הוספת כרטיס נוסף" aria-label="הוספת כרטיס נוסף">+</button>'
-        . '</span>';
-}, 10, 3);
-
-/**
- * Belt-and-braces: no matter which UI submitted it, a ticket/companion line
- * can never hold more than one seat. A quantity bump from a stepper this
- * snippet doesn't own snaps back to 1 with a notice pointing at the "+" flow
- * (the checkout hold reserves exactly one seat per line, so a quantity above
- * 1 would charge for seats that were never reserved — the order-line guard
- * further down would then abort the whole checkout, which is worse UX than
- * refusing early here).
- */
-add_action('woocommerce_after_cart_item_quantity_update', function ($cart_item_key, $quantity, $old_quantity, $cart) {
-    if ($quantity <= 1) return;
-    $item = $cart->cart_contents[$cart_item_key] ?? null;
-    if (!$item) return;
-    $pid = (int) ($item['product_id'] ?? 0);
-    if (!memesh_is_round_product($pid) && $pid !== MEMESH_COMPANION_PRODUCT_ID) return;
-    // Direct write, not set_quantity() — set_quantity() re-fires this hook.
-    $cart->cart_contents[$cart_item_key]['quantity'] = 1;
-    error_log('[memesh cart] quantity ' . $quantity . ' on product ' . $pid . ' clamped back to 1 (line ' . $cart_item_key . ')');
-    wc_add_notice('כל כרטיס כניסה הוא שורה נפרדת עם תאריך וסבב משלו — לחצו + ליד הכרטיס כדי להוסיף עוד אחד.', 'notice');
-}, 10, 4);
 
 /** Set/read whether any picker rendered on this page — the behavior script
  *  prints once in wp_footer only when at least one did. */
@@ -969,88 +886,83 @@ add_action('wp_footer', function () {
             document.body.classList.remove('memesh-modal-open');
             console.info('[memesh qty] add-ticket modal closed');
         }
+        // Capture phase so we preempt the site checkout widget's OWN delegated
+        // (bubble-phase) click handler on .memesh-qty-btn — stopPropagation here
+        // stops the event before it ever reaches theirs.
         document.addEventListener('click', function (e) {
             var t = e.target;
             if (!t || !t.closest) return;
-            // Only OUR classes — .memesh-qty-plus belongs to the site's own
-            // cart-quantity widget (punch cards bump quantity through it) and
-            // must never be intercepted.
-            var plus = t.closest('.memesh-ticket-plus, .memesh-add-ticket');
-            if (plus) {
+
+            // The snippet-owned dashed "add another child" button.
+            var dashed = t.closest('.memesh-add-ticket');
+            if (dashed) {
                 e.preventDefault();
                 e.stopPropagation();
-                openAddModal(plus.getAttribute('data-product-id'), plus.getAttribute('data-date'));
+                openAddModal(dashed.getAttribute('data-product-id'), dashed.getAttribute('data-date'));
                 return;
             }
-            // The rewired ticket "−" (a BUTTON, inside the site widget's
-            // controls) delegates to that row's native remove. The WC-filter
-            // markup's "−" is an <a> with the remove URL — left to navigate.
-            var minus = t.closest('button.memesh-ticket-minus');
-            if (minus) {
-                e.preventDefault();
-                e.stopPropagation();
-                var ctrl = minus.closest('.memesh-qty-controls');
-                var rm = ctrl && ctrl.querySelector('.memesh-qty-remove');
-                if (rm) {
-                    console.info('[memesh qty] ticket-row minus → native remove');
-                    rm.click();
+
+            if (t.closest('[data-memesh-modal-close]')) { closeAddModal(); return; }
+
+            // The site checkout widget's own buttons. We decide per line via the
+            // memeshCartLines map (read live, so a row not yet class-decorated
+            // still behaves right): companion → swallow every click (frozen);
+            // round-ticket "+" → open the picker instead of bumping quantity.
+            // Ticket "−"/"×", punch cards and other products fall through to the
+            // site widget untouched.
+            var siteBtn = t.closest('.memesh-qty-controls .memesh-qty-btn, .memesh-qty-controls .memesh-qty-remove');
+            if (siteBtn) {
+                var ctrl = siteBtn.closest('.memesh-qty-controls');
+                var lines = window.memeshCartLines || {};
+                var line = lines[ctrl.getAttribute('data-cart-key')];
+                if (line && line.t === 0) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    return;
                 }
-                return;
+                if (line && line.t === 1 && siteBtn.getAttribute('data-action') === 'plus') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    openAddModal(line.p, line.d || '');
+                    return;
+                }
             }
-            if (t.closest('[data-memesh-modal-close]')) closeAddModal();
         }, true);
         document.addEventListener('keydown', function (e) {
             if (e.key === 'Escape') closeAddModal();
         });
 
-        // Ticket rows get a WORKING +/- inside the site's own cart-quantity
-        // widget (an unversioned WP snippet, discovered 2026-07-11: it renders
-        // .memesh-qty-controls[data-cart-key] with .memesh-qty-plus/-minus/
-        // -remove buttons into the product-name cell, and respects only
-        // sold_individually — so ticket rows sat disabled while the plus
-        // belongs there, per Yanay). Each control block is matched to its
-        // line via data-cart-key against the server-printed memeshCartLines
-        // map; on TICKET rows the disabled native +/- are hidden and replaced:
-        // "+" (memesh-ticket-plus) opens the add-ticket modal with the line's
-        // product and date, "−" (memesh-ticket-minus) fires the row's own
-        // native remove. Punch-card and companion rows keep their native
-        // controls untouched — punch cards legitimately bump quantity, and
-        // the companion is greyed by sold_individually. Runs under the same
-        // observer as initAll, so AJAX re-renders re-wire.
-        var wiredControls = new WeakSet();
-        function wireCartControls() {
+        // Cooperate with the site's OWN checkout quantity widget (the "Memesh
+        // Checkout" snippet renders .memesh-qty-controls[data-cart-key] with
+        // .memesh-qty-btn/.memesh-qty-remove buttons and its own AJAX qty
+        // updater). We do NOT render competing controls — we only DECORATE its
+        // rows, keyed by data-cart-key against the server-printed
+        // memeshCartLines map, so it stays the single owner of that UI:
+        //   • companion line (t=0) → frozen: its whole controls block is
+        //     hidden (auto-managed with the ticket; never changed by hand).
+        //   • round-ticket line (t=1) → the +/− input is hidden (one seat per
+        //     line) and only the "+" and "×" remain; the click handler routes
+        //     that "+" to the add-ticket picker instead of a quantity bump.
+        //   • punch cards / other products → not in the map, left fully native.
+        // Purely presentational; correctness lives in the capture-phase click
+        // handler above, which reads the map directly so a not-yet-decorated
+        // row (mid AJAX re-render) still behaves right.
+        function memeshDecorateCheckoutRows() {
             var lines = window.memeshCartLines;
             if (!lines) return;
-            var controls = document.querySelectorAll('.memesh-qty-controls[data-cart-key]');
-            for (var i = 0; i < controls.length; i += 1) {
-                var ctrl = controls[i];
-                if (wiredControls.has(ctrl)) continue;
+            var blocks = document.querySelectorAll('.memesh-qty-controls[data-cart-key]');
+            for (var i = 0; i < blocks.length; i += 1) {
+                var ctrl = blocks[i];
                 var line = lines[ctrl.getAttribute('data-cart-key')];
-                if (!line || line.t !== 1) continue;
-                wiredControls.add(ctrl);
-                var nativePlus = ctrl.querySelector('.memesh-qty-plus');
-                if (!nativePlus || ctrl.querySelector('.memesh-ticket-plus')) continue;
-                console.info('[memesh qty] ticket-row plus rewired to the add-ticket modal', {
-                    productId: line.p, date: line.d || null,
-                });
-                var ours = document.createElement('button');
-                ours.type = 'button';
-                ours.className = 'memesh-ticket-plus';
-                ours.setAttribute('data-product-id', String(line.p));
-                ours.setAttribute('data-date', line.d || '');
-                ours.textContent = '+';
-                ours.title = 'הוספת כרטיס נוסף';
-                nativePlus.style.display = 'none';
-                nativePlus.parentNode.insertBefore(ours, nativePlus);
-                var nativeMinus = ctrl.querySelector('.memesh-qty-minus');
-                if (nativeMinus && ctrl.querySelector('.memesh-qty-remove')) {
-                    var rm = document.createElement('button');
-                    rm.type = 'button';
-                    rm.className = 'memesh-ticket-minus';
-                    rm.textContent = '−';
-                    rm.title = 'הסרת הכרטיס מהסל';
-                    nativeMinus.style.display = 'none';
-                    nativeMinus.parentNode.insertBefore(rm, nativeMinus);
+                if (!line) continue;
+                if (line.t === 0 && !ctrl.classList.contains('memesh-companion-frozen')) {
+                    ctrl.classList.add('memesh-companion-frozen');
+                    console.info('[memesh qty] companion row frozen');
+                } else if (line.t === 1 && !ctrl.classList.contains('memesh-ticket-row')) {
+                    ctrl.classList.add('memesh-ticket-row');
+                    console.info('[memesh qty] ticket row: "+" routed to the picker', {
+                        productId: line.p, date: line.d || null,
+                    });
                 }
             }
         }
@@ -1085,10 +997,20 @@ add_action('wp_footer', function () {
                 wiredForms.add(forms[j]);
                 wireCartForm(forms[j]);
             }
-            wireCartControls();
+            memeshDecorateCheckoutRows();
             if (fresh > 0) {
                 console.info('[memesh picker] init', { onPage: roots.length, newlyInitialized: fresh });
             }
+        }
+
+        // The site checkout widget re-renders its rows on every updated_checkout
+        // (billing edits, coupons…) and on fragment refreshes, so re-decorate
+        // then too — the MutationObserver usually catches it, this is the belt.
+        if (window.jQuery) {
+            window.jQuery(document.body).on(
+                'updated_checkout wc_fragments_refreshed wc_fragments_loaded',
+                memeshDecorateCheckoutRows,
+            );
         }
 
         // The picker usually lives inside an Elementor popup, whose markup is
@@ -1288,23 +1210,14 @@ add_action('wp_head', function () {
     }
     .memesh-added-again:hover { background: #fdf3e3; }
 
-    /* Cart/checkout quantity controls on ticket lines (Yanay 2026-07-09):
-       "+" opens the add-ticket modal, "−" removes the line. memesh-TICKET-*
-       on purpose — memesh-qty-* belongs to the site's own cart widget. Sized
-       32px to sit flush beside that widget's buttons when rewired into it. */
-    .memesh-ticket-qty { display: inline-flex; align-items: center; gap: 8px; }
-    .memesh-ticket-num { min-width: 18px; text-align: center; font-weight: 600; color: #2d3436; }
-    .memesh-ticket-plus, .memesh-ticket-minus {
-        appearance: none; -webkit-appearance: none; box-shadow: none; margin: 0;
-        font-family: inherit; cursor: pointer; box-sizing: border-box;
-        display: inline-flex; align-items: center; justify-content: center;
-        width: 32px; height: 32px; border: 1.5px solid #e7a33e; border-radius: 9px;
-        background: #fff; color: #b9772a; font-size: 17px; line-height: 1;
-        text-decoration: none; padding: 0; font-weight: 600;
-    }
-    .memesh-ticket-plus:hover, .memesh-ticket-minus:hover {
-        background: #fdf3e3; color: #8a5a12;
-    }
+    /* Decoration of the site checkout widget's own rows (Yanay 2026-07-11).
+       We add these classes from memeshDecorateCheckoutRows(); the widget's own
+       CSS still styles the buttons. Companion rows are frozen (auto-managed
+       with the ticket); ticket rows keep only "+" (→ picker) and "×" (remove),
+       since each child is one seat on its own line. */
+    .memesh-qty-controls.memesh-companion-frozen { display: none !important; }
+    .memesh-ticket-row .memesh-qty-minus,
+    .memesh-ticket-row .memesh-qty-input { display: none !important; }
 
     /* The snippet-owned "add another ticket" button (cart + checkout). */
     .memesh-add-ticket {
