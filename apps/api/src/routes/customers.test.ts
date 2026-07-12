@@ -95,3 +95,52 @@ test('GET /customers accepts the full browse param set', async () => {
     `expected 200 or 500, got ${res.statusCode}`,
   );
 });
+
+// PATCH /customers/:id/phone — staff phone override. DB-behavior (collision,
+// success, no-op) lives in packages/db/src/accounts.test.ts; here we pin the
+// auth gate, role gate, and input validation.
+
+const uuid = '00000000-0000-0000-0000-000000000002';
+
+test('PATCH /customers/:id/phone without a token returns 401', async () => {
+  const res = await app.inject({
+    method: 'PATCH',
+    url: `/customers/${uuid}/phone`,
+    payload: { phone: '050-123-4567' },
+  });
+  assert.equal(res.statusCode, 401);
+});
+
+test('PATCH /customers/:id/phone as a cashier is forbidden (admin/manager only)', async () => {
+  const res = await app.inject({
+    method: 'PATCH',
+    url: `/customers/${uuid}/phone`,
+    headers: auth(await tokenFor('cashier')),
+    payload: { phone: '050-123-4567' },
+  });
+  assert.equal(res.statusCode, 403);
+});
+
+test('PATCH /customers/:id/phone rejects a non-uuid id', async () => {
+  const res = await app.inject({
+    method: 'PATCH',
+    url: '/customers/not-a-uuid/phone',
+    headers: auth(await tokenFor('admin')),
+    payload: { phone: '050-123-4567' },
+  });
+  assert.equal(res.statusCode, 400);
+  assert.equal(res.json().error, 'invalid_id');
+});
+
+test('PATCH /customers/:id/phone rejects an empty / invalid phone body', async () => {
+  for (const payload of [{}, { phone: '' }, { phone: '   ' }]) {
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/customers/${uuid}/phone`,
+      headers: auth(await tokenFor('admin')),
+      payload,
+    });
+    assert.equal(res.statusCode, 400, JSON.stringify(payload));
+    assert.equal(res.json().error, 'invalid_body', JSON.stringify(payload));
+  }
+});

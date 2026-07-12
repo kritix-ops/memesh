@@ -5,6 +5,8 @@ import {
   deleteCustomer,
   getCardSettings,
   listCustomers,
+  logStaffAction,
+  updateCustomerPhone,
 } from '@memesh/db';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
@@ -35,6 +37,10 @@ const listQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).optional(),
   offset: z.coerce.number().int().min(0).optional(),
 });
+
+// Staff-only phone change. Reuses the shared normalizer so the stored value
+// matches every other write (and future WooCommerce phone matching).
+const phonePatchSchema = z.object({ phone: phoneSchema });
 
 const createBodySchema = z.object({
   firstName: z.string().min(1).max(80),
@@ -120,6 +126,54 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
       const detail = await customerDetail(db, id);
       if (!detail) return reply.code(404).send({ error: 'not_found' });
       return detail;
+    },
+  );
+
+  // Change a customer's phone number (admin/manager only — same gate as delete).
+  // Phone is the customer's login identity and was intentionally left out of the
+  // self-service /me patch and the create-only write surface; this is the
+  // staff override for the "customer changed her number" case. Everything that
+  // references a customer keys off customer_id, so cards/bookings/sessions are
+  // untouched; the only hazard is a collision with another customer, returned
+  // as 409 phone_taken.
+  //
+  // Known limitation (not fixed here): the linked WordPress user keeps its old
+  // phone-as-username. Customer login is phone+OTP against Memesh, not WP, so
+  // this is cosmetic; renaming a WP user is a separate, riskier operation.
+  fastify.patch(
+    '/customers/:id/phone',
+    { preHandler: requireRoleHook('admin', 'manager') },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      if (!z.string().uuid().safeParse(id).success) {
+        return reply.code(400).send({ error: 'invalid_id' });
+      }
+      const parsed = phonePatchSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.code(400).send({ error: 'invalid_body', issues: parsed.error.issues });
+      }
+
+      const result = await updateCustomerPhone(db, id, parsed.data.phone);
+      if (!result.ok) {
+        if (result.reason === 'not_found') {
+          return reply.code(404).send({ error: 'not_found' });
+        }
+        request.log.info({ id, phone: parsed.data.phone }, '[customers] phone change: taken');
+        return reply.code(409).send({ error: 'phone_taken' });
+      }
+
+      if (result.changed) {
+        request.log.info(
+          { id, from: result.previousPhone, to: result.customer.phone },
+          '[customers] phone changed',
+        );
+        await logStaffAction(db, {
+          ...(request.user && { staffId: request.user.id }),
+          action: 'other',
+          summary: `Changed phone for ${result.customer.customerNumber} to ${result.customer.phone}`,
+        });
+      }
+      return { customer: result.customer };
     },
   );
 

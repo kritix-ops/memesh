@@ -12,6 +12,7 @@ import {
   listStaff,
   setCustomerWpUserId,
   setStaffPasswordHash,
+  updateCustomerPhone,
   updateCustomerProfile,
   updateStaff,
 } from './accounts';
@@ -205,6 +206,62 @@ test('updateCustomerProfile edits allowed fields and leaves phone unchanged', as
   assert.equal(updated.preferredChannel, 'whatsapp');
   assert.equal(updated.children.length, 1);
   assert.equal(updated.phone, p); // phone is not editable here
+});
+
+test('updateCustomerPhone changes the number and touches nothing else', async () => {
+  const db = await freshDb();
+  const customer = await createCustomer(db, {
+    firstName: 'Rina',
+    lastName: 'Barak',
+    phone: '050-111-1111',
+    email: 'rina@example.com',
+  });
+
+  const res = await updateCustomerPhone(db, customer.id, '050-222-2222');
+  assert.equal(res.ok, true);
+  if (res.ok) {
+    assert.equal(res.changed, true);
+    assert.equal(res.customer.phone, '050-222-2222');
+    assert.equal(res.customer.email, 'rina@example.com'); // unrelated fields intact
+  }
+  const reread = await getCustomerById(db, customer.id);
+  assert.equal(reread?.phone, '050-222-2222');
+});
+
+test('updateCustomerPhone with the same number is a no-op (changed:false)', async () => {
+  const db = await freshDb();
+  const customer = await createCustomer(db, {
+    firstName: 'Same',
+    lastName: 'Number',
+    phone: '050-333-3333',
+  });
+
+  const res = await updateCustomerPhone(db, customer.id, '050-333-3333');
+  assert.equal(res.ok, true);
+  if (res.ok) {
+    assert.equal(res.changed, false);
+    assert.equal(res.customer.phone, '050-333-3333');
+  }
+});
+
+test('updateCustomerPhone rejects a number already owned by another customer', async () => {
+  const db = await freshDb();
+  const a = await createCustomer(db, { firstName: 'A', lastName: 'One', phone: '050-444-4444' });
+  await createCustomer(db, { firstName: 'B', lastName: 'Two', phone: '050-555-5555' });
+
+  const res = await updateCustomerPhone(db, a.id, '050-555-5555');
+  assert.equal(res.ok, false);
+  if (!res.ok) assert.equal(res.reason, 'phone_taken');
+  // A keeps its original number — the failed update did not partially apply.
+  const reread = await getCustomerById(db, a.id);
+  assert.equal(reread?.phone, '050-444-4444');
+});
+
+test('updateCustomerPhone on an unknown id → not_found', async () => {
+  const db = await freshDb();
+  const res = await updateCustomerPhone(db, '00000000-0000-0000-0000-000000000000', '050-666-6666');
+  assert.equal(res.ok, false);
+  if (!res.ok) assert.equal(res.reason, 'not_found');
 });
 
 test('setCustomerWpUserId links a customer to a WordPress user id', async () => {

@@ -32,6 +32,7 @@ import {
   deleteCustomerById,
   getCustomerDetail,
   searchCustomers,
+  updateCustomerPhone,
   type Customer,
   type CustomerDetailResponse,
   type PunchCard as ApiPunchCard,
@@ -171,7 +172,6 @@ const fmtRelative = (iso: string, now = new Date()): string => {
   if (d < 7) return `לפני ${d} ימים`;
   return fmtDate(iso.slice(0, 10));
 };
-
 
 const initialsOf = (first: string, last: string): string => (first[0] ?? '') + (last[0] ?? '');
 
@@ -444,7 +444,10 @@ function Customers() {
             placeholder="חיפוש לפי שם, טלפון או מספר לקוח…"
             style={{ ...inputStyle, minWidth: 240, maxWidth: 360 }}
           />
-          <button onClick={() => setShowCreate(true)} style={{ ...primaryBtn, whiteSpace: 'nowrap' }}>
+          <button
+            onClick={() => setShowCreate(true)}
+            style={{ ...primaryBtn, whiteSpace: 'nowrap' }}
+          >
             + הוספת לקוח
           </button>
         </div>
@@ -552,8 +555,7 @@ function CreateCustomerModal({
     if (!trimmedFirst) errors.firstName = 'שדה חובה';
     if (!trimmedLast) errors.lastName = 'שדה חובה';
     if (!trimmedPhone) errors.phone = 'שדה חובה';
-    if (trimmedEmail && !/^\S+@\S+\.\S+$/.test(trimmedEmail))
-      errors.email = 'כתובת מייל לא תקינה';
+    if (trimmedEmail && !/^\S+@\S+\.\S+$/.test(trimmedEmail)) errors.email = 'כתובת מייל לא תקינה';
     if (Object.keys(errors).length > 0) {
       setFieldErrors(errors);
       setTopError(null);
@@ -647,7 +649,10 @@ function CreateCustomerModal({
             {topError}
           </div>
         )}
-        <form onSubmit={(e) => void submit(e)} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <form
+          onSubmit={(e) => void submit(e)}
+          style={{ display: 'flex', flexDirection: 'column', gap: 12 }}
+        >
           <FieldRow label="שם פרטי" error={fieldErrors.firstName}>
             <input
               autoFocus
@@ -773,7 +778,11 @@ function Cards() {
   }, [detailFor]);
 
   const reload = async () => {
-    const res = await listCardsForAdmin({ status, limit: 200, ...(debouncedQ && { q: debouncedQ }) });
+    const res = await listCardsForAdmin({
+      status,
+      limit: 200,
+      ...(debouncedQ && { q: debouncedQ }),
+    });
     if (res.ok) setRows(res.data.cards);
     else setError(res.error);
   };
@@ -1012,7 +1021,9 @@ function Cards() {
                   {c.usedEntries} / {c.totalEntries}
                 </Td>
                 <Td muted>{fmtDate(c.createdAt.slice(0, 10))}</Td>
-                <Td muted>{c.expiresAt === null ? 'ללא תפוגה' : fmtDate(c.expiresAt.slice(0, 10))}</Td>
+                <Td muted>
+                  {c.expiresAt === null ? 'ללא תפוגה' : fmtDate(c.expiresAt.slice(0, 10))}
+                </Td>
                 <Td>
                   <Badge text={badge.text} bg={badge.bg} color={badge.color} />
                 </Td>
@@ -1213,8 +1224,9 @@ function CancelCardModal({
   const trimmed = reason.trim();
   const minLen = context?.minCancelReasonLength ?? 1;
   const reasonTooShort = trimmed.length < minLen;
-  const blockedByPunches =
-    Boolean(context && !context.allowCancelAfterFirstPunch && card.usedEntries > 0);
+  const blockedByPunches = Boolean(
+    context && !context.allowCancelAfterFirstPunch && card.usedEntries > 0,
+  );
   const customerLabel =
     card.customerFirstName || card.customerLastName
       ? `${card.customerFirstName ?? ''} ${card.customerLastName ?? ''}`.trim()
@@ -1261,9 +1273,7 @@ function CancelCardModal({
               whiteSpace: 'pre-wrap',
             }}
           >
-            <div style={{ fontWeight: 600, color: '#a8643d', marginBottom: 4 }}>
-              מדיניות החזרים
-            </div>
+            <div style={{ fontWeight: 600, color: '#a8643d', marginBottom: 4 }}>מדיניות החזרים</div>
             {context.refundPolicyText}
           </div>
         )}
@@ -1332,8 +1342,7 @@ function CancelCardModal({
               borderRadius: 10,
               padding: '10px 18px',
               fontWeight: 600,
-              cursor:
-                submitting || reasonTooShort || blockedByPunches ? 'not-allowed' : 'pointer',
+              cursor: submitting || reasonTooShort || blockedByPunches ? 'not-allowed' : 'pointer',
               opacity: submitting || reasonTooShort || blockedByPunches ? 0.6 : 1,
             }}
           >
@@ -1635,6 +1644,7 @@ function CustomerDetailModal({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [editPhoneOpen, setEditPhoneOpen] = useState(false);
 
   // Admin card-management state. Each modal owns its own submission +
   // error so they can run independently. Settings are fetched on first
@@ -1663,9 +1673,11 @@ function CustomerDetailModal({
   // and the nested CardDetailModal's per-entry refund button feed into the
   // same target state so we have one modal + one submit handler. cardId is
   // needed because the entries list spans multiple cards.
-  const [refundTarget, setRefundTarget] = useState<
-    { cardId: string; entryId: string; summary: string } | null
-  >(null);
+  const [refundTarget, setRefundTarget] = useState<{
+    cardId: string;
+    entryId: string;
+    summary: string;
+  } | null>(null);
   const [refundSubmitting, setRefundSubmitting] = useState(false);
   const [refundErr, setRefundErr] = useState<string | null>(null);
 
@@ -1749,11 +1761,7 @@ function CustomerDetailModal({
   // Map an entry (from the customer history list) to refund-target context.
   // Entries can belong to any of the customer's cards, so we capture cardId
   // here. summary is what the modal shows above the reason field.
-  const openRefundForCustomerEntry = (
-    cardId: string,
-    entryId: string,
-    summary: string,
-  ) => {
+  const openRefundForCustomerEntry = (cardId: string, entryId: string, summary: string) => {
     setRefundErr(null);
     setRefundTarget({ cardId, entryId, summary });
   };
@@ -1928,6 +1936,7 @@ function CustomerDetailModal({
           <CustomerDetailBody
             detail={detail}
             isAdmin={isAdmin}
+            onEditPhone={() => setEditPhoneOpen(true)}
             onOpenCard={(cardId) => setOpenCardDetailFor(cardId)}
             onRefundCustomerEntry={openRefundForCustomerEntry}
             {...(isAdmin && {
@@ -1949,6 +1958,16 @@ function CustomerDetailModal({
             setConfirmDelete(false);
             onDeleted?.();
             onClose();
+          }}
+        />
+      )}
+      {detail && editPhoneOpen && (
+        <EditPhoneModal
+          customer={detail.customer}
+          onClose={() => setEditPhoneOpen(false)}
+          onSaved={() => {
+            setEditPhoneOpen(false);
+            void refreshDetail();
           }}
         />
       )}
@@ -2102,6 +2121,176 @@ function humanizeCustomerDeleteError(code: string): string {
   return 'תקלה זמנית. נסו שוב בעוד רגע.';
 }
 
+function humanizeCustomerPhoneError(code: string): string {
+  if (code === 'phone_taken') return 'המספר כבר משויך ללקוח אחר. בדקו את המספר ונסו שוב.';
+  if (code === 'invalid_body') return 'מספר טלפון לא תקין. הזינו מספר ישראלי תקין.';
+  if (code === 'not_found') return 'הלקוח לא נמצא. רעננו את הדף.';
+  if (code === 'forbidden') return 'רק מנהל או אדמין יכולים לשנות מספר טלפון.';
+  return 'תקלה זמנית. נסו שוב בעוד רגע.';
+}
+
+// Staff-only phone change. Self-contained like DeleteCustomerModal: owns its
+// own submit + error state and calls the API directly, then hands control back
+// via onSaved so the parent can refresh the detail. The current number is shown
+// alongside the new one so the change is confirmed explicitly before saving —
+// phone is the login identity, so a silent typo would reroute the customer's
+// SMS to a stranger.
+function EditPhoneModal({
+  customer,
+  onClose,
+  onSaved,
+}: {
+  customer: Customer;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [value, setValue] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const trimmed = value.trim();
+  const unchanged = trimmed === customer.phone.trim();
+  const canSave = trimmed.length > 0 && !unchanged && !submitting;
+
+  const submit = async (): Promise<void> => {
+    if (!canSave) return;
+    setSubmitting(true);
+    setError(null);
+    console.info('[web admin edit-phone] submit', { id: customer.id });
+    const res = await updateCustomerPhone(customer.id, trimmed);
+    if (res.ok) {
+      console.info('[web admin edit-phone] success', { id: customer.id });
+      onSaved();
+      return;
+    }
+    console.warn('[web admin edit-phone] error', { error: res.error });
+    setError(humanizeCustomerPhoneError(res.error));
+    setSubmitting(false);
+  };
+
+  return (
+    // Backdrop closes (matches DeleteCustomerModal); stopPropagation on the
+    // panel keeps clicks from bubbling to the parent's close-on-backdrop.
+    <div
+      role="dialog"
+      aria-modal="true"
+      onClick={() => {
+        if (!submitting) onClose();
+      }}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(0,0,0,0.4)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 1000,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: '#fff',
+          borderRadius: 16,
+          padding: 24,
+          width: 420,
+          maxWidth: '95vw',
+          boxShadow: '0 12px 32px rgba(0,0,0,0.18)',
+        }}
+      >
+        <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>שינוי מספר טלפון</div>
+        <div style={{ color: MUTED, fontSize: 14, marginBottom: 16 }}>
+          שינוי המספר של{' '}
+          <b>
+            {customer.firstName} {customer.lastName}
+          </b>
+          . המספר משמש להתחברות ולשליחת SMS — ודאו שהוא נכון.
+        </div>
+
+        <div style={{ fontSize: 13, color: MUTED, marginBottom: 4 }}>מספר נוכחי</div>
+        <div
+          style={{
+            fontSize: 15,
+            fontWeight: 600,
+            marginBottom: 14,
+            direction: 'ltr',
+            textAlign: 'right',
+          }}
+        >
+          {customer.phone}
+        </div>
+
+        <label style={{ fontSize: 13, color: MUTED, display: 'block', marginBottom: 4 }}>
+          מספר חדש
+        </label>
+        <input
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          inputMode="tel"
+          placeholder="לדוגמה 050-123-4567"
+          autoFocus
+          disabled={submitting}
+          style={{ ...inputStyle, direction: 'ltr', textAlign: 'right', marginBottom: 14 }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') void submit();
+          }}
+        />
+
+        {error && (
+          <div
+            style={{
+              background: '#fdecec',
+              color: '#a23a3a',
+              padding: '10px 12px',
+              borderRadius: 8,
+              fontSize: 13,
+              marginBottom: 14,
+            }}
+          >
+            {error}
+          </div>
+        )}
+
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={submitting}
+            style={{
+              border: '1.5px solid #e9e0d9',
+              background: '#fff',
+              color: MUTED,
+              borderRadius: 8,
+              padding: '8px 16px',
+              fontWeight: 600,
+              cursor: 'pointer',
+            }}
+          >
+            ביטול
+          </button>
+          <button
+            type="button"
+            onClick={() => void submit()}
+            disabled={!canSave}
+            style={{
+              border: 'none',
+              background: ORANGE,
+              color: '#fff',
+              borderRadius: 8,
+              padding: '8px 16px',
+              fontWeight: 600,
+              cursor: canSave ? 'pointer' : 'not-allowed',
+              opacity: canSave ? 1 : 0.6,
+            }}
+          >
+            {submitting ? 'שומר…' : 'שמירה'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function DeleteCustomerModal({
   customer,
   onClose,
@@ -2163,7 +2352,11 @@ function DeleteCustomerModal({
       >
         <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>מחיקת לקוח</div>
         <div style={{ color: MUTED, fontSize: 14, marginBottom: 18 }}>
-          האם למחוק את <b>{customer.firstName} {customer.lastName}</b> ({customer.phone})? פעולה זו לא ניתנת לביטול.
+          האם למחוק את{' '}
+          <b>
+            {customer.firstName} {customer.lastName}
+          </b>{' '}
+          ({customer.phone})? פעולה זו לא ניתנת לביטול.
         </div>
         {error && (
           <div
@@ -2222,6 +2415,7 @@ function DeleteCustomerModal({
 function CustomerDetailBody({
   detail,
   isAdmin,
+  onEditPhone,
   onOpenCard,
   onRefundCustomerEntry,
   onCreateCard,
@@ -2230,6 +2424,7 @@ function CustomerDetailBody({
 }: {
   detail: CustomerDetailResponse;
   isAdmin: boolean;
+  onEditPhone: () => void;
   onOpenCard: (cardId: string) => void;
   onRefundCustomerEntry: (cardId: string, entryId: string, summary: string) => void;
   onCreateCard?: () => void;
@@ -2277,6 +2472,22 @@ function CustomerDetailBody({
             {customer.customerNumber} · {customer.phone}
             {customer.email ? ` · ${customer.email}` : ''}
           </div>
+          <button
+            type="button"
+            onClick={onEditPhone}
+            style={{
+              border: 'none',
+              background: 'transparent',
+              color: '#c97a52',
+              cursor: 'pointer',
+              fontSize: 12.5,
+              fontWeight: 600,
+              padding: 0,
+              marginTop: 4,
+            }}
+          >
+            שינוי מספר טלפון
+          </button>
         </div>
         {customer.marketingConsentAt && <Badge text="הסכמה לדיוור" bg="#f0f5e3" color="#6f8f37" />}
       </div>
@@ -2461,8 +2672,7 @@ function CustomerDetailBody({
       ) : (
         entries.slice(0, 10).map((e, i) => {
           const refunded = e.refundedAt !== null;
-          const entriesText =
-            e.entriesConsumed === 1 ? 'כניסה אחת' : `${e.entriesConsumed} כניסות`;
+          const entriesText = e.entriesConsumed === 1 ? 'כניסה אחת' : `${e.entriesConsumed} כניסות`;
           const serial = serialByCardId.get(e.punchCardId);
           // Refund summary always includes the card serial so the modal
           // makes it unambiguous which card is being refunded, even when the
@@ -2489,9 +2699,7 @@ function CustomerDetailBody({
                   {fmtDateTime(e.punchedAt)}
                 </div>
                 {showCardSerial && serial && (
-                  <div style={{ fontSize: 12, color: MUTED, marginTop: 2 }}>
-                    כרטיסייה: {serial}
-                  </div>
+                  <div style={{ fontSize: 12, color: MUTED, marginTop: 2 }}>כרטיסייה: {serial}</div>
                 )}
                 {refunded && (
                   <div style={{ fontSize: 12, color: '#a23a3a', marginTop: 2 }}>
@@ -2559,8 +2767,7 @@ function Staff() {
   // the right default for the common case.
   const [tab, setTab] = useState<StaffTab>('members');
   const { state: sessionState } = useStaffSession();
-  const isAdmin =
-    sessionState.status === 'signed-in' && sessionState.user.role === 'admin';
+  const isAdmin = sessionState.status === 'signed-in' && sessionState.user.role === 'admin';
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -2578,10 +2785,7 @@ function Staff() {
         <StaffTabButton active={tab === 'members'} onClick={() => setTab('members')}>
           צוות
         </StaffTabButton>
-        <StaffTabButton
-          active={tab === 'permissions'}
-          onClick={() => setTab('permissions')}
-        >
+        <StaffTabButton active={tab === 'permissions'} onClick={() => setTab('permissions')}>
           הרשאות
         </StaffTabButton>
       </div>
@@ -2810,12 +3014,7 @@ function StaffMembersTab() {
           }}
         />
       )}
-      {managingPin && (
-        <PinManageModal
-          member={managingPin}
-          onClose={() => setManagingPin(null)}
-        />
-      )}
+      {managingPin && <PinManageModal member={managingPin} onClose={() => setManagingPin(null)} />}
     </div>
   );
 }
@@ -2872,11 +3071,7 @@ function StaffPermissionsTab({ readOnly }: { readOnly: boolean }) {
 
   const cellKey = (role: StaffRole, permission: string) => `${role}::${permission}`;
 
-  const handleToggle = async (
-    role: StaffRole,
-    permission: string,
-    nextGranted: boolean,
-  ) => {
+  const handleToggle = async (role: StaffRole, permission: string, nextGranted: boolean) => {
     if (readOnly || role === 'admin' || !grants) return;
     const key = cellKey(role, permission);
     const previousValue = grants[role]?.[permission] ?? false;
@@ -3068,9 +3263,7 @@ function PermissionsMatrixHeader({ roles }: { roles: StaffRole[] }) {
       {roles.map((r) => (
         <div key={r} style={{ textAlign: 'center' }}>
           <div>{ROLE_COLUMN_LABEL[r]}</div>
-          <div style={{ fontWeight: 400, fontSize: 11, marginTop: 2 }}>
-            {ROLE_COLUMN_HINT[r]}
-          </div>
+          <div style={{ fontWeight: 400, fontSize: 11, marginTop: 2 }}>{ROLE_COLUMN_HINT[r]}</div>
         </div>
       ))}
     </div>
@@ -3125,9 +3318,7 @@ function PermissionsCategorySection({
           <div>
             <div style={{ fontSize: 14, fontWeight: 600 }}>{p.label}</div>
             {p.description && (
-              <div style={{ fontSize: 12, color: MUTED, marginTop: 2 }}>
-                {p.description}
-              </div>
+              <div style={{ fontSize: 12, color: MUTED, marginTop: 2 }}>{p.description}</div>
             )}
             <div style={{ fontSize: 10, color: '#b9bcbe', marginTop: 2, fontFamily: 'monospace' }}>
               {p.key}
@@ -3219,13 +3410,7 @@ function formatLockedUntil(iso: string): string {
   return `${hh}:${mm}`;
 }
 
-function PinManageModal({
-  member,
-  onClose,
-}: {
-  member: StaffMember;
-  onClose: () => void;
-}) {
+function PinManageModal({ member, onClose }: { member: StaffMember; onClose: () => void }) {
   const [status, setStatus] = useState<StaffPinStatus | null>(null);
   const [pinLength, setPinLength] = useState<number>(3);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -3238,10 +3423,7 @@ function PinManageModal({
 
   const reload = async () => {
     setLoadError(null);
-    const [s, settings] = await Promise.all([
-      getStaffPinStatus(member.id),
-      fetchCardSettings(),
-    ]);
+    const [s, settings] = await Promise.all([getStaffPinStatus(member.id), fetchCardSettings()]);
     if (!s.ok) {
       setLoadError(humanizePinError(s.error));
       return;
@@ -3446,12 +3628,22 @@ function PinManageModal({
             </button>
           </div>
 
-          <button type="button" onClick={() => void handleGenerate()} disabled={busy} style={ghostBtn}>
+          <button
+            type="button"
+            onClick={() => void handleGenerate()}
+            disabled={busy}
+            style={ghostBtn}
+          >
             הגרל קוד אקראי
           </button>
 
           {status?.locked && (
-            <button type="button" onClick={() => void handleUnlock()} disabled={busy} style={ghostBtn}>
+            <button
+              type="button"
+              onClick={() => void handleUnlock()}
+              disabled={busy}
+              style={ghostBtn}
+            >
               שחרור נעילה
             </button>
           )}
@@ -3732,8 +3924,7 @@ function EditStaffModal({
 }
 
 function humanizeStaffDeleteError(code: string): string {
-  if (code === 'cannot_delete_self')
-    return 'לא ניתן למחוק את עצמך. בקשו ממנהל אחר לבצע את הפעולה.';
+  if (code === 'cannot_delete_self') return 'לא ניתן למחוק את עצמך. בקשו ממנהל אחר לבצע את הפעולה.';
   if (code === 'cannot_delete_last_admin')
     return 'לא ניתן למחוק את האדמין האחרון. מנו אדמין נוסף לפני המחיקה.';
   if (code === 'has_dependents')
@@ -3792,7 +3983,11 @@ function DeleteStaffModal({
       >
         <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>מחיקת איש צוות</div>
         <div style={{ color: MUTED, fontSize: 14, marginBottom: 18 }}>
-          האם למחוק את <b>{member.firstName} {member.lastName}</b> ({member.phone})? פעולה זו לא ניתנת לביטול.
+          האם למחוק את{' '}
+          <b>
+            {member.firstName} {member.lastName}
+          </b>{' '}
+          ({member.phone})? פעולה זו לא ניתנת לביטול.
         </div>
         {error && (
           <div
@@ -3999,10 +4194,7 @@ function CreateStaffForm({ onCreated, onCancel }: { onCreated: () => void; onCan
             <option value="admin">אדמין</option>
           </select>
         </FieldRow>
-        <FieldRow
-          label={emailRequiredForRole ? 'דוא"ל *' : 'דוא"ל'}
-          error={fieldErrors.email}
-        >
+        <FieldRow label={emailRequiredForRole ? 'דוא"ל *' : 'דוא"ל'} error={fieldErrors.email}>
           <input
             style={errored(inputStyle, fieldErrors.email)}
             value={email}
