@@ -116,3 +116,16 @@ export const createCustomer = (
  */
 export const deleteCustomerById = (id: string): Promise<ApiResult<{ ok: true }>> =>
   apiRequest(`/customers/${id}`, { method: 'DELETE' });
+
+/**
+ * Change a customer's phone number (admin/manager only). Phone is the customer's
+ * login identity, so this is the staff-only override for the "customer changed
+ * her number" case. Returns `phone_taken` (409) when another customer already
+ * owns the number. The server normalizes the input, so any local formatting is
+ * accepted.
+ */
+export const updateCustomerPhone = (
+  id: string,
+  phone: string,
+): Promise<ApiResult<{ customer: Customer }>> =>
+  apiRequest(`/customers/${id}/phone`, { method: 'PATCH', body: { phone } });

@@ -1,12 +1,6 @@
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, ne, sql } from 'drizzle-orm';
 import type { PgDatabase } from 'drizzle-orm/pg-core';
-import {
-  type ChildRecord,
-  customers,
-  punchCardEntries,
-  punchCards,
-  staff,
-} from './schema/index';
+import { type ChildRecord, customers, punchCardEntries, punchCards, staff } from './schema/index';
 
 type AnyPgDatabase = PgDatabase<any, any, any>;
 type StaffRole = 'admin' | 'manager' | 'cashier';
@@ -162,6 +156,82 @@ export const updateCustomerProfile = async (
 
   const rows = await db.update(customers).set(set).where(eq(customers.id, id)).returning();
   return rows[0];
+};
+
+export type UpdateCustomerPhoneResult =
+  | {
+      ok: true;
+      customer: typeof customers.$inferSelect;
+      changed: boolean;
+      /** The number before the change (equals `customer.phone` on a no-op). */
+      previousPhone: string;
+    }
+  | { ok: false; reason: 'not_found' }
+  | { ok: false; reason: 'phone_taken' };
+
+/**
+ * Change a customer's phone number — the staff-only path deliberately excluded
+ * from `updateCustomerProfile` (phone is the login identity). The caller passes
+ * an already-normalized number (route uses `phoneSchema`, same contract as
+ * `createCustomer`).
+ *
+ * Discriminated result:
+ *   - `not_found` — no customer with that id.
+ *   - `phone_taken` — a *different* customer already owns that number. Checked
+ *     inside the transaction and also caught from the unique-constraint as a
+ *     race backstop.
+ *   - `{ ok: true, changed: false }` — the number already matches; no write.
+ *   - `{ ok: true, changed: true, customer }` — updated.
+ *
+ * Only `customers.phone` moves. Everything that references a customer keys off
+ * `customer_id`, so cards, bookings, and login sessions are unaffected.
+ */
+export const updateCustomerPhone = async (
+  db: AnyPgDatabase,
+  id: string,
+  phone: string,
+  now: Date = new Date(),
+): Promise<UpdateCustomerPhoneResult> => {
+  return db.transaction(async (tx) => {
+    const current = await tx
+      .select({ id: customers.id, phone: customers.phone })
+      .from(customers)
+      .where(eq(customers.id, id))
+      .limit(1);
+    const row = current[0];
+    if (!row) return { ok: false, reason: 'not_found' };
+    if (row.phone === phone) {
+      const unchanged = await tx.select().from(customers).where(eq(customers.id, id)).limit(1);
+      // Non-null: the row exists (we just read it above).
+      return {
+        ok: true,
+        customer: unchanged[0] as typeof customers.$inferSelect,
+        changed: false,
+        previousPhone: row.phone,
+      };
+    }
+
+    const clash = await tx
+      .select({ id: customers.id })
+      .from(customers)
+      .where(and(eq(customers.phone, phone), ne(customers.id, id)))
+      .limit(1);
+    if (clash[0]) return { ok: false, reason: 'phone_taken' };
+
+    try {
+      const updated = await tx
+        .update(customers)
+        .set({ phone, updatedAt: now })
+        .where(eq(customers.id, id))
+        .returning();
+      const next = updated[0];
+      if (!next) return { ok: false, reason: 'not_found' };
+      return { ok: true, customer: next, changed: true, previousPhone: row.phone };
+    } catch {
+      // Unique-violation lost the race between the clash check and the update.
+      return { ok: false, reason: 'phone_taken' };
+    }
+  });
 };
 
 /**
