@@ -94,6 +94,7 @@ test('GET /staff/rounds/today returns occupancy + waitlist only, never revenue',
   assert.ok(body.settings && typeof body.settings === 'object', 'settings object present');
   assert.equal(typeof body.settings.refreshIntervalSeconds, 'number');
   assert.equal(typeof body.settings.capacityWarningPct, 'number');
+  assert.equal(typeof body.settings.markingGraceMinutes, 'number');
   // Never exposes money or the admin stats block to the shift floor.
   assert.equal(body.stats, undefined, 'no stats block');
   assert.equal(body.settings.showRevenue, undefined, 'no revenue toggle leaked');

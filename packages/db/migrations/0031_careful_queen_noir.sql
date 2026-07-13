@@ -1,0 +1,1 @@
+ALTER TABLE "round_settings" ADD COLUMN "booking_horizon_days" smallint DEFAULT 30 NOT NULL;

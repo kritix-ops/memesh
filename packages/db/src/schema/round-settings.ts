@@ -44,6 +44,16 @@ export const roundSettings = pgTable('round_settings', {
   // upcoming reserved round whose entry is already committed (Yanay
   // 2026-07-07). Default on.
   warnUpcomingReservationAtDoor: boolean('warn_upcoming_reservation_at_door').notNull().default(true),
+  // How many days ahead a customer may register (Yanay 2026-07-13: "let them
+  // register a month ahead, not more"). The calendar caps at today + this many
+  // days, and the booking-path guard refuses a round dated beyond it. Default
+  // 30. Independent of INSTANCE_HORIZON_DAYS, which is how far instances mint.
+  bookingHorizonDays: smallint('booking_horizon_days').notNull().default(30),
+  // Minutes after a round's end time during which staff may still mark arrivals
+  // (Yanay 2026-07-13 wanted marking locked once a round is over; this grace
+  // keeps the floor from being cut off mid-tap for a straggler). 0 = a hard
+  // lock exactly at end time. Default 30.
+  markingGraceMinutes: smallint('marking_grace_minutes').notNull().default(30),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 

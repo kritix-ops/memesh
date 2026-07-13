@@ -19,6 +19,10 @@ export interface RoundSettings {
   allowOverCapacityWalkIn: boolean;
   /** Warn the cashier at the door about the card's upcoming reserved rounds. */
   warnUpcomingReservationAtDoor: boolean;
+  /** How many days ahead a customer may register. */
+  bookingHorizonDays: number;
+  /** Minutes after a round ends that staff may still mark arrivals. */
+  markingGraceMinutes: number;
   updatedAt: string;
 }
 
@@ -38,6 +42,8 @@ export type RoundSettingsPatch = {
   skipLastRoundReminder?: boolean;
   allowOverCapacityWalkIn?: boolean;
   warnUpcomingReservationAtDoor?: boolean;
+  bookingHorizonDays?: number;
+  markingGraceMinutes?: number;
 };
 
 export interface RoundSettingsUpdateResponse {

@@ -6,20 +6,25 @@
 
 import { and, asc, eq } from 'drizzle-orm';
 import type { PgDatabase } from 'drizzle-orm/pg-core';
-import { venueTodayIso } from './round-time';
+import { getRoundSettings } from './round-settings';
+import { isMarkingClosed, venueTodayIso } from './round-time';
 import { bookings, customers, roundInstances, rounds } from './schema/index';
 
 type AnyPgDatabase = PgDatabase<any, any, any>;
 
 export type SetBookingArrivalResult =
   | { ok: true; arrived: boolean; usedAt: string | null; changed: boolean }
-  | { ok: false; error: 'not_found' | 'not_markable' | 'not_today' };
+  | { ok: false; error: 'not_found' | 'not_markable' | 'not_today' | 'round_ended' };
 
 /**
  * Flip a booking's arrival: confirmed → used (+usedAt) or, for a mistaken tap,
  * used → confirmed (usedAt cleared). Idempotent in both directions. Only for
- * rounds happening on the venue-local TODAY — arrival is a physical fact, not
- * something to pre-fill or backfill. Held/cancelled bookings can't be marked.
+ * rounds happening on the venue-local TODAY, and only while the round is still
+ * running — once its end time (plus the configured grace) has passed the round
+ * is closed for marking (Yanay 2026-07-13: "once the round is over, staff can't
+ * mark anything").
+ * Arrival is a physical fact, not something to pre-fill or backfill.
+ * Held/cancelled bookings can't be marked.
  */
 export const setBookingArrival = async (
   db: AnyPgDatabase,
@@ -33,9 +38,11 @@ export const setBookingArrival = async (
         status: bookings.status,
         usedAt: bookings.usedAt,
         date: roundInstances.date,
+        endTime: rounds.endTime,
       })
       .from(bookings)
       .innerJoin(roundInstances, eq(roundInstances.id, bookings.roundInstanceId))
+      .innerJoin(rounds, eq(rounds.id, roundInstances.roundId))
       .where(eq(bookings.id, input.bookingId))
       .for('update', { of: bookings });
     const booking = rows[0];
@@ -44,6 +51,13 @@ export const setBookingArrival = async (
       return { ok: false, error: 'not_markable' as const };
     }
     if (booking.date !== venueTodayIso(now)) return { ok: false, error: 'not_today' as const };
+    // Once a round is over — plus the configured grace — it's closed for
+    // marking. The grace keeps the floor from being cut off mid-tap for a late
+    // arrival; markingGraceMinutes = 0 makes it a hard lock at end time.
+    const settings = await getRoundSettings(tx);
+    if (isMarkingClosed(booking.date, booking.endTime.slice(0, 5), settings.markingGraceMinutes, now)) {
+      return { ok: false, error: 'round_ended' as const };
+    }
 
     const alreadyThere =
       (input.arrived && booking.status === 'used') ||

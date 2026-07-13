@@ -57,6 +57,21 @@ export function isRoundEnded(dateIso: string, endTimeHhmm: string, now: Date): b
   return roundStartWallMs(dateIso, endTimeHhmm) <= venueWallMs(now);
 }
 
+/**
+ * True once staff may no longer mark arrivals — the round's end plus a grace of
+ * `graceMinutes` has passed in venue wall time (Yanay 2026-07-13). graceMinutes
+ * = 0 is a hard lock exactly at end time; a positive grace keeps the floor from
+ * being cut off mid-tap for a late arrival.
+ */
+export function isMarkingClosed(
+  dateIso: string,
+  endTimeHhmm: string,
+  graceMinutes: number,
+  now: Date,
+): boolean {
+  return roundStartWallMs(dateIso, endTimeHhmm) + graceMinutes * 60_000 <= venueWallMs(now);
+}
+
 /** True while `now` is at least `windowHours` before the round's start (the cancel window). */
 export function isWithinCancelWindow(
   dateIso: string,

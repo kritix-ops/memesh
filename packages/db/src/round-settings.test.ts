@@ -18,6 +18,8 @@ test('getRoundSettings returns the seeded defaults', async () => {
   assert.equal(s.holdTtlMinutes, 15);
   assert.equal(s.cancellationWindowHours, 24);
   assert.equal(s.claimWindowMinutes, 60);
+  assert.equal(s.bookingHorizonDays, 30);
+  assert.equal(s.markingGraceMinutes, 30);
 });
 
 test('validateRoundSettingsPatch enforces ranges', () => {
@@ -28,7 +30,24 @@ test('validateRoundSettingsPatch enforces ranges', () => {
     validateRoundSettingsPatch({ cancellationWindowHours: -1 })?.code,
     'cancellation_window_out_of_range',
   );
+  assert.equal(validateRoundSettingsPatch({ bookingHorizonDays: 0 })?.code, 'booking_horizon_out_of_range');
+  assert.equal(validateRoundSettingsPatch({ bookingHorizonDays: 999 })?.code, 'booking_horizon_out_of_range');
+  assert.equal(validateRoundSettingsPatch({ markingGraceMinutes: -1 })?.code, 'marking_grace_out_of_range');
+  assert.equal(validateRoundSettingsPatch({ markingGraceMinutes: 999 })?.code, 'marking_grace_out_of_range');
   assert.equal(validateRoundSettingsPatch({ holdTtlMinutes: 20, cancellationWindowHours: 48 }), null);
+  assert.equal(validateRoundSettingsPatch({ bookingHorizonDays: 30 }), null);
+  assert.equal(validateRoundSettingsPatch({ markingGraceMinutes: 0 }), null); // 0 = hard lock, valid
+});
+
+test('updateRoundSettings persists bookingHorizonDays with a diff', async () => {
+  const db = await freshDb();
+  assert.equal((await getRoundSettings(db)).bookingHorizonDays, 30);
+  const res = await updateRoundSettings(db, { bookingHorizonDays: 14 });
+  assert.equal(res.ok, true);
+  if (!res.ok) return;
+  assert.equal(res.row.bookingHorizonDays, 14);
+  assert.deepEqual(res.diff.bookingHorizonDays, [30, 14]);
+  assert.equal((await getRoundSettings(db)).bookingHorizonDays, 14);
 });
 
 test('updateRoundSettings persists changes and reports a diff', async () => {

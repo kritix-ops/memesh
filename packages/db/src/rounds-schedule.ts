@@ -10,6 +10,7 @@
 
 import { asc, eq } from 'drizzle-orm';
 import type { PgDatabase } from 'drizzle-orm/pg-core';
+import { addIsoDays, venueTodayIso } from './round-time';
 import {
   roundInstances,
   roundScheduleRules,
@@ -202,16 +203,22 @@ export const roundFitsWindows = (start: string, end: string, windows: ScheduleWi
 
 export type SchedulableResult =
   | { ok: true }
-  | { ok: false; reason: 'not_found' | 'filtered_by_schedule' };
+  | { ok: false; reason: 'not_found' | 'filtered_by_schedule' | 'beyond_horizon' };
 
 /**
  * Booking-path guard (createHold, bookRoundWithPunch): is this instance's
  * round offered on its date under the winning schedule rule? No rule → yes.
  * Keeps direct API calls from booking a round the picker would never show.
+ *
+ * When `bookingHorizonDays` is passed, also refuses a date beyond today + that
+ * many days (Yanay 2026-07-13, "register a month ahead, not more") — the
+ * authoritative half of the horizon cap, since the capped calendar is only a
+ * UI hint. Omitted → no horizon check (schedule-only callers, e.g. tests).
  */
 export const isInstanceSchedulable = async (
   db: AnyPgDatabase,
   roundInstanceId: string,
+  opts: { now?: Date; bookingHorizonDays?: number } = {},
 ): Promise<SchedulableResult> => {
   const rows = await db
     .select({
@@ -225,6 +232,12 @@ export const isInstanceSchedulable = async (
     .limit(1);
   const inst = rows[0];
   if (!inst) return { ok: false, reason: 'not_found' as const };
+  if (
+    opts.bookingHorizonDays !== undefined &&
+    inst.date > addIsoDays(venueTodayIso(opts.now ?? new Date()), opts.bookingHorizonDays)
+  ) {
+    return { ok: false, reason: 'beyond_horizon' as const };
+  }
   const schedule = await resolveScheduleForDate(db, inst.date);
   if (!schedule) return { ok: true as const };
   if (!roundFitsWindows(inst.startTime, inst.endTime, schedule.windows)) {
