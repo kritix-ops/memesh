@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@memesh/brand": "workspace:*",
+    "@memesh/content": "workspace:*",
     "@memesh/staff-auth": "workspace:*",
     "@memesh/web-shared": "workspace:*",
     "react": "^19.0.0",

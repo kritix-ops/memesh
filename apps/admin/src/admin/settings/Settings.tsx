@@ -23,6 +23,7 @@ import {
   humanizeSettingsError,
 } from './shared';
 import { DashboardSettingsSection } from './DashboardSettingsSection';
+import { ContentSection } from './ContentSection';
 import { RoundSettingsSection } from './RoundSettingsSection';
 
 type SectionKey =
@@ -36,7 +37,8 @@ type SectionKey =
   | 'email-content'
   | 'gift-cards'
   | 'rounds'
-  | 'dashboard';
+  | 'dashboard'
+  | 'content';
 
 const SECTIONS: { key: SectionKey; label: string }[] = [
   { key: 'pricing', label: 'כרטיסייה' },
@@ -50,6 +52,7 @@ const SECTIONS: { key: SectionKey; label: string }[] = [
   { key: 'gift-cards', label: 'כרטיסיות מתנה' },
   { key: 'rounds', label: 'סבבים' },
   { key: 'dashboard', label: 'דשבורד' },
+  { key: 'content', label: 'תוכן וטקסטים' },
 ];
 
 const subNavStyle = (active: boolean): CSSProperties => ({
@@ -186,6 +189,7 @@ export function Settings() {
             doesn't take the card-settings `loaded`/`onSaved`/`reload` props. */}
         {active === 'rounds' && <RoundSettingsSection />}
         {active === 'dashboard' && <DashboardSettingsSection />}
+        {active === 'content' && <ContentSection />}
       </div>
     </div>
   );

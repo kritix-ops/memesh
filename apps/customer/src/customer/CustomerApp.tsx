@@ -1,4 +1,5 @@
 import { MemeshQr, PunchCard, Sun } from '@memesh/brand';
+import { useContent } from '@memesh/content/react';
 import {
   getMyCards,
   updateMe,
@@ -2469,6 +2470,7 @@ function RoundBookingCard({
    *  collapsible header carries them) and render only the body. */
   compact?: boolean;
 }) {
+  const { t } = useContent();
   const [picking, setPicking] = useState(false);
   const [confirmingCancel, setConfirmingCancel] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -2671,7 +2673,7 @@ function RoundBookingCard({
             }}
             style={secondaryBtn}
           >
-            שנה מועד
+            {t('customer.booking.rescheduleButton')}
           </button>
           <button
             onClick={() => {
@@ -2680,15 +2682,26 @@ function RoundBookingCard({
             }}
             style={dangerBtn}
           >
-            בטל הזמנה
+            {t('customer.booking.cancelButton')}
           </button>
+          <div
+            style={{
+              flexBasis: '100%',
+              fontSize: 12,
+              color: MUTED,
+              textAlign: 'center',
+              marginTop: 2,
+            }}
+          >
+            {t('customer.policy.reschedule')}
+          </div>
         </div>
       )}
 
       {confirmingCancel && (
         <div style={{ width: '100%', borderTop: '1px solid #f3efea', paddingTop: 12 }}>
           <div style={{ fontSize: 13.5, fontWeight: 600, marginBottom: 4, textAlign: 'center' }}>
-            לבטל את ההזמנה?
+            {t('customer.booking.cancelConfirmTitle')}
           </div>
           <div style={{ fontSize: 12.5, color: MUTED, marginBottom: 12, textAlign: 'center' }}>
             {booking.source === 'punchcard'
