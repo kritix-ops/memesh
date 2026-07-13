@@ -1,4 +1,5 @@
 import { type CSSProperties, type ReactNode, useCallback, useEffect, useState } from 'react';
+import { fmtDate } from '@memesh/web-shared';
 import {
   getDashboardLive,
   type DashboardLiveAlert,
@@ -7,6 +8,7 @@ import {
   type DashboardLiveWaitlist,
   type DashboardLiveWeekAheadDay,
 } from '../lib/api/admin';
+import { getStaffRoundsForDate } from '../lib/api/round-participants';
 import { useViewport } from '../useViewport';
 import { RoundAttendeesPanel } from './RoundAttendeesPanel';
 import {
@@ -52,12 +54,50 @@ const DEFAULT_ZONE_ORDER = ['rounds_today', 'stats_today', 'alerts', 'waitlist',
 
 const zoneTitle: CSSProperties = { fontSize: 15, fontWeight: 600, color: INK };
 
+// Date control on the rounds zone (Yanay 2026-07-13: manage participants on any
+// day, not just today's live tiles).
+const dateInput: CSSProperties = {
+  padding: '6px 10px',
+  borderRadius: 9,
+  border: '1.5px solid #e9e0d9',
+  fontSize: 13,
+  color: INK,
+  background: '#fff',
+  fontFamily: 'inherit',
+};
+const todayChip: CSSProperties = {
+  background: '#fff',
+  color: ORANGE,
+  border: `1.5px solid ${ORANGE}`,
+  borderRadius: 9,
+  fontWeight: 600,
+  padding: '6px 12px',
+  fontSize: 12.5,
+  cursor: 'pointer',
+};
+
 /** Parse a "YYYY-MM-DD" date in the local timezone (avoids the UTC-midnight
  *  off-by-one that `new Date("YYYY-MM-DD")` causes in negative-offset zones). */
 function parseLocalDate(ymd: string): Date {
   // Fixed-position slices of "YYYY-MM-DD" — Number(string) is always a number,
   // so this stays typed under noUncheckedIndexedAccess (array destructuring is not).
   return new Date(Number(ymd.slice(0, 4)), Number(ymd.slice(5, 7)) - 1, Number(ymd.slice(8, 10)));
+}
+
+// Venue "today" as YYYY-MM-DD in the venue timezone (Asia/Jerusalem, matching
+// packages/db round-time's VENUE_TZ), so "today vs another date" is stable no
+// matter the admin's own timezone. en-CA renders an ISO-shaped date; the first
+// 10 chars are YYYY-MM-DD regardless of locale quirks.
+const VENUE_TZ = 'Asia/Jerusalem';
+function venueTodayIso(now: Date = new Date()): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: VENUE_TZ,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  })
+    .format(now)
+    .slice(0, 10);
 }
 
 /** Compact Hebrew relative time: "הרגע", "לפני 3 ד׳", "לפני 2 ש׳", "לפני 1 י׳". */
@@ -77,6 +117,12 @@ export function LiveRoundsDashboard() {
   const [paused, setPaused] = useState(false);
   // Which round's participant panel is open (Yanay 2026-07-07). Null = none.
   const [selectedRoundId, setSelectedRoundId] = useState<string | null>(null);
+  // The venue date the rounds zone shows. null = today's live tiles; a date
+  // string switches just that zone to any day via the any-date staff endpoint
+  // (Yanay 2026-07-13). Every other zone stays today-live.
+  const [viewDate, setViewDate] = useState<string | null>(null);
+  const [dateRounds, setDateRounds] = useState<DashboardLiveRound[] | null>(null);
+  const [dateRoundsError, setDateRoundsError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const t0 = performance.now();
@@ -134,6 +180,49 @@ export function LiveRoundsDashboard() {
     };
   }, [refreshSeconds, load]);
 
+  // Load the selected date's rounds from the any-date staff endpoint. Today
+  // renders from the live payload, so null skips the fetch. Changing the date
+  // closes any open panel; the latest selection wins over a slow response.
+  useEffect(() => {
+    setSelectedRoundId(null);
+    if (viewDate === null) {
+      setDateRounds(null);
+      setDateRoundsError(null);
+      return;
+    }
+    let cancelled = false;
+    setDateRounds(null);
+    setDateRoundsError(null);
+    void getStaffRoundsForDate(viewDate).then((res) => {
+      if (cancelled) return;
+      if (res.ok) {
+        setDateRounds(res.data.rounds);
+        console.info('[admin dashboard] date rounds', {
+          date: viewDate,
+          rounds: res.data.rounds.length,
+        });
+      } else {
+        setDateRoundsError(res.error);
+        console.warn('[admin dashboard] date rounds failed', { date: viewDate, error: res.error });
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [viewDate]);
+
+  // Refresh whichever date is showing after a panel action — the live payload
+  // for today, the selected date's rounds otherwise.
+  const refreshRounds = useCallback(async () => {
+    if (viewDate === null) {
+      await load();
+      return;
+    }
+    const res = await getStaffRoundsForDate(viewDate);
+    if (res.ok) setDateRounds(res.data.rounds);
+    else setDateRoundsError(res.error);
+  }, [viewDate, load]);
+
   // First load, nothing yet.
   if (!data) {
     if (error) {
@@ -152,6 +241,10 @@ export function LiveRoundsDashboard() {
   const zoneOrder = Array.isArray(settings.widgetsOrder)
     ? settings.widgetsOrder
     : DEFAULT_ZONE_ORDER;
+  const todayIso = venueTodayIso();
+  // Picking today (or clearing the input) returns to the live view — same data,
+  // but keeps the live zones coherent.
+  const selectDate = (d: string) => setViewDate(!d || d === todayIso ? null : d);
 
   // Zones render in the operator-configured order; a key absent from
   // widgetsOrder is hidden entirely. Each zone still self-hides when it has no
@@ -159,15 +252,55 @@ export function LiveRoundsDashboard() {
   const renderZone = (key: string) => {
     switch (key) {
       case 'rounds_today': {
-        const selected = rounds.find((r) => r.roundInstanceId === selectedRoundId) ?? null;
+        const isLive = viewDate === null;
+        // Today from the live payload; any other date from its own fetch.
+        const zoneRounds = isLive
+          ? rounds
+          : dateRounds
+            ? sortRoundsByStart(dateRounds)
+            : null;
+        const selected = zoneRounds?.find((r) => r.roundInstanceId === selectedRoundId) ?? null;
         return (
           <div key={key}>
-            <div style={{ ...zoneTitle, marginBottom: 10 }}>סבבי היום</div>
-            {rounds.length === 0 ? (
-              <div style={{ ...card, color: MUTED, textAlign: 'center' }}>אין סבבים פעילים היום.</div>
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                gap: 10,
+                flexWrap: 'wrap',
+                marginBottom: 10,
+              }}
+            >
+              <div style={zoneTitle}>{isLive ? 'סבבי היום' : `סבבים · ${fmtDate(viewDate)}`}</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input
+                  type="date"
+                  value={viewDate ?? todayIso}
+                  onChange={(e) => selectDate(e.target.value)}
+                  aria-label="בחירת תאריך לניהול סבבים"
+                  style={dateInput}
+                />
+                {!isLive && (
+                  <button type="button" onClick={() => setViewDate(null)} style={todayChip}>
+                    חזרה להיום
+                  </button>
+                )}
+              </div>
+            </div>
+            {!isLive && dateRoundsError ? (
+              <div style={{ ...card, color: '#a23a3a', textAlign: 'center' }}>
+                לא ניתן לטעון את הסבבים לתאריך זה. נסו שוב.
+              </div>
+            ) : zoneRounds === null ? (
+              <div style={{ ...card, color: MUTED, textAlign: 'center' }}>טוען סבבים…</div>
+            ) : zoneRounds.length === 0 ? (
+              <div style={{ ...card, color: MUTED, textAlign: 'center' }}>
+                {isLive ? 'אין סבבים פעילים היום.' : 'אין סבבים בתאריך זה.'}
+              </div>
             ) : (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
-                {rounds.map((r) => (
+                {zoneRounds.map((r) => (
                   <RoundTile
                     key={r.roundInstanceId}
                     round={r}
@@ -183,12 +316,12 @@ export function LiveRoundsDashboard() {
                 ))}
               </div>
             )}
-            {selected && (
+            {selected && zoneRounds && (
               <RoundAttendeesPanel
                 round={selected}
-                roundsToday={rounds}
+                roundsToday={zoneRounds}
                 onClose={() => setSelectedRoundId(null)}
-                onChanged={() => void load()}
+                onChanged={() => void refreshRounds()}
               />
             )}
           </div>

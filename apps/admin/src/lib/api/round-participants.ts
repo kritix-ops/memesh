@@ -1,4 +1,5 @@
 import { apiRequest, type ApiResult } from '@memesh/web-shared';
+import type { DashboardLiveRound } from './admin';
 
 // Participant actions on a round instance, mirroring apps/api/src/routes/
 // staff-rounds.ts. Attendees + move + walk-in are staff-gated (admin passes);
@@ -98,4 +99,17 @@ export interface MoveTargetRound {
 export const listRoundsForDate = (
   date: string,
 ): Promise<ApiResult<{ date: string; rounds: MoveTargetRound[] }>> =>
+  apiRequest(`/staff/rounds/today?date=${encodeURIComponent(date)}`);
+
+/**
+ * A date's rounds in the live-dashboard tile shape, so the admin can open the
+ * participant panel for any day — not just today's live tiles. Reads the same
+ * any-date staff endpoint as `listRoundsForDate`, but keeps the fuller
+ * `DashboardLiveRound` fields (heldCount, pctFull) the tile needs. Today's
+ * rounds here are identical to the dashboard's `today.rounds` (same server
+ * helper). The endpoint returns a superset; extra floor fields are ignored.
+ */
+export const getStaffRoundsForDate = (
+  date: string,
+): Promise<ApiResult<{ date: string; rounds: DashboardLiveRound[] }>> =>
   apiRequest(`/staff/rounds/today?date=${encodeURIComponent(date)}`);
