@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict';
 import { after, beforeEach, test } from 'node:test';
 import { fetchTicketsReport } from './reports';
-import { listRoundsForDate, setTicketArrival } from './round-participants';
+import { getStaffRoundsForDate, listRoundsForDate, setTicketArrival } from './round-participants';
 
 interface FetchCall {
   url: string;
@@ -109,4 +109,26 @@ test('listRoundsForDate reads the staff floor endpoint for that date', async () 
   const res = await listRoundsForDate('2026-07-11');
   assert.equal(res.ok, true);
   assert.ok(lastCall?.url.endsWith('/staff/rounds/today?date=2026-07-11'));
+});
+
+test('getStaffRoundsForDate reads the any-date staff endpoint and keeps tile fields', async () => {
+  const round = {
+    roundInstanceId: '22222222-2222-2222-2222-222222222222',
+    label: 'בוקר',
+    startTime: '09:00',
+    endTime: '14:00',
+    capacity: 20,
+    taken: 5,
+    heldCount: 1,
+    pctFull: 25,
+    isClosed: false,
+  };
+  stubFetch({ status: 200, body: { date: '2026-07-16', rounds: [round] } });
+  const res = await getStaffRoundsForDate('2026-07-16');
+  assert.equal(res.ok, true);
+  if (res.ok) {
+    assert.equal(res.data.rounds[0]?.pctFull, 25);
+    assert.equal(res.data.rounds[0]?.heldCount, 1);
+  }
+  assert.ok(lastCall?.url.endsWith('/staff/rounds/today?date=2026-07-16'));
 });
