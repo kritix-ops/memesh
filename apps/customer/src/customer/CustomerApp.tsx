@@ -2734,9 +2734,13 @@ function RoundBookingCard({
               color: MUTED,
               textAlign: 'center',
               marginTop: 2,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 3,
             }}
           >
-            {t('customer.policy.reschedule')}
+            <span>{t('customer.policy.cancel')}</span>
+            <span>{t('customer.policy.reschedule')}</span>
           </div>
         </div>
       )}

@@ -28,6 +28,8 @@ const updateBodySchema = z.object({
   warnUpcomingReservationAtDoor: z.boolean().optional(),
   bookingHorizonDays: z.number().int().optional(),
   markingGraceMinutes: z.number().int().optional(),
+  manualRefundOnCancel: z.boolean().optional(),
+  cancellationAlertEmail: z.string().max(200).optional(),
 }).strict();
 
 const validationStatus: Record<RoundSettingsValidationError['code'], number> = {
@@ -37,6 +39,7 @@ const validationStatus: Record<RoundSettingsValidationError['code'], number> = {
   active_hours_out_of_range: 400,
   booking_horizon_out_of_range: 400,
   marking_grace_out_of_range: 400,
+  cancellation_alert_email_invalid: 400,
   reminder_offsets_invalid: 400,
   closing_time_invalid: 400,
 };
@@ -78,6 +81,12 @@ export const roundSettingsRoutes: FastifyPluginAsync = async (fastify) => {
         }),
         ...(d.bookingHorizonDays !== undefined && { bookingHorizonDays: d.bookingHorizonDays }),
         ...(d.markingGraceMinutes !== undefined && { markingGraceMinutes: d.markingGraceMinutes }),
+        ...(d.manualRefundOnCancel !== undefined && {
+          manualRefundOnCancel: d.manualRefundOnCancel,
+        }),
+        ...(d.cancellationAlertEmail !== undefined && {
+          cancellationAlertEmail: d.cancellationAlertEmail,
+        }),
       };
       const result = await updateRoundSettings(db, patch);
       if (!result.ok) {

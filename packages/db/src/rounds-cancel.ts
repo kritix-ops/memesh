@@ -1,17 +1,29 @@
 // Cancel a confirmed booking with a refund (super-brief §6.2). Money-safety is
-// the whole point: the seat is released ONLY after the refund is confirmed. If
-// the refund can't be confirmed, we don't cancel — the customer keeps their
-// paid seat and can retry. The refund is injected so this stays free of the WC
-// client; it runs inside the transaction under the booking's row lock, which
-// serializes concurrent cancels (no double refund) at the cost of holding the
-// lock for the refund's duration — fine at a single venue's volume.
+// the whole point: in AUTO mode the seat is released ONLY after the refund is
+// confirmed — if it can't be confirmed we don't cancel, so the customer keeps
+// their paid seat and can retry. The refund is injected so this stays free of
+// the WC client; it runs inside the transaction under the booking's row lock,
+// which serializes concurrent cancels (no double refund).
+//
+// MANUAL mode (input.manualRefund, Yanay 2026-07-13 "בינתיים"): while the
+// payment provider has no refund API, the seat is freed WITHOUT calling the
+// refund and `refundPending` is returned so the route can email staff to refund
+// by hand. This trades the fail-closed money guarantee for a working cancel —
+// an explicit, reversible operator choice, off again once auto-refund returns.
 
 import { eq } from 'drizzle-orm';
 import type { PgDatabase } from 'drizzle-orm/pg-core';
 import { getCardSettings } from './card-settings';
 import { getRoundSettings } from './round-settings';
 import { isWithinCancelWindow } from './round-time';
-import { bookings, punchCardEntries, punchCards, roundInstances, rounds } from './schema/index';
+import {
+  bookings,
+  customers,
+  punchCardEntries,
+  punchCards,
+  roundInstances,
+  rounds,
+} from './schema/index';
 
 type AnyPgDatabase = PgDatabase<any, any, any>;
 
@@ -28,6 +40,14 @@ export type CancelBookingInput = {
    * the customer route never sets this, so customers stay bound to the window.
    */
   skipWindow?: boolean;
+  /**
+   * Interim manual-refund mode (Yanay 2026-07-13, "בינתיים"): while the payment
+   * provider has no refund API, free the seat WITHOUT calling the WooCommerce
+   * refund and flag `refundPending` so the caller can email staff to refund by
+   * hand. The punch-entry return still happens (it moves no money). Flip off
+   * once auto-refund works again.
+   */
+  manualRefund?: boolean;
 };
 
 export type CancelBookingDeps = {
@@ -39,10 +59,86 @@ export type CancelBookingDeps = {
 };
 
 export type CancelBookingResult =
-  | { ok: true; refunded: boolean; punchReturned: boolean; refundAmountIls: number; roundInstanceId: string }
+  | {
+      ok: true;
+      /** True when a WooCommerce refund was confirmed (auto mode). */
+      refunded: boolean;
+      /** True when the seat was freed but the money refund is left for staff to
+       *  do by hand (manual mode). Mutually exclusive with `refunded`. */
+      refundPending: boolean;
+      punchReturned: boolean;
+      refundAmountIls: number;
+      roundInstanceId: string;
+      /** The WC order to refund (for the manual-refund staff alert). */
+      wcOrderId: string | null;
+      source: 'paid' | 'punchcard' | 'gift' | 'manual';
+    }
   | { ok: false; error: 'not_found' | 'forbidden' | 'not_confirmed' | 'too_late' | 'refund_failed' };
 
 const hhmm = (t: string): string => t.slice(0, 5);
+
+export interface BookingNotifyDetails {
+  customer: { firstName: string; lastName: string; phone: string; email: string | null };
+  /** Round display name. */
+  label: string;
+  /** YYYY-MM-DD */
+  date: string;
+  /** HH:MM */
+  startTime: string;
+  endTime: string;
+  bookingNumber: string | null;
+  source: 'paid' | 'punchcard' | 'gift' | 'manual';
+  wcOrderId: string | null;
+  ticketType: 'child_under_walking' | 'child_over_walking';
+  additionalCompanions: number;
+}
+
+/**
+ * Customer + round + booking display fields for the cancellation notification
+ * emails (manual-refund staff alert + customer confirmation). Read after the
+ * cancel — the booking row survives as `cancelled`. Null if the id is unknown.
+ */
+export const getBookingNotifyDetails = async (
+  db: AnyPgDatabase,
+  bookingId: string,
+): Promise<BookingNotifyDetails | null> => {
+  const rows = await db
+    .select({
+      firstName: customers.firstName,
+      lastName: customers.lastName,
+      phone: customers.phone,
+      email: customers.email,
+      label: rounds.displayName,
+      date: roundInstances.date,
+      startTime: rounds.startTime,
+      endTime: rounds.endTime,
+      bookingNumber: bookings.bookingNumber,
+      source: bookings.source,
+      wcOrderId: bookings.wcOrderId,
+      ticketType: bookings.ticketType,
+      additionalCompanions: bookings.additionalCompanions,
+    })
+    .from(bookings)
+    .innerJoin(customers, eq(customers.id, bookings.customerId))
+    .innerJoin(roundInstances, eq(roundInstances.id, bookings.roundInstanceId))
+    .innerJoin(rounds, eq(rounds.id, roundInstances.roundId))
+    .where(eq(bookings.id, bookingId))
+    .limit(1);
+  const r = rows[0];
+  if (!r) return null;
+  return {
+    customer: { firstName: r.firstName, lastName: r.lastName, phone: r.phone, email: r.email },
+    label: r.label,
+    date: r.date,
+    startTime: hhmm(r.startTime),
+    endTime: hhmm(r.endTime),
+    bookingNumber: r.bookingNumber,
+    source: r.source as BookingNotifyDetails['source'],
+    wcOrderId: r.wcOrderId,
+    ticketType: r.ticketType as BookingNotifyDetails['ticketType'],
+    additionalCompanions: r.additionalCompanions,
+  };
+};
 
 export const cancelBooking = async (
   db: AnyPgDatabase,
@@ -89,21 +185,28 @@ export const cancelBooking = async (
     }
 
     let refunded = false;
+    let refundPending = false;
     let punchReturned = false;
     let refundAmountIls = 0;
 
     if (b.source === 'paid') {
-      // Paid bookings must have a confirmed refund before the seat is released.
       // Refund value = ticket price by type + companions × companion price.
-      if (!b.wcOrderId) return { ok: false, error: 'refund_failed' as const };
       const cardSettings = await getCardSettings(tx);
       const ticketPrice =
         b.ticketType === 'child_under_walking'
           ? cardSettings.roundChildBabyPriceIls
           : cardSettings.roundChildOverWalkingPriceIls;
       refundAmountIls = ticketPrice + b.additionalCompanions * cardSettings.roundAdditionalCompanionPriceIls;
-      refunded = await deps.refund(b.wcOrderId, refundAmountIls);
-      if (!refunded) return { ok: false, error: 'refund_failed' as const };
+      if (input.manualRefund) {
+        // Interim: release the seat now; the money refund is handed to staff.
+        refundPending = true;
+      } else {
+        // Auto mode: a paid booking must have a confirmed refund before the
+        // seat is released (fail closed — no seat freed without money back).
+        if (!b.wcOrderId) return { ok: false, error: 'refund_failed' as const };
+        refunded = await deps.refund(b.wcOrderId, refundAmountIls);
+        if (!refunded) return { ok: false, error: 'refund_failed' as const };
+      }
     } else if (b.source === 'punchcard') {
       // A paid extra companion rides on the punch booking (wc_order_id +
       // additional_companions > 0). Its money must come back before the seat
@@ -116,8 +219,12 @@ export const cancelBooking = async (
         // A zero amount means the companion was free (price setting 0) — no
         // money moved, nothing to refund.
         if (refundAmountIls > 0) {
-          refunded = await deps.refund(b.wcOrderId, refundAmountIls);
-          if (!refunded) return { ok: false, error: 'refund_failed' as const };
+          if (input.manualRefund) {
+            refundPending = true;
+          } else {
+            refunded = await deps.refund(b.wcOrderId, refundAmountIls);
+            if (!refunded) return { ok: false, error: 'refund_failed' as const };
+          }
         }
       }
       // Return the entry we spent: find it by the booking-id link, mark it
@@ -154,6 +261,15 @@ export const cancelBooking = async (
 
     await tx.update(bookings).set({ status: 'cancelled', updatedAt: now }).where(eq(bookings.id, b.id));
     // The route promotes the waitlist for this freed seat after the tx commits.
-    return { ok: true as const, refunded, punchReturned, refundAmountIls, roundInstanceId: b.roundInstanceId };
+    return {
+      ok: true as const,
+      refunded,
+      refundPending,
+      punchReturned,
+      refundAmountIls,
+      roundInstanceId: b.roundInstanceId,
+      wcOrderId: b.wcOrderId,
+      source: b.source as 'paid' | 'punchcard' | 'gift' | 'manual',
+    };
   });
 };

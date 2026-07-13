@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { boolean, integer, pgTable, smallint, time, timestamp } from 'drizzle-orm/pg-core';
+import { boolean, integer, pgTable, smallint, text, time, timestamp } from 'drizzle-orm/pg-core';
 
 // Singleton config for the rounds *operational* params (super-brief §15) — the
 // knobs the purchase / cancel / waitlist flow reads at runtime. Separate from
@@ -54,6 +54,15 @@ export const roundSettings = pgTable('round_settings', {
   // keeps the floor from being cut off mid-tap for a straggler). 0 = a hard
   // lock exactly at end time. Default 30.
   markingGraceMinutes: smallint('marking_grace_minutes').notNull().default(30),
+  // Interim cancellation mode (Yanay 2026-07-13, "בינתיים"): while the payment
+  // provider has no refund API, a customer cancel frees the seat WITHOUT the
+  // automatic WooCommerce refund and instead emails the staff to refund by hand
+  // + emails the customer a confirmation. Default true (auto-refund is currently
+  // broken); flip to false once the new provider's auto-refund works.
+  manualRefundOnCancel: boolean('manual_refund_on_cancel').notNull().default(true),
+  // Where the "please refund manually" alert goes when manualRefundOnCancel is
+  // on. Empty → no staff alert is sent (logged). Set to the venue's ops inbox.
+  cancellationAlertEmail: text('cancellation_alert_email').notNull().default(''),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 

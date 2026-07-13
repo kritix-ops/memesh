@@ -14,8 +14,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { contentDefaults, type ContentMap } from './index';
-import { interpolate } from './interpolate';
+import { resolveContent, type ContentMap } from './index';
 
 export interface ContentContextValue {
   /** Resolve a key to its effective text, interpolating {{vars}} if given. */
@@ -24,18 +23,11 @@ export interface ContentContextValue {
   loaded: boolean;
 }
 
-function resolve(map: ContentMap, key: string, vars?: Record<string, string | number>): string {
-  // Fetched value wins; else the bundled default; else the key itself (visible,
-  // never blank — a missing key is a wiring bug, not something to hide).
-  const raw = map[key] ?? contentDefaults[key] ?? key;
-  return vars ? interpolate(raw, vars) : raw;
-}
-
 // Used when a component calls useContent() outside any provider — t() still
 // works off the bundled defaults, so nothing crashes or renders empty.
 const FALLBACK: ContentContextValue = {
   loaded: true,
-  t: (key, vars) => resolve({}, key, vars),
+  t: (key, vars) => resolveContent({}, key, vars),
 };
 
 const ContentContext = createContext<ContentContextValue | null>(null);
@@ -70,7 +62,7 @@ export function ContentProvider({
   }, [audience]);
 
   const value = useMemo<ContentContextValue>(
-    () => ({ loaded, t: (key, vars) => resolve(map, key, vars) }),
+    () => ({ loaded, t: (key, vars) => resolveContent(map, key, vars) }),
     [map, loaded],
   );
 

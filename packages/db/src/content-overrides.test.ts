@@ -17,8 +17,9 @@ async function freshDb() {
   return db;
 }
 
-const CANCEL = 'customer.policy.cancel'; // long, placeholder {{hours}}
+const CANCEL = 'customer.policy.cancel'; // long, no placeholders
 const BTN = 'customer.booking.cancelButton'; // short, no placeholders
+const WITH_PLACEHOLDER = 'customer.login.codeSentTo'; // short, declares {{target}}
 
 test('getMergedContent returns registry defaults when nothing is overridden', async () => {
   const db = await freshDb();
@@ -47,9 +48,9 @@ test('a blank value resets the key to its default (row deleted)', async () => {
   assert.equal((await getMergedContent(db))[BTN], contentDefaults[BTN]);
 });
 
-test('a valid {{hours}} placeholder is accepted for the cancel policy', async () => {
+test('a declared placeholder is accepted', async () => {
   const db = await freshDb();
-  const res = await updateContentOverrides(db, { [CANCEL]: 'ביטול עד {{hours}} שעות לפני.' });
+  const res = await updateContentOverrides(db, { [WITH_PLACEHOLDER]: 'הקוד נשלח אל {{target}}' });
   assert.equal(res.ok, true);
 });
 

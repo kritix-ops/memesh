@@ -19,6 +19,7 @@ export const CONTENT_GROUPS: ContentGroupMeta[] = [
   { id: 'customer_booking', label: 'אזור אישי — ניהול הזמנה' },
   { id: 'customer_waitlist', label: 'אזור אישי — רשימת המתנה' },
   { id: 'customer_profile', label: 'אזור אישי — פרופיל' },
+  { id: 'email_cancel', label: 'מיילים — ביטול הזמנה' },
 ];
 
 export const CONTENT_REGISTRY: ContentEntry[] = [
@@ -91,10 +92,8 @@ export const CONTENT_REGISTRY: ContentEntry[] = [
     key: 'customer.policy.cancel',
     group: 'customer_booking',
     label: 'מדיניות ביטול',
-    help: 'אפשר להשתמש ב-{{hours}} כמספר השעות שמוגדר בהגדרות הסבבים.',
-    default: 'אפשר לבטל הזמנה עד {{hours}} שעות לפני תחילת המועד, והזיכוי יוחזר לאמצעי התשלום.',
+    default: 'אפשר לבטל הזמנה עד 24 שעות לפני תחילת המועד, והזיכוי יוחזר לאמצעי התשלום.',
     kind: 'long',
-    placeholders: ['hours'],
   },
   {
     key: 'customer.policy.reschedule',
@@ -201,7 +200,7 @@ export const CONTENT_REGISTRY: ContentEntry[] = [
     key: 'customer.booking.cancelRefundPunchCompanion',
     group: 'customer_booking',
     label: 'הסבר ביטול — כרטיסייה + מלווה',
-    default: 'הכניסה תוחזר לכרטיסייה שלך, והתשלום עבור המלווה הנוסף יוחזר אוטומטית.',
+    default: 'הכניסה תוחזר לכרטיסייה שלך, והתשלום עבור המלווה הנוסף יוחזר לאמצעי התשלום.',
     kind: 'long',
   },
   {
@@ -215,7 +214,7 @@ export const CONTENT_REGISTRY: ContentEntry[] = [
     key: 'customer.booking.cancelRefundPaid',
     group: 'customer_booking',
     label: 'הסבר ביטול — תשלום',
-    default: 'הזיכוי יוחזר אוטומטית לאמצעי התשלום שלכם.',
+    default: 'הזיכוי יוחזר לאמצעי התשלום שלכם.',
     kind: 'long',
   },
   {
@@ -611,6 +610,71 @@ export const CONTENT_REGISTRY: ContentEntry[] = [
   { key: 'customer.profile.errInvalidBody', group: 'customer_profile', label: 'שגיאה — שדה לא תקין', default: 'אחד השדות לא תקין.', kind: 'short' },
   { key: 'customer.profile.errNotFound', group: 'customer_profile', label: 'שגיאה — פרופיל לא נמצא', default: 'הפרופיל לא נמצא. רעננו את הדף.', kind: 'long' },
   { key: 'customer.profile.errGeneric', group: 'customer_profile', label: 'שגיאה — כללית', default: 'תקלה זמנית. נסו שוב בעוד רגע.', kind: 'long' },
+
+  // ── מיילים — ביטול הזמנה (interim manual-refund flow) ──────────────
+  // Staff alert (to the ops inbox). The booking details table is rendered by
+  // code below the intro; only the wording here is editable.
+  {
+    key: 'email.cancelStaff.subject',
+    group: 'email_cancel',
+    label: 'מייל לצוות — נושא',
+    default: 'בקשת ביטול — נדרש זיכוי ידני',
+    kind: 'short',
+  },
+  {
+    key: 'email.cancelStaff.heading',
+    group: 'email_cancel',
+    label: 'מייל לצוות — כותרת',
+    default: 'בקשת ביטול — נדרש זיכוי ידני',
+    kind: 'short',
+  },
+  {
+    key: 'email.cancelStaff.intro',
+    group: 'email_cancel',
+    label: 'מייל לצוות — פתיח',
+    default: 'לקוח/ה ביטל/ה הזמנה. יש לבצע את הזיכוי ידנית אצל ספק התשלום:',
+    kind: 'long',
+  },
+  // Customer confirmation.
+  {
+    key: 'email.cancelCustomer.subject',
+    group: 'email_cancel',
+    label: 'מייל ללקוח — נושא',
+    default: 'ההזמנה בוטלה',
+    kind: 'short',
+  },
+  {
+    key: 'email.cancelCustomer.heading',
+    group: 'email_cancel',
+    label: 'מייל ללקוח — כותרת',
+    default: 'ההזמנה בוטלה',
+    kind: 'short',
+  },
+  {
+    key: 'email.cancelCustomer.greeting',
+    group: 'email_cancel',
+    label: 'מייל ללקוח — פנייה',
+    help: '{{name}} הוא שם הלקוח.',
+    default: 'שלום {{name}},',
+    kind: 'short',
+    placeholders: ['name'],
+  },
+  {
+    key: 'email.cancelCustomer.body',
+    group: 'email_cancel',
+    label: 'מייל ללקוח — גוף ההודעה',
+    help: '{{round}} שם הסבב, {{when}} התאריך והשעה.',
+    default: 'ההזמנה שלך לסבב {{round}} בתאריך {{when}} בוטלה.',
+    kind: 'long',
+    placeholders: ['round', 'when'],
+  },
+  {
+    key: 'email.cancelCustomer.footer',
+    group: 'email_cancel',
+    label: 'מייל ללקוח — סיום',
+    default: 'הזיכוי יטופל ויוחזר לאמצעי התשלום שלך בקרוב. אם יש שאלה, אפשר לפנות אלינו.',
+    kind: 'long',
+  },
 ];
 
 /** key → default text, for the fail-safe fallback the apps bundle. */

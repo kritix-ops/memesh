@@ -16,7 +16,8 @@ export type ContentGroup =
   | 'customer_picker'
   | 'customer_cards'
   | 'customer_profile'
-  | 'customer_waitlist';
+  | 'customer_waitlist'
+  | 'email_cancel';
 
 export interface ContentGroupMeta {
   id: ContentGroup;
