@@ -23,6 +23,10 @@ export interface RoundSettings {
   bookingHorizonDays: number;
   /** Minutes after a round ends that staff may still mark arrivals. */
   markingGraceMinutes: number;
+  /** Interim: cancel frees the seat + emails staff to refund by hand. */
+  manualRefundOnCancel: boolean;
+  /** Where the manual-refund staff alert is sent (empty = none). */
+  cancellationAlertEmail: string;
   updatedAt: string;
 }
 
@@ -44,6 +48,8 @@ export type RoundSettingsPatch = {
   warnUpcomingReservationAtDoor?: boolean;
   bookingHorizonDays?: number;
   markingGraceMinutes?: number;
+  manualRefundOnCancel?: boolean;
+  cancellationAlertEmail?: string;
 };
 
 export interface RoundSettingsUpdateResponse {

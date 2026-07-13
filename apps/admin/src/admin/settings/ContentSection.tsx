@@ -1,13 +1,17 @@
 import { CONTENT_GROUPS, CONTENT_REGISTRY, contentEntriesByGroup } from '@memesh/content';
 import { useEffect, useMemo, useState } from 'react';
 import { getContentOverrides, updateContent } from '../../lib/api/content';
-import { card, humanizeSettingsError, MUTED, SaveBar, SectionShell, TextAreaField, TextField } from './shared';
+import { card, humanizeSettingsError, INK, MUTED, ORANGE, SaveBar, SectionShell, TextAreaField, TextField } from './shared';
 
 // "תוכן וטקסטים" — Yanay edits UI copy here (Wave 2 plan 2026-07-13). The
 // registry (@memesh/content) is the source of truth for which strings exist and
 // their defaults; this screen renders a field per entry, pre-filled with the
 // override or the default, and saves only what changed. A blank field resets to
-// default. Grouped by surface, searchable, since the registry grows large.
+// default.
+//
+// Layout: one collapsible accordion per group (collapsed by default so the page
+// stays short), each header showing the field count and how many are customised.
+// A search box filters across all groups and auto-opens the ones with matches.
 
 function humanizeContentError(code: string): string {
   if (code === 'unknown_key') return 'שדה לא מוכר. רעננו את הדף ונסו שוב.';
@@ -25,6 +29,7 @@ export function ContentSection() {
   // The current field text per key. Absent key → the registry default is shown.
   const [values, setValues] = useState<Record<string, string>>({});
   const [query, setQuery] = useState('');
+  const [open, setOpen] = useState<Record<string, boolean>>({});
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -86,8 +91,9 @@ export function ContentSection() {
   }
 
   const q = query.trim();
+  const searching = q !== '';
   const matches = (label: string, def: string, key: string): boolean =>
-    q === '' || label.includes(q) || def.includes(q) || key.includes(q);
+    !searching || label.includes(q) || def.includes(q) || key.includes(q);
 
   const submit = async () => {
     if (!dirty) return;
@@ -96,12 +102,10 @@ export function ContentSection() {
     const res = await updateContent(patch);
     setSubmitting(false);
     if (!res.ok) {
-      // The API returns the structured error object for content-specific codes.
       const code = typeof res.error === 'string' ? res.error : (res.error as { code: string }).code;
       setError(humanizeContentError(code));
       return;
     }
-    // Fold the applied patch into local state: '' removed the override, else set it.
     setOverrides((prev) => {
       const next = { ...prev };
       for (const [key, value] of Object.entries(patch)) {
@@ -118,9 +122,9 @@ export function ContentSection() {
   return (
     <SectionShell
       title="תוכן וטקסטים"
-      description="עריכת הטקסטים שהלקוחות והצוות רואים באפליקציה. השאירו שדה ריק כדי לחזור לברירת המחדל. שינוי יופיע ללקוח בטעינה הבאה של הדף."
+      description="עריכת הטקסטים שהלקוחות רואים באפליקציה. פתחו קטגוריה כדי לערוך. השאירו שדה ריק כדי לחזור לברירת המחדל. שינוי יופיע ללקוח בטעינה הבאה של הדף."
     >
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
@@ -141,60 +145,123 @@ export function ContentSection() {
             matches(e.label, e.default, e.key),
           );
           if (entries.length === 0) return null;
+          const customised = entries.filter((e) => current(e.key, e.default) !== e.default).length;
+          const isOpen = searching || open[group.id] === true;
           return (
-            <div key={group.id} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-              <div style={{ fontSize: 14, fontWeight: 700 }}>{group.label}</div>
-              {entries.map((e) => {
-                const cur = current(e.key, e.default);
-                const isCustom = cur !== e.default;
-                const hint = e.help
-                  ? `${e.help} ברירת מחדל: ${e.default}`
-                  : `ברירת מחדל: ${e.default}`;
-                const field =
-                  e.kind === 'long' ? (
-                    <TextAreaField
-                      label={e.label}
-                      value={cur}
-                      onChange={(v) => setValues((s) => ({ ...s, [e.key]: v }))}
-                      disabled={submitting}
-                      hint={hint}
-                      maxLength={2000}
-                    />
-                  ) : (
-                    <TextField
-                      label={e.label}
-                      value={cur}
-                      onChange={(v) => setValues((s) => ({ ...s, [e.key]: v }))}
-                      disabled={submitting}
-                      hint={hint}
-                      maxLength={200}
-                    />
-                  );
-                return (
-                  <div key={e.key} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                    {field}
-                    {isCustom && (
-                      <button
-                        type="button"
-                        disabled={submitting}
-                        onClick={() => setValues((s) => ({ ...s, [e.key]: e.default }))}
-                        style={{
-                          alignSelf: 'flex-start',
-                          border: 'none',
-                          background: 'transparent',
-                          color: MUTED,
-                          fontSize: 12,
-                          cursor: 'pointer',
-                          textDecoration: 'underline',
-                          padding: 0,
-                        }}
-                      >
-                        אפס לברירת מחדל
-                      </button>
-                    )}
-                  </div>
-                );
-              })}
+            <div key={group.id} style={{ border: '1px solid #f0eae5', borderRadius: 12, overflow: 'hidden' }}>
+              <button
+                type="button"
+                onClick={() => setOpen((s) => ({ ...s, [group.id]: !isOpen }))}
+                aria-expanded={isOpen}
+                style={{
+                  width: '100%',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 10,
+                  padding: '13px 16px',
+                  border: 'none',
+                  background: isOpen ? '#fffaf6' : '#fff',
+                  cursor: 'pointer',
+                  textAlign: 'inherit',
+                }}
+              >
+                <span style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+                  <span
+                    aria-hidden
+                    style={{
+                      color: MUTED,
+                      fontSize: 12,
+                      transform: isOpen ? 'rotate(90deg)' : 'none',
+                      transition: 'transform 120ms',
+                    }}
+                  >
+                    ▶
+                  </span>
+                  <span style={{ fontSize: 14.5, fontWeight: 600, color: INK }}>{group.label}</span>
+                </span>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 8, whiteSpace: 'nowrap' }}>
+                  {customised > 0 && (
+                    <span
+                      style={{
+                        fontSize: 12,
+                        fontWeight: 600,
+                        color: ORANGE,
+                        background: '#fff1e8',
+                        borderRadius: 999,
+                        padding: '2px 9px',
+                      }}
+                    >
+                      {customised} שונו
+                    </span>
+                  )}
+                  <span style={{ fontSize: 12.5, color: MUTED }}>{entries.length} שדות</span>
+                </span>
+              </button>
+
+              {isOpen && (
+                <div
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 16,
+                    padding: '14px 16px',
+                    borderTop: '1px solid #f3efea',
+                  }}
+                >
+                  {entries.map((e) => {
+                    const cur = current(e.key, e.default);
+                    const isCustom = cur !== e.default;
+                    const hint = e.help
+                      ? `${e.help} ברירת מחדל: ${e.default}`
+                      : `ברירת מחדל: ${e.default}`;
+                    const field =
+                      e.kind === 'long' ? (
+                        <TextAreaField
+                          label={e.label}
+                          value={cur}
+                          onChange={(v) => setValues((s) => ({ ...s, [e.key]: v }))}
+                          disabled={submitting}
+                          hint={hint}
+                          maxLength={2000}
+                        />
+                      ) : (
+                        <TextField
+                          label={e.label}
+                          value={cur}
+                          onChange={(v) => setValues((s) => ({ ...s, [e.key]: v }))}
+                          disabled={submitting}
+                          hint={hint}
+                          maxLength={200}
+                        />
+                      );
+                    return (
+                      <div key={e.key} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        {field}
+                        {isCustom && (
+                          <button
+                            type="button"
+                            disabled={submitting}
+                            onClick={() => setValues((s) => ({ ...s, [e.key]: e.default }))}
+                            style={{
+                              alignSelf: 'flex-start',
+                              border: 'none',
+                              background: 'transparent',
+                              color: MUTED,
+                              fontSize: 12,
+                              cursor: 'pointer',
+                              textDecoration: 'underline',
+                              padding: 0,
+                            }}
+                          >
+                            אפס לברירת מחדל
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           );
         })}

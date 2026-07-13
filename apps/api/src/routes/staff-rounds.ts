@@ -428,8 +428,16 @@ export const staffRoundsRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       const { bookingId } = request.params as { bookingId: string };
       if (!UUID_RE.test(bookingId)) return reply.code(400).send({ error: 'invalid_id' });
+      // Same interim manual-refund mode as the customer route (Yanay 2026-07-13):
+      // while auto-refund is down, an admin removal frees the seat and the admin
+      // refunds by hand, instead of failing closed with a 502.
+      const settings = await getRoundSettings(db);
       const refund = makeRoundRefund(request.log);
-      const result = await cancelBooking(db, { bookingId, skipWindow: true }, { refund });
+      const result = await cancelBooking(
+        db,
+        { bookingId, skipWindow: true, manualRefund: settings.manualRefundOnCancel },
+        { refund },
+      );
       if (!result.ok) {
         const code =
           result.error === 'not_found'

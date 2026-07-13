@@ -91,6 +91,7 @@ const giftCardAccent: CSSProperties = {
 // — warm orange, rounded, deliberately friendly. When buyer name is unknown
 // (legacy gift rows or rare data gaps) we drop the "מ-X" tail.
 function GiftBadge({ buyerName }: { buyerName: string | null }) {
+  const { t } = useContent();
   return (
     <div
       style={{
@@ -110,7 +111,9 @@ function GiftBadge({ buyerName }: { buyerName: string | null }) {
       }}
     >
       <span aria-hidden="true">🎁</span>
-      <span>{buyerName ? `מתנה מ-${buyerName}` : 'כרטיסיית מתנה'}</span>
+      <span>
+        {buyerName ? t('customer.gift.badgeFrom', { buyer: buyerName }) : t('customer.gift.badge')}
+      </span>
     </div>
   );
 }
@@ -149,10 +152,12 @@ const inputStyle: CSSProperties = {
 
 const yyyyMmDd = (iso: string): string => iso.slice(0, 10);
 
+// Labels live in the content registry (customer.profile.channel*), resolved by
+// key at render — this carries only the channel value and its label key.
 const CHANNELS = [
-  { k: 'sms', l: 'SMS' },
-  { k: 'whatsapp', l: 'וואטסאפ' },
-  { k: 'email', l: 'מייל' },
+  { k: 'sms', labelKey: 'customer.profile.channelSms' },
+  { k: 'whatsapp', labelKey: 'customer.profile.channelWhatsapp' },
+  { k: 'email', labelKey: 'customer.profile.channelEmail' },
 ] as const;
 type Channel = (typeof CHANNELS)[number]['k'];
 
@@ -184,6 +189,7 @@ export function CustomerApp() {
 // ---------------------------------------------------------------------------
 
 function CustomerLogin() {
+  const { t } = useContent();
   const { requestOtp, verifyOtp, requestEmailOtp, verifyEmailOtp } = useCustomerSession();
   const [step, setStep] = useState<'phone' | 'code' | 'email' | 'email-code'>('phone');
   const [phone, setPhone] = useState('');
@@ -223,7 +229,7 @@ function CustomerLogin() {
     e.preventDefault();
     const trimmed = phone.trim();
     if (!trimmed) {
-      setError('נא להזין מספר טלפון');
+      setError(t('customer.login.errPhone'));
       return;
     }
     setSubmitting(true);
@@ -231,7 +237,7 @@ function CustomerLogin() {
     const res = await requestOtp(trimmed);
     setSubmitting(false);
     if (!res.ok) {
-      setError(humanizeCustomerAuthError(res.error));
+      setError(humanizeCustomerAuthError(res.error, t));
       return;
     }
     setCode('');
@@ -247,7 +253,7 @@ function CustomerLogin() {
     const res = await requestOtp(trimmed);
     setSubmitting(false);
     if (!res.ok) {
-      setError(humanizeCustomerAuthError(res.error));
+      setError(humanizeCustomerAuthError(res.error, t));
       return;
     }
     setCode('');
@@ -258,7 +264,7 @@ function CustomerLogin() {
     e.preventDefault();
     const trimmed = code.trim();
     if (!trimmed) {
-      setError('נא להזין את הקוד');
+      setError(t('customer.login.errCode'));
       return;
     }
     setSubmitting(true);
@@ -266,7 +272,7 @@ function CustomerLogin() {
     const res = await verifyOtp(phone.trim(), trimmed);
     setSubmitting(false);
     if (!res.ok) {
-      setError(humanizeCustomerAuthError(res.error));
+      setError(humanizeCustomerAuthError(res.error, t));
     }
   };
 
@@ -274,7 +280,7 @@ function CustomerLogin() {
     e.preventDefault();
     const trimmed = email.trim();
     if (!trimmed || !/^\S+@\S+\.\S+$/.test(trimmed)) {
-      setError('נא להזין כתובת אימייל תקינה');
+      setError(t('customer.login.errEmail'));
       return;
     }
     setSubmitting(true);
@@ -282,7 +288,7 @@ function CustomerLogin() {
     const res = await requestEmailOtp(trimmed);
     setSubmitting(false);
     if (!res.ok) {
-      setError(humanizeCustomerAuthError(res.error));
+      setError(humanizeCustomerAuthError(res.error, t));
       return;
     }
     setCode('');
@@ -298,7 +304,7 @@ function CustomerLogin() {
     const res = await requestEmailOtp(trimmed);
     setSubmitting(false);
     if (!res.ok) {
-      setError(humanizeCustomerAuthError(res.error));
+      setError(humanizeCustomerAuthError(res.error, t));
       return;
     }
     setCode('');
@@ -309,7 +315,7 @@ function CustomerLogin() {
     e.preventDefault();
     const trimmed = code.trim();
     if (!trimmed) {
-      setError('נא להזין את הקוד מהאימייל');
+      setError(t('customer.login.errEmailCode'));
       return;
     }
     setSubmitting(true);
@@ -317,7 +323,7 @@ function CustomerLogin() {
     const res = await verifyEmailOtp(email.trim(), trimmed);
     setSubmitting(false);
     if (!res.ok) {
-      setError(humanizeCustomerAuthError(res.error));
+      setError(humanizeCustomerAuthError(res.error, t));
     }
   };
 
@@ -326,11 +332,13 @@ function CustomerLogin() {
       <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 8 }}>
         <Sun size={56} />
       </div>
-      <div style={{ textAlign: 'center', fontSize: 22, fontWeight: 600 }}>אזור אישי</div>
+      <div style={{ textAlign: 'center', fontSize: 22, fontWeight: 600 }}>
+        {t('customer.login.title')}
+      </div>
       {step === 'phone' && (
         <form onSubmit={onRequest}>
           <div style={{ color: MUTED, textAlign: 'center', fontSize: 14, margin: '6px 0 18px' }}>
-            הזינו מספר טלפון ונשלח לכם קוד כניסה
+            {t('customer.login.phonePrompt')}
           </div>
           <input
             value={phone}
@@ -353,7 +361,7 @@ function CustomerLogin() {
               cursor: submitting ? 'default' : 'pointer',
             }}
           >
-            {submitting ? 'שולח…' : 'שלחו לי קוד'}
+            {submitting ? 'שולח…' : t('customer.login.sendCode')}
           </button>
           <button
             type="button"
@@ -374,17 +382,17 @@ function CustomerLogin() {
               textDecoration: 'underline',
             }}
           >
-            לא קיבלתי SMS — להתחבר באימייל
+            {t('customer.login.useEmail')}
           </button>
         </form>
       )}
       {step === 'code' && (
         <form onSubmit={onVerify}>
           <div style={{ color: MUTED, textAlign: 'center', fontSize: 14, margin: '6px 0 4px' }}>
-            הזינו את הקוד שנשלח אליכם
+            {t('customer.login.enterCode')}
           </div>
           <div style={{ color: MUTED, textAlign: 'center', fontSize: 13, marginBottom: 18 }}>
-            קוד נשלח אל {phone}
+            {t('customer.login.codeSentTo', { target: phone })}
           </div>
           <input
             value={code}
@@ -411,7 +419,7 @@ function CustomerLogin() {
               cursor: submitting ? 'default' : 'pointer',
             }}
           >
-            {submitting ? 'מאמת…' : 'כניסה'}
+            {submitting ? 'מאמת…' : t('customer.login.enter')}
           </button>
           <button
             type="button"
@@ -428,7 +436,9 @@ function CustomerLogin() {
               fontWeight: 600,
             }}
           >
-            {resendIn > 0 ? `שליחת קוד חדש בעוד ${resendIn} שניות` : 'שלחו לי קוד חדש'}
+            {resendIn > 0
+              ? t('customer.login.resendIn', { seconds: resendIn })
+              : t('customer.login.resend')}
           </button>
           <button
             type="button"
@@ -448,14 +458,14 @@ function CustomerLogin() {
               fontSize: 14,
             }}
           >
-            שינוי מספר טלפון
+            {t('customer.login.changePhone')}
           </button>
         </form>
       )}
       {step === 'email' && (
         <form onSubmit={onRequestEmail}>
           <div style={{ color: MUTED, textAlign: 'center', fontSize: 14, margin: '6px 0 18px' }}>
-            הזינו את כתובת האימייל שלכם ונשלח לכם קוד כניסה. רק אימייל שכבר רשום במערכת.
+            {t('customer.login.emailPrompt')}
           </div>
           <input
             value={email}
@@ -478,7 +488,7 @@ function CustomerLogin() {
               cursor: submitting ? 'default' : 'pointer',
             }}
           >
-            {submitting ? 'שולח…' : 'שלחו לי קוד באימייל'}
+            {submitting ? 'שולח…' : t('customer.login.sendEmailCode')}
           </button>
           <button
             type="button"
@@ -498,17 +508,17 @@ function CustomerLogin() {
               fontSize: 14,
             }}
           >
-            חזרה להתחברות ב-SMS
+            {t('customer.login.backToSms')}
           </button>
         </form>
       )}
       {step === 'email-code' && (
         <form onSubmit={onVerifyEmail}>
           <div style={{ color: MUTED, textAlign: 'center', fontSize: 14, margin: '6px 0 4px' }}>
-            הזינו את הקוד שנשלח אליכם באימייל
+            {t('customer.login.enterEmailCode')}
           </div>
           <div style={{ color: MUTED, textAlign: 'center', fontSize: 13, marginBottom: 18 }}>
-            קוד נשלח אל {email}
+            {t('customer.login.codeSentTo', { target: email })}
           </div>
           <input
             value={code}
@@ -535,7 +545,7 @@ function CustomerLogin() {
               cursor: submitting ? 'default' : 'pointer',
             }}
           >
-            {submitting ? 'מאמת…' : 'כניסה'}
+            {submitting ? 'מאמת…' : t('customer.login.enter')}
           </button>
           <button
             type="button"
@@ -552,7 +562,9 @@ function CustomerLogin() {
               fontWeight: 600,
             }}
           >
-            {resendIn > 0 ? `שליחת קוד חדש בעוד ${resendIn} שניות` : 'שלחו לי קוד חדש'}
+            {resendIn > 0
+              ? t('customer.login.resendIn', { seconds: resendIn })
+              : t('customer.login.resend')}
           </button>
           <button
             type="button"
@@ -572,7 +584,7 @@ function CustomerLogin() {
               fontSize: 14,
             }}
           >
-            שינוי כתובת האימייל
+            {t('customer.login.changeEmail')}
           </button>
         </form>
       )}
@@ -599,16 +611,15 @@ function ErrorBanner({ message }: { message: string }) {
   );
 }
 
-function humanizeCustomerAuthError(code: string): string {
+function humanizeCustomerAuthError(code: string, t: (key: string) => string): string {
   // Surfaces the new server reasons from /verify-otp so a stuck customer
   // sees a real recovery path instead of the catch-all "wrong code" loop.
-  if (code === 'invalid_code') return 'הקוד אינו תקין. בדקו שוב את הספרות.';
-  if (code === 'code_expired') return 'הקוד פג תוקף. שלחו לעצמכם קוד חדש.';
-  if (code === 'code_locked')
-    return 'הגעתם למספר ניסיונות מירבי. נסו שוב בעוד כ-15 דקות, או שלחו קוד חדש.';
-  if (code === 'invalid_body') return 'הקלט אינו תקין.';
-  if (code === 'http_429') return 'יותר מדי ניסיונות. נסו שוב בעוד דקה.';
-  return 'תקלה זמנית. נסו שוב בעוד רגע.';
+  if (code === 'invalid_code') return t('customer.login.errInvalidCode');
+  if (code === 'code_expired') return t('customer.login.errCodeExpired');
+  if (code === 'code_locked') return t('customer.login.errTooMany');
+  if (code === 'invalid_body') return t('customer.login.errInvalidBody');
+  if (code === 'http_429') return t('customer.login.err429');
+  return t('customer.login.errGeneric');
 }
 
 // ---------------------------------------------------------------------------
@@ -624,11 +635,9 @@ function humanizeCustomerAuthError(code: string): string {
 
 type Screen = 'bookings' | 'cards' | 'profile';
 
-const NAV: { key: Screen; label: string }[] = [
-  { key: 'bookings', label: 'הזמנות' },
-  { key: 'cards', label: 'כרטיסיות' },
-  { key: 'profile', label: 'פרופיל' },
-];
+// Labels live in the content registry (customer.nav.*), resolved by key at
+// render — this carries only which screens exist and their order.
+const NAV: { key: Screen }[] = [{ key: 'bookings' }, { key: 'cards' }, { key: 'profile' }];
 
 const navItemStyle = (active: boolean): CSSProperties => ({
   display: 'flex',
@@ -715,8 +724,9 @@ function AppShell({
   onSignOut: () => void;
   children: ReactNode;
 }) {
+  const { t } = useContent();
   const isMobile = useIsMobile();
-  const title = NAV.find((n) => n.key === active)?.label ?? '';
+  const title = t(`customer.nav.${active}`);
 
   if (isMobile) {
     return (
@@ -724,7 +734,7 @@ function AppShell({
         <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '18px 18px 6px' }}>
           <div style={{ fontSize: 21, fontWeight: 600, color: INK }}>{title}</div>
           <button onClick={onSignOut} style={{ border: 'none', background: 'transparent', color: MUTED, fontSize: 13, cursor: 'pointer' }}>
-            יציאה
+            {t('customer.nav.signOut')}
           </button>
         </header>
         <main style={{ flex: 1, width: '100%', maxWidth: 560, margin: '0 auto', padding: '8px 16px 92px', boxSizing: 'border-box' }}>
@@ -733,7 +743,7 @@ function AppShell({
         <nav style={bottomNavStyle}>
           {NAV.map((n) => (
             <button key={n.key} onClick={() => onNavigate(n.key)} style={bottomItemStyle(active === n.key)} aria-current={active === n.key ? 'page' : undefined}>
-              <span>{n.label}</span>
+              <span>{t(`customer.nav.${n.key}`)}</span>
               {counts[n.key] ? <NavCountBadge n={counts[n.key]!} /> : null}
             </button>
           ))}
@@ -756,13 +766,13 @@ function AppShell({
           </div>
           {NAV.map((n) => (
             <button key={n.key} onClick={() => onNavigate(n.key)} style={navItemStyle(active === n.key)} aria-current={active === n.key ? 'page' : undefined}>
-              <span>{n.label}</span>
+              <span>{t(`customer.nav.${n.key}`)}</span>
               {counts[n.key] ? <span style={navCount(active === n.key)}>{counts[n.key]}</span> : null}
             </button>
           ))}
           <div style={{ borderTop: `1px solid ${BORDER}`, marginTop: 6, paddingTop: 6 }}>
             <button onClick={onSignOut} style={navItemStyle(false)}>
-              יציאה
+              {t('customer.nav.signOut')}
             </button>
           </div>
         </aside>
@@ -899,6 +909,7 @@ function CollapsibleBooking({
   /** Reports a successful reschedule up to the list (with this booking's id). */
   onMoved?: (bookingId: string) => void;
 }) {
+  const { t } = useContent();
   const [open, setOpen] = useState(defaultOpen);
   const rootRef = useRef<HTMLDivElement>(null);
   // A rescheduled booking re-sorts into its new date slot, so without a
@@ -911,9 +922,9 @@ function CollapsibleBooking({
   }, [justMoved]);
   const pill =
     booking.status === 'cancelled'
-      ? { text: 'בוטל', bg: '#f6e7e7', fg: '#a23a3a' }
+      ? { text: t('customer.booking.statusCancelled'), bg: '#f6e7e7', fg: '#a23a3a' }
       : booking.status === 'used'
-        ? { text: 'נוצל', bg: '#eef1f4', fg: MUTED }
+        ? { text: t('customer.booking.used'), bg: '#eef1f4', fg: MUTED }
         : null;
   const labelHasT = labelHasTime(booking.label);
   return (
@@ -1002,7 +1013,7 @@ function CollapsibleBooking({
                 textAlign: 'center',
               }}
             >
-              המועד שונה בהצלחה! שימו לב — זה הברקוד החדש לכניסה.
+              {t('customer.booking.rescheduleSuccess')}
             </div>
           )}
           <RoundBookingCard
@@ -1199,9 +1210,13 @@ function CollapsibleCard({
   onBooked: () => void | Promise<void>;
   onWaitlisted: () => void | Promise<void>;
 }) {
+  const { t } = useContent();
   const [open, setOpen] = useState(defaultOpen);
   const remaining = c.totalEntries - c.usedEntries;
-  const expiry = c.expiresAt === null ? 'ללא תפוגה' : `תוקף עד ${fmtDate(yyyyMmDd(c.expiresAt))}`;
+  const expiry =
+    c.expiresAt === null
+      ? t('customer.cards.noExpiry')
+      : t('customer.cards.expiryUntil', { date: fmtDate(yyyyMmDd(c.expiresAt)) });
   const next = linkedUpcoming[0];
   return (
     <div style={{ ...card, padding: 0, overflow: 'hidden', ...(c.isGift && giftCardAccent) }}>
@@ -1229,14 +1244,14 @@ function CollapsibleCard({
         <span style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
           <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 8 }}>
             <span style={{ fontSize: 15, fontWeight: 600, color: INK }}>
-              {c.isGift ? 'כרטיסייה במתנה' : 'כרטיסייה'}
+              {c.isGift ? t('customer.cards.giftCard') : t('customer.cards.card')}
             </span>
             <span style={{ fontSize: 12, color: MUTED }} dir="ltr">
               {c.serialNumber}
             </span>
           </span>
           <span style={{ fontSize: 12.5, color: MUTED }}>
-            נותרו {remaining} מתוך {c.totalEntries} כניסות · {expiry}
+            {t('customer.cards.remaining', { remaining, total: c.totalEntries, expiry })}
           </span>
         </span>
         <span
@@ -1265,7 +1280,11 @@ function CollapsibleCard({
         >
           {c.isGift && <GiftBadge buyerName={c.giftBuyerFirstName ?? null} />}
           <PunchCard used={c.usedEntries} total={c.totalEntries} compact />
-          <MemeshQr value={c.qrToken} size={180} title={`קוד QR — ${c.serialNumber}`} />
+          <MemeshQr
+            value={c.qrToken}
+            size={180}
+            title={t('customer.cards.qrTitle', { serial: c.serialNumber })}
+          />
           {next && (
             <button
               type="button"
@@ -1282,7 +1301,7 @@ function CollapsibleCard({
                 textAlign: 'right',
               }}
             >
-              יש לך הזמנה עתידית מכרטיסייה זו ·{' '}
+              {t('customer.cards.upcomingFromCard')}{' '}
               <span dir="ltr" style={{ unicodeBidi: 'isolate' }}>
                 {fmtDate(next.date)} {next.startTime}
               </span>{' '}
@@ -1313,16 +1332,17 @@ function CardsScreen({
   onWaitlisted: () => void | Promise<void>;
   onGoToBookings: () => void;
 }) {
+  const { t } = useContent();
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       {error ? (
         <div style={{ ...card, color: '#a23a3a', textAlign: 'center' }}>
-          לא הצלחנו לטעון את הכרטיסיות. רעננו את הדף.
+          {t('customer.cards.loadError')}
         </div>
       ) : cards === null ? (
         <div style={{ ...card, color: MUTED, textAlign: 'center' }}>טוען…</div>
       ) : cards.length === 0 ? (
-        <div style={{ ...card, color: MUTED, textAlign: 'center' }}>אין כרטיסיות פעילות.</div>
+        <div style={{ ...card, color: MUTED, textAlign: 'center' }}>{t('customer.cards.empty')}</div>
       ) : (
         cards.map((c, i) => (
           <CollapsibleCard
@@ -1351,11 +1371,12 @@ function ProfileScreen({
   savedAt: number | null;
   onSaved: () => void;
 }) {
+  const { t } = useContent();
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       {savedAt !== null && (
         <div style={{ ...card, background: '#f0f5e3', boxShadow: 'none', color: '#6f8f37', padding: '12px 16px' }}>
-          הפרטים נשמרו
+          {t('customer.profile.saved')}
         </div>
       )}
       <ProfileEdit profile={profile} onSaved={onSaved} />
@@ -1418,6 +1439,7 @@ function MonthCalendar({
   onMonthChange: (ym: string) => void;
   onPick: (dateIso: string) => void;
 }) {
+  const { t } = useContent();
   const { leadingBlanks, dates } = monthGrid(month);
   const canPrev = month > monthOfIso(todayIso);
   const canNext = maxDate !== null && month < monthOfIso(maxDate);
@@ -1447,7 +1469,7 @@ function MonthCalendar({
         {/* RTL: the past sits to the right, so the right-hand button walks back. */}
         <button
           type="button"
-          title="חודש קודם"
+          title={t('customer.picker.prevMonth')}
           disabled={!canPrev}
           onClick={() => canPrev && onMonthChange(addMonths(month, -1))}
           style={navBtn(canPrev)}
@@ -1457,7 +1479,7 @@ function MonthCalendar({
         <div style={{ fontSize: 14.5, fontWeight: 700 }}>{monthLabelHe(month)}</div>
         <button
           type="button"
-          title="חודש הבא"
+          title={t('customer.picker.nextMonth')}
           disabled={!canNext}
           onClick={() => canNext && onMonthChange(addMonths(month, 1))}
           style={navBtn(canNext)}
@@ -1723,13 +1745,14 @@ function DayStrip({
   onToggleCalendar: () => void;
   onPick: (dateIso: string) => void;
 }) {
+  const { t } = useContent();
   return (
     <div style={{ display: 'flex', gap: 6, alignItems: 'stretch' }}>
       {/* Fixed beside the strip so far-future dates are one tap away
           without scrolling (Yanay 2026-07-05). */}
       <button
         onClick={onToggleCalendar}
-        title="בחירת תאריך מלוח שנה"
+        title={t('customer.picker.calendarTitle')}
         style={{
           flex: '0 0 auto',
           minWidth: 52,
@@ -1746,7 +1769,9 @@ function DayStrip({
         }}
       >
         <span style={{ fontSize: 17, lineHeight: 1 }}>📅</span>
-        <span style={{ fontSize: 9.5, color: MUTED, fontWeight: 600 }}>לוח שנה</span>
+        <span style={{ fontSize: 9.5, color: MUTED, fontWeight: 600 }}>
+          {t('customer.picker.calendar')}
+        </span>
       </button>
       <div
         style={{
@@ -1779,7 +1804,7 @@ function DayStrip({
               }}
             >
               <span style={{ fontSize: 10.5, color: MUTED, fontWeight: 600 }}>
-                {i === 0 ? 'היום' : `${dowLetter(d.date)}׳`}
+                {i === 0 ? t('customer.picker.today') : `${dowLetter(d.date)}׳`}
               </span>
               <span
                 style={{
@@ -1808,6 +1833,7 @@ function DayStrip({
 
 /** The dot legend under a picker — what green/amber/red/grey mean. */
 function DayDotLegend() {
+  const { t } = useContent();
   return (
     <div
       style={{
@@ -1823,13 +1849,13 @@ function DayDotLegend() {
     >
       {(
         [
-          ['ok', 'הרבה מקום'],
-          ['warn', 'נשארו מעט'],
-          ['full', 'מלא'],
-          ['free', 'כניסה חופשית'],
-          ['closed', 'סגור'],
+          ['ok', 'customer.picker.legendOk'],
+          ['warn', 'customer.picker.legendWarn'],
+          ['full', 'customer.picker.legendFull'],
+          ['free', 'customer.picker.legendFree'],
+          ['closed', 'customer.picker.legendClosed'],
         ] as const
-      ).map(([k, label]) => (
+      ).map(([k, labelKey]) => (
         <span key={k} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
           <span
             style={{
@@ -1839,7 +1865,7 @@ function DayDotLegend() {
               background: DAY_DOT[k],
             }}
           />
-          {label}
+          {t(labelKey)}
         </span>
       ))}
     </div>
@@ -1860,6 +1886,7 @@ function RoundChoiceRow({
   disabled?: boolean;
   onClick: () => void;
 }) {
+  const { t } = useContent();
   const scarce = round.capacity > 0 && round.available / round.capacity <= 0.25;
   return (
     <button
@@ -1905,7 +1932,7 @@ function RoundChoiceRow({
             color: scarce ? '#b9772a' : '#5b7a34',
           }}
         >
-          {round.available} פנויים
+          {t('customer.picker.available', { count: round.available })}
         </span>
         <span
           style={{
@@ -1948,6 +1975,7 @@ function PunchRoundBooking({
   onBooked: () => void | Promise<void>;
   onWaitlisted: () => void | Promise<void>;
 }) {
+  const { t } = useContent();
   const [open, setOpen] = useState(false);
   const [joinMsg, setJoinMsg] = useState<string | null>(null);
   const [count, setCount] = useState(1);
@@ -2023,12 +2051,12 @@ function PunchRoundBooking({
     if (!res.ok) {
       setError(
         res.error === 'has_availability'
-          ? 'יש מקום פנוי — אפשר להזמין ישירות.'
-          : 'לא ניתן להצטרף לרשימה כרגע.',
+          ? t('customer.bookflow.spaceAvailable')
+          : t('customer.bookflow.joinError'),
       );
       return;
     }
-    setJoinMsg(`נרשמת לרשימת ההמתנה לסבב ${r.startTime}. נודיע לך אם יתפנה מקום.`);
+    setJoinMsg(t('customer.bookflow.joinedWaitlist', { time: r.startTime }));
     await onWaitlisted();
   };
 
@@ -2046,14 +2074,14 @@ function PunchRoundBooking({
       setBusy(false);
       setError(
         res.error === 'round_full'
-          ? 'אין מספיק מקומות פנויים בסבב. בחרו זמן אחר.'
+          ? t('customer.bookflow.errNotEnoughSpace')
           : res.error === 'not_enough_entries'
-            ? 'לא נותרו מספיק כניסות בכרטיסייה.'
+            ? t('customer.bookflow.errNotEnoughEntries')
             : res.error === 'card_exhausted' || res.error === 'card_inactive'
-              ? 'לכרטיסייה לא נותרו כניסות.'
+              ? t('customer.bookflow.errNoEntries')
               : res.error === 'card_expired'
-                ? 'הכרטיסייה פגה.'
-                : 'לא ניתן להזמין כרגע. נסו שוב.',
+                ? t('customer.bookflow.errCardExpired')
+                : t('customer.bookflow.errGeneric'),
       );
       return;
     }
@@ -2076,9 +2104,7 @@ function PunchRoundBooking({
         return;
       }
       if (!checkout.ok || (!checkout.data.confirmed && !checkout.data.alreadyPaid)) {
-        setCompanionNote(
-          'ההזמנה נקלטה, אבל התשלום עבור המלווה הנוסף לא הושלם. אפשר להשלים אותו מכרטיס ההזמנה למטה.',
-        );
+        setCompanionNote(t('customer.bookflow.companionPendingNote'));
       }
     }
     setBusy(false);
@@ -2089,7 +2115,7 @@ function PunchRoundBooking({
   if (!open) {
     return (
       <button onClick={() => setOpen(true)} style={{ ...primaryBtn, width: '100%' }}>
-        הזמנת כניסה לסבב
+        {t('customer.bookflow.title')}
       </button>
     );
   }
@@ -2106,7 +2132,7 @@ function PunchRoundBooking({
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={{ fontSize: 16, fontWeight: 700 }}>הזמנת כניסה לסבב</div>
+        <div style={{ fontSize: 16, fontWeight: 700 }}>{t('customer.bookflow.title')}</div>
         <button
           onClick={() => {
             setOpen(false);
@@ -2122,7 +2148,7 @@ function PunchRoundBooking({
             cursor: 'pointer',
           }}
         >
-          סגירה
+          {t('customer.bookflow.close')}
         </button>
       </div>
 
@@ -2130,8 +2156,8 @@ function PunchRoundBooking({
         <div style={{ textAlign: 'center', fontSize: 14.5, padding: '8px 0' }}>
           <div style={{ color: '#6f8f37' }}>
             {count > 1
-              ? 'ההזמנות נקלטו! הברקודים מחכים לך למעלה תחת "הסבבים שלי".'
-              : 'ההזמנה נקלטה! הברקוד מחכה לך למעלה תחת "הסבבים שלי".'}
+              ? t('customer.bookflow.successMulti')
+              : t('customer.bookflow.successSingle')}
           </div>
           {companionNote && (
             <div style={{ color: '#a8643d', fontSize: 13, marginTop: 8 }}>{companionNote}</div>
@@ -2141,7 +2167,7 @@ function PunchRoundBooking({
         <>
           {daysError && (
             <div style={{ textAlign: 'center', color: '#a23a3a', fontSize: 13 }}>
-              לא ניתן לטעון זמינות כרגע. נסו לרענן את הדף.
+              {t('customer.booking.availabilityError')}
             </div>
           )}
           {!daysError && days === null && (
@@ -2191,14 +2217,14 @@ function PunchRoundBooking({
           {selectedDay && openRounds.length === 0 && (
             <div style={{ textAlign: 'center', color: MUTED, fontSize: 13 }}>
               {selectedDay.closed
-                ? 'המקום סגור בתאריך זה.'
+                ? t('customer.bookflow.emptyClosed')
                 : selectedDay.rounds.length === 0
                   ? roundsOff
-                    ? 'בתאריך זה הכניסה חופשית — אין צורך בהזמנת סבב, פשוט מגיעים.'
-                    : 'אין סבבים פנויים ביום זה.'
+                    ? t('customer.bookflow.emptyFreePlay')
+                    : t('customer.bookflow.emptyNoRounds')
                   : fullRounds.length > 0
-                    ? 'כל הסבבים מלאים ביום זה — אפשר להצטרף לרשימת ההמתנה.'
-                    : 'אין סבבים פנויים ביום זה.'}
+                    ? t('customer.bookflow.emptyAllFull')
+                    : t('customer.bookflow.emptyNoRounds')}
             </div>
           )}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -2219,7 +2245,7 @@ function PunchRoundBooking({
           {fullRounds.length > 0 && (
             <div style={{ borderTop: '1px solid #f3efea', paddingTop: 12 }}>
               <div style={{ fontSize: 12.5, color: MUTED, marginBottom: 8, textAlign: 'center' }}>
-                סבבים מלאים — אפשר להירשם לרשימת המתנה
+                {t('customer.bookflow.allFullJoin')}
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {fullRounds.map((r) => (
@@ -2242,7 +2268,7 @@ function PunchRoundBooking({
                     <span style={{ fontWeight: 600 }}>
                       {roundTitle(r.label, r.startTime, r.endTime)}
                     </span>
-                    <span style={{ fontSize: 13 }}>רשימת המתנה</span>
+                    <span style={{ fontSize: 13 }}>{t('customer.bookflow.waitlist')}</span>
                   </button>
                 ))}
               </div>
@@ -2272,7 +2298,7 @@ function PunchRoundBooking({
                     gap: 14,
                   }}
                 >
-                  <span style={{ fontSize: 13.5 }}>כמה כניסות?</span>
+                  <span style={{ fontSize: 13.5 }}>{t('customer.bookflow.howManyEntries')}</span>
                   <button
                     disabled={busy || count <= 1}
                     onClick={() => setCount((c) => Math.max(1, c - 1))}
@@ -2297,13 +2323,20 @@ function PunchRoundBooking({
 
               <div style={{ fontSize: 13.5, textAlign: 'center' }}>
                 {count === 1
-                  ? `כניסה לסבב ${chosen.startTime}–${chosen.endTime}. ינוקב כרטיס אחד מתוך ${remaining} שנותרו.`
-                  : `${count} כניסות לסבב ${chosen.startTime}–${chosen.endTime}. ינוקבו ${count} כניסות מתוך ${remaining} שנותרו.`}
+                  ? t('customer.bookflow.punchOne', {
+                      time: `${chosen.startTime}–${chosen.endTime}`,
+                      remaining,
+                    })
+                  : t('customer.bookflow.punchMany', {
+                      count,
+                      time: `${chosen.startTime}–${chosen.endTime}`,
+                      remaining,
+                    })}
               </div>
 
               {count > 1 && (
                 <div style={{ fontSize: 12.5, color: MUTED, textAlign: 'center' }}>
-                  מלווה אחד כלול בכל כניסה.
+                  {t('customer.bookflow.companionIncluded')}
                 </div>
               )}
 
@@ -2328,13 +2361,13 @@ function PunchRoundBooking({
                   />
                   <span style={{ flex: 1 }}>
                     <span style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                      <strong style={{ fontSize: 14 }}>מלווה נוסף</strong>
+                      <strong style={{ fontSize: 14 }}>{t('customer.bookflow.extraCompanion')}</strong>
                       <strong style={{ fontSize: 14, color: '#a8643d', whiteSpace: 'nowrap' }}>
                         +₪{companionPrice}
                       </strong>
                     </span>
                     <span style={{ display: 'block', fontSize: 12.5, color: MUTED, marginTop: 4 }}>
-                      מלווה אחד כלול בכניסה. התשלום מתבצע באתר בסיום ההזמנה.
+                      {t('customer.bookflow.extraCompanionNote')}
                     </span>
                   </span>
                 </label>
@@ -2349,15 +2382,15 @@ function PunchRoundBooking({
                   {busy
                     ? 'מזמין…'
                     : count === 1 && addCompanion && companionPrice
-                      ? `אישור, הזמנה ותשלום ₪${companionPrice}`
-                      : 'אישור והזמנה'}
+                      ? t('customer.bookflow.confirmPay', { price: companionPrice })
+                      : t('customer.bookflow.confirm')}
                 </button>
                 <button
                   disabled={busy}
                   onClick={() => setChosen(null)}
                   style={{ ...ghostBtn, flex: 1 }}
                 >
-                  חזרה
+                  {t('customer.booking.backButton')}
                 </button>
               </div>
             </div>
@@ -2385,6 +2418,7 @@ function WaitlistEntryCard({
   entry: CustomerWaitlistEntry;
   onChanged: () => void | Promise<void>;
 }) {
+  const { t } = useContent();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -2394,7 +2428,7 @@ function WaitlistEntryCard({
     const res = await leaveWaitlist(entry.entryId);
     setBusy(false);
     if (!res.ok) {
-      setError('לא ניתן לצאת מהרשימה כרגע.');
+      setError(t('customer.waitlist.leaveError'));
       return;
     }
     await onChanged();
@@ -2425,12 +2459,15 @@ function WaitlistEntryCard({
       <div style={{ fontSize: 13, color: MUTED, marginTop: 2 }}>{fmtDate(entry.date)}</div>
       {notified ? (
         <div style={{ marginTop: 10, color: '#5f7d2e', fontSize: 13.5, fontWeight: 600 }}>
-          התפנה מקום! הזמינו כניסה{claimTime ? ` עד השעה ${claimTime}` : ''} לפני שהמקום יעבור לבא/ה
-          בתור.
+          {t('customer.waitlist.claimAvailable', {
+            deadline: claimTime
+              ? ` ${t('customer.waitlist.claimDeadline', { time: claimTime })}`
+              : '',
+          })}
         </div>
       ) : (
         <div style={{ marginTop: 10, color: MUTED, fontSize: 13 }}>
-          ממתינ/ה ברשימה. נודיע לך ברגע שיתפנה מקום.
+          {t('customer.waitlist.waiting')}
         </div>
       )}
       <button
@@ -2445,7 +2482,7 @@ function WaitlistEntryCard({
           cursor: 'pointer',
         }}
       >
-        יציאה מהרשימה
+        {t('customer.waitlist.leave')}
       </button>
       {error && <div style={{ color: '#a23a3a', fontSize: 13, marginTop: 6 }}>{error}</div>}
     </div>
@@ -2697,9 +2734,13 @@ function RoundBookingCard({
               color: MUTED,
               textAlign: 'center',
               marginTop: 2,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 3,
             }}
           >
-            {t('customer.policy.reschedule')}
+            <span>{t('customer.policy.cancel')}</span>
+            <span>{t('customer.policy.reschedule')}</span>
           </div>
         </div>
       )}
@@ -2866,6 +2907,7 @@ function ProfileEdit({
   /** Omitted inside the app shell, where the nav replaces a back button. */
   onBack?: () => void;
 }) {
+  const { t } = useContent();
   const { setProfile } = useCustomerSession();
   const [firstName, setFirstName] = useState(profile.firstName);
   const [lastName, setLastName] = useState(profile.lastName);
@@ -2880,11 +2922,11 @@ function ProfileEdit({
     const tl = lastName.trim();
     const te = email.trim();
     if (!tf || !tl) {
-      setError('שם פרטי ושם משפחה הם שדות חובה.');
+      setError(t('customer.profile.errRequired'));
       return;
     }
     if (te && !/^\S+@\S+\.\S+$/.test(te)) {
-      setError('כתובת מייל לא תקינה.');
+      setError(t('customer.profile.errEmail'));
       return;
     }
     setSubmitting(true);
@@ -2897,7 +2939,7 @@ function ProfileEdit({
     });
     setSubmitting(false);
     if (!res.ok) {
-      setError(humanizeUpdateError(res.error));
+      setError(humanizeUpdateError(res.error, t));
       return;
     }
     setProfile(res.data.profile);
@@ -2908,8 +2950,10 @@ function ProfileEdit({
     <div>
       {onBack && <BackButton onClick={onBack} />}
       <form onSubmit={onSubmit} style={card}>
-        <div style={{ fontSize: 20, fontWeight: 600, marginBottom: 14 }}>עריכת פרטים</div>
-        <Labeled label="שם פרטי">
+        <div style={{ fontSize: 20, fontWeight: 600, marginBottom: 14 }}>
+          {t('customer.profile.editTitle')}
+        </div>
+        <Labeled label={t('customer.profile.firstName')}>
           <input
             style={inputStyle}
             value={firstName}
@@ -2919,7 +2963,7 @@ function ProfileEdit({
           />
         </Labeled>
         <Spacer />
-        <Labeled label="שם משפחה">
+        <Labeled label={t('customer.profile.lastName')}>
           <input
             style={inputStyle}
             value={lastName}
@@ -2929,18 +2973,18 @@ function ProfileEdit({
           />
         </Labeled>
         <Spacer />
-        <Labeled label="טלפון">
+        <Labeled label={t('customer.profile.phone')}>
           <input
             value={profile.phone}
             disabled
             style={{ ...inputStyle, background: '#f6f3f0', color: MUTED }}
           />
           <div style={{ fontSize: 12.5, color: MUTED, marginTop: 6 }}>
-            לא ניתן לשנות טלפון · פנו לצוות
+            {t('customer.profile.phoneLocked')}
           </div>
         </Labeled>
         <Spacer />
-        <Labeled label="מייל">
+        <Labeled label={t('customer.profile.email')}>
           <input
             type="email"
             inputMode="email"
@@ -2952,7 +2996,9 @@ function ProfileEdit({
           />
         </Labeled>
         <div style={{ margin: '14px 0' }}>
-          <div style={{ fontSize: 13.5, color: MUTED, marginBottom: 8 }}>ערוץ עדכונים מועדף</div>
+          <div style={{ fontSize: 13.5, color: MUTED, marginBottom: 8 }}>
+            {t('customer.profile.preferredChannel')}
+          </div>
           <div style={{ display: 'flex', gap: 8 }}>
             {CHANNELS.map((ch) => {
               const on = channel === ch.k;
@@ -2973,7 +3019,7 @@ function ProfileEdit({
                     cursor: 'pointer',
                   }}
                 >
-                  {ch.l}
+                  {t(ch.labelKey)}
                 </button>
               );
             })}
@@ -2981,7 +3027,9 @@ function ProfileEdit({
         </div>
         {profile.children.length > 0 && (
           <div style={{ margin: '14px 0' }}>
-            <div style={{ fontSize: 13.5, color: MUTED, marginBottom: 8 }}>ילדים רשומים</div>
+            <div style={{ fontSize: 13.5, color: MUTED, marginBottom: 8 }}>
+              {t('customer.profile.children')}
+            </div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               {profile.children.map((k) => (
                 <span
@@ -2999,7 +3047,7 @@ function ProfileEdit({
               ))}
             </div>
             <div style={{ fontSize: 12, color: MUTED, marginTop: 6 }}>
-              לעריכת רשימת הילדים · פנו לצוות
+              {t('customer.profile.childrenLocked')}
             </div>
           </div>
         )}
@@ -3011,7 +3059,7 @@ function ProfileEdit({
             onClick={onBack}
             disabled={submitting}
           >
-            ביטול
+            {t('customer.profile.cancel')}
           </button>
           <button
             type="submit"
@@ -3023,7 +3071,7 @@ function ProfileEdit({
             }}
             disabled={submitting}
           >
-            {submitting ? 'שומר…' : 'שמירת שינויים'}
+            {submitting ? 'שומר…' : t('customer.profile.save')}
           </button>
         </div>
       </form>
@@ -3031,10 +3079,10 @@ function ProfileEdit({
   );
 }
 
-function humanizeUpdateError(code: string): string {
-  if (code === 'invalid_body') return 'אחד השדות לא תקין.';
-  if (code === 'not_found') return 'הפרופיל לא נמצא. רעננו את הדף.';
-  return 'תקלה זמנית. נסו שוב בעוד רגע.';
+function humanizeUpdateError(code: string, t: (key: string) => string): string {
+  if (code === 'invalid_body') return t('customer.profile.errInvalidBody');
+  if (code === 'not_found') return t('customer.profile.errNotFound');
+  return t('customer.profile.errGeneric');
 }
 
 function Labeled({ label, children }: { label: string; children: ReactNode }) {
@@ -3051,6 +3099,7 @@ function Spacer() {
 }
 
 function BackButton({ onClick }: { onClick: () => void }) {
+  const { t } = useContent();
   return (
     <button
       onClick={onClick}
@@ -3063,7 +3112,7 @@ function BackButton({ onClick }: { onClick: () => void }) {
         fontSize: 15,
       }}
     >
-      ← חזרה
+      ← {t('customer.booking.backButton')}
     </button>
   );
 }

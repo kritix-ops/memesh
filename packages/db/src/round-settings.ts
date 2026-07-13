@@ -35,6 +35,8 @@ export type UpdateRoundSettingsInput = {
   warnUpcomingReservationAtDoor?: boolean;
   bookingHorizonDays?: number;
   markingGraceMinutes?: number;
+  manualRefundOnCancel?: boolean;
+  cancellationAlertEmail?: string;
 };
 
 export type RoundSettingsValidationError =
@@ -44,6 +46,7 @@ export type RoundSettingsValidationError =
   | { code: 'active_hours_out_of_range'; min: number; max: number }
   | { code: 'booking_horizon_out_of_range'; min: number; max: number }
   | { code: 'marking_grace_out_of_range'; min: number; max: number }
+  | { code: 'cancellation_alert_email_invalid' }
   | { code: 'reminder_offsets_invalid' }
   | { code: 'closing_time_invalid' };
 
@@ -112,6 +115,12 @@ export const validateRoundSettingsPatch = (
       patch.markingGraceMinutes > MARKING_GRACE_MAX
     ) {
       return { code: 'marking_grace_out_of_range', min: MARKING_GRACE_MIN, max: MARKING_GRACE_MAX };
+    }
+  }
+  if (patch.cancellationAlertEmail !== undefined) {
+    const email = patch.cancellationAlertEmail.trim();
+    if (email !== '' && !/^\S+@\S+\.\S+$/.test(email)) {
+      return { code: 'cancellation_alert_email_invalid' };
     }
   }
   if (patch.reminderOffsets !== undefined) {
@@ -223,6 +232,20 @@ export const updateRoundSettings = async (
   ) {
     diff.markingGraceMinutes = [current.markingGraceMinutes, patch.markingGraceMinutes];
     next.markingGraceMinutes = patch.markingGraceMinutes;
+  }
+  if (
+    patch.manualRefundOnCancel !== undefined &&
+    patch.manualRefundOnCancel !== current.manualRefundOnCancel
+  ) {
+    diff.manualRefundOnCancel = [current.manualRefundOnCancel, patch.manualRefundOnCancel];
+    next.manualRefundOnCancel = patch.manualRefundOnCancel;
+  }
+  {
+    const email = patch.cancellationAlertEmail?.trim();
+    if (email !== undefined && email !== current.cancellationAlertEmail) {
+      diff.cancellationAlertEmail = [current.cancellationAlertEmail, email];
+      next.cancellationAlertEmail = email;
+    }
   }
 
   if (Object.keys(diff).length === 0) return { ok: true, row: current, diff: {} };

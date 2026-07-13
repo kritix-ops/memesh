@@ -31,6 +31,7 @@ import {
 import type { FastifyBaseLogger, FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { env } from '../config.js';
+import { fireCancellationEmails } from '../lib/cancellation-email.js';
 import { requireCustomer } from '../lib/customer-guard.js';
 import { phoneSchema } from '../lib/phone-schema.js';
 import { fireWaitlistOffer } from '../lib/waitlist-notify.js';
@@ -600,7 +601,18 @@ export const roundsBookingRoutes: FastifyPluginAsync = async (fastify) => {
         return false;
       }
     };
-    const result = await cancelBooking(db, { bookingId: parsed.data.bookingId, customerId }, { refund });
+    // Interim manual-refund mode (Yanay 2026-07-13): while the provider has no
+    // refund API, a cancel frees the seat and hands the refund to staff by mail.
+    const cancelSettings = await getRoundSettings(db);
+    const result = await cancelBooking(
+      db,
+      {
+        bookingId: parsed.data.bookingId,
+        customerId,
+        manualRefund: cancelSettings.manualRefundOnCancel,
+      },
+      { refund },
+    );
     if (!result.ok) {
       const code =
         result.error === 'not_found'
@@ -617,15 +629,27 @@ export const roundsBookingRoutes: FastifyPluginAsync = async (fastify) => {
         bookingId: parsed.data.bookingId,
         customerId,
         refunded: result.refunded,
+        refundPending: result.refundPending,
         punchReturned: result.punchReturned,
       },
       '[rounds cancel] done',
     );
+    // Manual mode: the money wasn't refunded automatically — email staff to do
+    // it by hand and confirm to the customer. Fire-and-log; never blocks cancel.
+    if (result.refundPending) {
+      await fireCancellationEmails(db, {
+        bookingId: parsed.data.bookingId,
+        refundAmountIls: result.refundAmountIls,
+        alertEmail: cancelSettings.cancellationAlertEmail,
+        log: request.log,
+      });
+    }
     // The cancellation freed a seat — offer it to the round's waitlist.
     await promoteFreedSeat(result.roundInstanceId, request.log);
     return {
       ok: true,
       refunded: result.refunded,
+      refundPending: result.refundPending,
       punchReturned: result.punchReturned,
       refundAmountIls: result.refundAmountIls,
     };

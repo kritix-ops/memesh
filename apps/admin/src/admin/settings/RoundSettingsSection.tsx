@@ -21,6 +21,7 @@ function humanizeError(code: string): string {
   if (code === 'active_hours_out_of_range') return 'שעות הפעילות חייבות להיות בין 0 ל-23.';
   if (code === 'booking_horizon_out_of_range') return 'חלון ההרשמה חייב להיות בין 1 ל-365 ימים.';
   if (code === 'marking_grace_out_of_range') return 'חלון סימון ההגעה חייב להיות בין 0 ל-240 דקות.';
+  if (code === 'cancellation_alert_email_invalid') return 'כתובת המייל להתראות ביטול אינה תקינה.';
   if (code === 'reminder_offsets_invalid')
     return 'זמני התזכורת: עד 5 מספרים, כל אחד בין 1 ל-240 דקות.';
   if (code === 'closing_time_invalid') return 'שעת הסגירה חייבת להיות בפורמט HH:MM.';
@@ -56,6 +57,8 @@ export function RoundSettingsSection() {
   const [allowOverCapacity, setAllowOverCapacity] = useState(true);
   const [warnUpcoming, setWarnUpcoming] = useState(true);
   const [markingGrace, setMarkingGrace] = useState('30');
+  const [manualRefund, setManualRefund] = useState(true);
+  const [alertEmail, setAlertEmail] = useState('');
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -74,6 +77,8 @@ export function RoundSettingsSection() {
     setAllowOverCapacity(s.allowOverCapacityWalkIn);
     setWarnUpcoming(s.warnUpcomingReservationAtDoor);
     setMarkingGrace(String(s.markingGraceMinutes));
+    setManualRefund(s.manualRefundOnCancel);
+    setAlertEmail(s.cancellationAlertEmail);
   };
 
   useEffect(() => {
@@ -129,7 +134,9 @@ export function RoundSettingsSection() {
     skipLast !== loaded.skipLastRoundReminder ||
     allowOverCapacity !== loaded.allowOverCapacityWalkIn ||
     warnUpcoming !== loaded.warnUpcomingReservationAtDoor ||
-    markingGrace !== String(loaded.markingGraceMinutes);
+    markingGrace !== String(loaded.markingGraceMinutes) ||
+    manualRefund !== loaded.manualRefundOnCancel ||
+    alertEmail !== loaded.cancellationAlertEmail;
 
   const submit = async () => {
     const patch: RoundSettingsPatch = {};
@@ -155,6 +162,8 @@ export function RoundSettingsSection() {
       patch.warnUpcomingReservationAtDoor = warnUpcoming;
     const mg = num(markingGrace);
     if (mg !== null && mg !== loaded.markingGraceMinutes) patch.markingGraceMinutes = mg;
+    if (manualRefund !== loaded.manualRefundOnCancel) patch.manualRefundOnCancel = manualRefund;
+    if (alertEmail !== loaded.cancellationAlertEmail) patch.cancellationAlertEmail = alertEmail;
     if (Object.keys(patch).length === 0) return;
 
     setSubmitting(true);
@@ -303,6 +312,25 @@ export function RoundSettingsSection() {
           checked={warnUpcoming}
           onChange={setWarnUpcoming}
           disabled={submitting}
+        />
+
+        <div style={{ fontSize: 13.5, color: MUTED, fontWeight: 600, marginTop: 8 }}>
+          ביטול הזמנה
+        </div>
+        <BooleanField
+          label="זיכוי ידני בביטול (זמני)"
+          description="בזמן שאין החזר אוטומטי מספק התשלום: ביטול של לקוח ישחרר את המקום, ישלח אליכם מייל לביצוע הזיכוי ידנית, וישלח ללקוח אישור במייל. כבו את זה כשההחזר האוטומטי יעבוד."
+          checked={manualRefund}
+          onChange={setManualRefund}
+          disabled={submitting}
+        />
+        <TextField
+          label="מייל להתראות ביטול"
+          value={alertEmail}
+          onChange={setAlertEmail}
+          disabled={submitting}
+          maxLength={200}
+          hint="לכאן יישלח מייל ׳נדרש זיכוי ידני׳ בכל ביטול. השאירו ריק כדי לא לשלוח התראה."
         />
       </div>
       <SaveBar

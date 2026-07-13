@@ -1,0 +1,2 @@
+ALTER TABLE "round_settings" ADD COLUMN "manual_refund_on_cancel" boolean DEFAULT true NOT NULL;--> statement-breakpoint
+ALTER TABLE "round_settings" ADD COLUMN "cancellation_alert_email" text DEFAULT '' NOT NULL;

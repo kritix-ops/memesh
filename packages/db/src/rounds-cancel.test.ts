@@ -86,6 +86,27 @@ test('cancelBooking does not release the seat when the refund is not confirmed',
   assert.equal(row!.status, 'confirmed'); // still the customer's paid seat
 });
 
+test('cancelBooking in manual mode frees the seat without calling the refund', async () => {
+  const db = await freshDb();
+  const { bookingId, customerId } = await setup(db);
+  const card = await getCardSettings(db);
+  let called = false;
+  const refund = async () => {
+    called = true;
+    return true;
+  };
+  const res = await cancelBooking(db, { bookingId, customerId, manualRefund: true }, { refund }, NOW);
+  assert.equal(res.ok, true);
+  if (!res.ok) return;
+  assert.equal(called, false); // no auto-refund attempt — staff refund by hand
+  assert.equal(res.refunded, false);
+  assert.equal(res.refundPending, true); // flagged so the route emails staff
+  assert.equal(res.refundAmountIls, card.roundChildOverWalkingPriceIls);
+  assert.equal(res.wcOrderId, 'wc-1001');
+  const row = (await db.select().from(bookings).where(eq(bookings.id, bookingId)).limit(1))[0];
+  assert.equal(row!.status, 'cancelled'); // seat freed even though money hasn't moved
+});
+
 test('cancelBooking rejects a non-owner without refunding', async () => {
   const db = await freshDb();
   const { bookingId } = await setup(db);

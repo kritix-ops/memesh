@@ -20,6 +20,8 @@ test('getRoundSettings returns the seeded defaults', async () => {
   assert.equal(s.claimWindowMinutes, 60);
   assert.equal(s.bookingHorizonDays, 30);
   assert.equal(s.markingGraceMinutes, 30);
+  assert.equal(s.manualRefundOnCancel, true);
+  assert.equal(s.cancellationAlertEmail, '');
 });
 
 test('validateRoundSettingsPatch enforces ranges', () => {
@@ -37,6 +39,27 @@ test('validateRoundSettingsPatch enforces ranges', () => {
   assert.equal(validateRoundSettingsPatch({ holdTtlMinutes: 20, cancellationWindowHours: 48 }), null);
   assert.equal(validateRoundSettingsPatch({ bookingHorizonDays: 30 }), null);
   assert.equal(validateRoundSettingsPatch({ markingGraceMinutes: 0 }), null); // 0 = hard lock, valid
+  assert.equal(
+    validateRoundSettingsPatch({ cancellationAlertEmail: 'not-an-email' })?.code,
+    'cancellation_alert_email_invalid',
+  );
+  assert.equal(validateRoundSettingsPatch({ cancellationAlertEmail: 'ops@memesh.co.il' }), null);
+  assert.equal(validateRoundSettingsPatch({ cancellationAlertEmail: '' }), null); // clears the alert
+});
+
+test('updateRoundSettings persists the manual-refund cancellation knobs', async () => {
+  const db = await freshDb();
+  const res = await updateRoundSettings(db, {
+    manualRefundOnCancel: false,
+    cancellationAlertEmail: 'ops@memesh.co.il',
+  });
+  assert.equal(res.ok, true);
+  if (!res.ok) return;
+  assert.equal(res.row.manualRefundOnCancel, false);
+  assert.equal(res.row.cancellationAlertEmail, 'ops@memesh.co.il');
+  const reread = await getRoundSettings(db);
+  assert.equal(reread.manualRefundOnCancel, false);
+  assert.equal(reread.cancellationAlertEmail, 'ops@memesh.co.il');
 });
 
 test('updateRoundSettings persists bookingHorizonDays with a diff', async () => {
