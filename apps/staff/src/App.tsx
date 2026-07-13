@@ -1,4 +1,5 @@
 import { Logo, Sun } from '@memesh/brand';
+import { ContentProvider, useContent } from '@memesh/content/react';
 import { StaffLoginForm, StaffSessionProvider, useStaffSession } from '@memesh/staff-auth';
 import { type CSSProperties, useState } from 'react';
 import { PosApp } from './pos/PosApp';
@@ -16,12 +17,15 @@ const MUTED = '#636e72';
 export function App() {
   return (
     <StaffSessionProvider>
-      <AppShell />
+      <ContentProvider audience="staff">
+        <AppShell />
+      </ContentProvider>
     </StaffSessionProvider>
   );
 }
 
 function AppShell() {
+  const { t } = useContent();
   const { state, signOut } = useStaffSession();
   const signedIn = state.status === 'signed-in';
 
@@ -30,8 +34,8 @@ function AppShell() {
       <header style={headerStyle}>
         <Logo />
         {signedIn ? (
-          <button onClick={signOut} style={headerActionStyle} aria-label="התנתק">
-            התנתק
+          <button onClick={signOut} style={headerActionStyle} aria-label={t('staff.nav.signOut')}>
+            {t('staff.nav.signOut')}
           </button>
         ) : (
           <div style={{ width: 0 }} />
@@ -53,17 +57,18 @@ function SurfaceBody() {
 // flip to a read-only rounds status view — occupancy + what to do about it —
 // without leaving the station.
 function SignedInSurface() {
+  const { t } = useContent();
   const [view, setView] = useState<'pos' | 'rounds'>('pos');
   return (
     <>
-      <nav style={toggleWrapStyle} aria-label="ניווט">
+      <nav style={toggleWrapStyle} aria-label={t('staff.nav.label')}>
         <button
           type="button"
           onClick={() => setView('pos')}
           style={toggleBtnStyle(view === 'pos')}
           aria-current={view === 'pos' ? 'page' : undefined}
         >
-          קופה
+          {t('staff.nav.pos')}
         </button>
         <button
           type="button"
@@ -71,7 +76,7 @@ function SignedInSurface() {
           style={toggleBtnStyle(view === 'rounds')}
           aria-current={view === 'rounds' ? 'page' : undefined}
         >
-          סבבים
+          {t('staff.nav.rounds')}
         </button>
       </nav>
       {view === 'pos' ? <PosApp /> : <RoundsView />}

@@ -1,3 +1,4 @@
+import { useContent } from '@memesh/content/react';
 import {
   addMonths,
   firstOfMonth,
@@ -7,6 +8,9 @@ import {
   monthOfIso,
 } from '@memesh/web-shared';
 import { type CSSProperties, useCallback, useEffect, useRef, useState } from 'react';
+
+/** The t() signature the module-level helpers below accept. */
+type T = (key: string, vars?: Record<string, string | number>) => string;
 import { createCustomer, searchCustomers, type Customer } from './lib/api/customers';
 import {
   addWalkIn,
@@ -89,12 +93,12 @@ function fmtTimeHe(iso: string): string {
   });
 }
 
-function fmtRelative(iso: string): string {
+function fmtRelative(iso: string, t: T): string {
   const m = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
-  if (m < 1) return 'הרגע';
-  if (m < 60) return `לפני ${m} ד׳`;
+  if (m < 1) return t('staff.rounds.justNow');
+  if (m < 60) return t('staff.rounds.minutesAgo', { n: m });
   const h = Math.floor(m / 60);
-  return `לפני ${h} ש׳`;
+  return t('staff.rounds.hoursAgo', { n: h });
 }
 
 function localIsoDate(d: Date): string {
@@ -170,6 +174,7 @@ function StaffMonthCalendar({
   onMonthChange: (ym: string) => void;
   onPick: (dateIso: string) => void;
 }) {
+  const { t } = useContent();
   const { leadingBlanks, dates } = monthGrid(month);
   const canPrev = month > monthOfIso(todayIso);
   const canNext = maxDate !== null && month < monthOfIso(maxDate);
@@ -190,7 +195,7 @@ function StaffMonthCalendar({
         {/* RTL: the past sits to the right, so the right-hand button walks back. */}
         <button
           type="button"
-          aria-label="חודש קודם"
+          aria-label={t('staff.rounds.prevMonth')}
           disabled={!canPrev}
           onClick={() => canPrev && onMonthChange(addMonths(month, -1))}
           style={{
@@ -204,7 +209,7 @@ function StaffMonthCalendar({
         <div style={{ fontSize: 14.5, fontWeight: 700, color: INK }}>{monthLabelHe(month)}</div>
         <button
           type="button"
-          aria-label="חודש הבא"
+          aria-label={t('staff.rounds.nextMonth')}
           disabled={!canNext}
           onClick={() => canNext && onMonthChange(addMonths(month, 1))}
           style={{
@@ -282,6 +287,7 @@ function StaffMonthCalendar({
 }
 
 export function RoundsView() {
+  const { t } = useContent();
   const todayIso = localIsoDate(new Date());
   const [date, setDate] = useState(todayIso);
   const [data, setData] = useState<StaffRoundsResponse | null>(null);
@@ -410,7 +416,7 @@ export function RoundsView() {
         }}
       >
         <h1 style={{ fontSize: 22, fontWeight: 600, color: INK, margin: 0 }}>
-          {isToday ? 'סבבי היום' : 'סבבים'}
+          {isToday ? t('staff.rounds.titleToday') : t('staff.rounds.title')}
         </h1>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: MUTED }}>
           <span
@@ -422,11 +428,11 @@ export function RoundsView() {
               background: paused ? '#c9c9c9' : ORANGE,
             }}
           />
-          {paused ? 'מושהה' : 'מתעדכן אוטומטית'}
+          {paused ? t('staff.rounds.paused') : t('staff.rounds.autoRefresh')}
           {data && (
             <>
               <span style={{ color: '#c9c9c9' }}>·</span>
-              <span>עודכן {fmtRelative(data.asOf)}</span>
+              <span>{t('staff.rounds.updatedAt', { ago: fmtRelative(data.asOf, t) })}</span>
             </>
           )}
         </div>
@@ -445,7 +451,7 @@ export function RoundsView() {
         <button
           type="button"
           onClick={() => setDate((d) => shiftIsoDate(d, -1))}
-          aria-label="יום קודם"
+          aria-label={t('staff.rounds.prevDay')}
           style={navBtn}
         >
           ‹
@@ -456,7 +462,7 @@ export function RoundsView() {
             type="date"
             value={date}
             onChange={(e) => e.target.value && setDate(e.target.value)}
-            aria-label="בחירת תאריך"
+            aria-label={t('staff.rounds.pickDate')}
             style={{
               padding: '7px 10px',
               borderRadius: 9,
@@ -469,7 +475,7 @@ export function RoundsView() {
         <button
           type="button"
           onClick={() => setDate((d) => shiftIsoDate(d, 1))}
-          aria-label="יום הבא"
+          aria-label={t('staff.rounds.nextDay')}
           style={navBtn}
         >
           ›
@@ -486,7 +492,7 @@ export function RoundsView() {
               fontWeight: 600,
             }}
           >
-            היום
+            {t('staff.rounds.today')}
           </button>
         )}
       </div>
@@ -498,7 +504,7 @@ export function RoundsView() {
                 availability dots, out to the end of the booking window. */}
             <button
               type="button"
-              title="לוח שנה עם זמינות"
+              title={t('staff.rounds.calendarTitle')}
               onClick={() => {
                 setCalMonth((m) => m ?? monthOfIso(date >= todayIso ? date : todayIso));
                 setCalOpen((v) => !v);
@@ -520,7 +526,9 @@ export function RoundsView() {
               }}
             >
               <span style={{ fontSize: 17, lineHeight: 1 }}>📅</span>
-              <span style={{ fontSize: 9.5, color: MUTED, fontWeight: 600 }}>לוח שנה</span>
+              <span style={{ fontSize: 9.5, color: MUTED, fontWeight: 600 }}>
+                {t('staff.rounds.calendar')}
+              </span>
             </button>
             <div
               style={{
@@ -559,7 +567,7 @@ export function RoundsView() {
                   >
                     <span style={{ fontSize: 10.5, color: MUTED, fontWeight: 600 }}>
                       {i === 0
-                        ? 'היום'
+                        ? t('staff.rounds.today')
                         : `${WEEKDAY_HE_SHORT[new Date(`${d.date}T12:00:00`).getDay()]}׳`}
                     </span>
                     <span style={{ fontSize: 15, fontWeight: 700, color: INK }}>
@@ -614,19 +622,19 @@ export function RoundsView() {
           >
             {(
               [
-                ['green', 'פנוי'],
-                ['amber', 'מתמלא'],
-                ['red', 'מלא'],
-                ['free', 'כניסה חופשית'],
-                ['closed', 'סגור'],
+                ['green', 'staff.rounds.legendFree'],
+                ['amber', 'staff.rounds.legendFilling'],
+                ['red', 'staff.rounds.legendFull'],
+                ['free', 'staff.rounds.legendFreePlay'],
+                ['closed', 'staff.rounds.legendClosed'],
               ] as const
-            ).map(([k, label]) => (
+            ).map(([k, labelKey]) => (
               <span key={k} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
                 <span
                   aria-hidden
                   style={{ width: 7, height: 7, borderRadius: '50%', background: STRIP_DOT[k] }}
                 />
-                {label}
+                {t(labelKey)}
               </span>
             ))}
           </div>
@@ -635,19 +643,17 @@ export function RoundsView() {
 
       {!data ? (
         error ? (
-          <div style={{ ...card, color: '#a23a3a' }}>
-            לא ניתן לטעון את סטטוס הסבבים כרגע. ננסה שוב בעוד רגע.
-          </div>
+          <div style={{ ...card, color: '#a23a3a' }}>{t('staff.rounds.loadError')}</div>
         ) : (
           <div style={{ ...card, color: MUTED, textAlign: 'center' }}>טוען…</div>
         )
       ) : data.rounds.length === 0 ? (
         <div style={{ ...card, color: MUTED, textAlign: 'center' }}>
           {strip?.find((d) => d.date === date)?.closed
-            ? 'המקום סגור בתאריך זה.'
+            ? t('staff.rounds.emptyClosed')
             : isToday
-              ? 'אין סבבים היום.'
-              : 'אין סבבים בתאריך זה.'}
+              ? t('staff.rounds.emptyToday')
+              : t('staff.rounds.emptyOther')}
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -701,6 +707,7 @@ function RoundStatusCard({
   canMark: boolean;
   onArrivalChanged: () => void;
 }) {
+  const { t } = useContent();
   const level = statusLevel(round.pctFull, warnPct, dangerPct);
   const free = Math.max(0, round.capacity - round.taken);
   const barColor = round.isClosed ? '#d8d4cf' : STATUS[level].fg;
@@ -709,22 +716,22 @@ function RoundStatusCard({
   // Plain action line — what the cashier should do about this round.
   let action: { text: string; tone: string };
   if (round.isClosed) {
-    action = { text: 'הסבב סגור היום.', tone: MUTED };
+    action = { text: t('staff.rounds.actionClosed'), tone: MUTED };
   } else if (free <= 0) {
     action = {
       text:
         waitingCount > 0
-          ? `מלא. אין כניסה במקום — הפנו לרשימת המתנה (${waitingCount} ממתינים) או הציעו סבב אחר.`
-          : 'מלא. אין כניסה במקום — הפנו לרשימת המתנה או הציעו סבב אחר.',
+          ? t('staff.rounds.actionFullWaiting', { waiting: waitingCount })
+          : t('staff.rounds.actionFull'),
       tone: STATUS.red.fg,
     };
   } else if (level === 'amber' || level === 'red') {
     action = {
-      text: `כמעט מלא — נותרו ${free} מקומות. אפשר עוד כניסה במקום.`,
+      text: t('staff.rounds.actionAlmostFull', { free }),
       tone: STATUS.amber.fg,
     };
   } else {
-    action = { text: `יש מקום — ${free} פנויים. אפשר למכור כניסה במקום.`, tone: STATUS.green.fg };
+    action = { text: t('staff.rounds.actionSpace', { free }), tone: STATUS.green.fg };
   }
 
   return (
@@ -751,7 +758,7 @@ function RoundStatusCard({
             whiteSpace: 'nowrap',
           }}
         >
-          {round.isClosed ? 'סגור' : `${round.pctFull}%`}
+          {round.isClosed ? t('staff.rounds.closed') : `${round.pctFull}%`}
         </span>
       </div>
 
@@ -778,27 +785,27 @@ function RoundStatusCard({
         }}
       >
         <span style={{ fontSize: 15, color: INK }}>
-          {round.taken} / {round.capacity} ילדים
+          {round.taken} / {round.capacity} {t('staff.rounds.children')}
         </span>
         {!round.isClosed && (
           <span style={{ fontSize: 20, fontWeight: 600, color: barColor }}>
-            {free} <span style={{ fontSize: 13, fontWeight: 400, color: MUTED }}>פנויים</span>
+            {free}{' '}
+            <span style={{ fontSize: 13, fontWeight: 400, color: MUTED }}>
+              {t('staff.rounds.available')}
+            </span>
           </span>
         )}
       </div>
 
       {!round.isClosed && round.heldCount > 0 && (
         <div style={{ marginTop: 6, fontSize: 13.5, color: MUTED }}>
-          מתוכם {round.heldCount} בתהליך תשלום — שריון זמני שמשתחרר לבד אם הרכישה לא מושלמת
+          {t('staff.rounds.heldNote', { held: round.heldCount })}
         </div>
       )}
 
       {round.bookedCount > 0 && (
         <div style={{ marginTop: 8, fontSize: 14.5, color: INK }}>
-          <strong style={{ color: round.arrivedCount > 0 ? STATUS.green.fg : INK }}>
-            {round.arrivedCount}
-          </strong>{' '}
-          הגיעו מתוך {round.bookedCount} שהזמינו
+          {t('staff.rounds.arrivedOf', { arrived: round.arrivedCount, booked: round.bookedCount })}
         </div>
       )}
 
@@ -833,6 +840,7 @@ function AttendeesSection({
   canMark: boolean;
   onArrivalChanged: () => void;
 }) {
+  const { t } = useContent();
   const roundInstanceId = round.roundInstanceId;
   const [open, setOpen] = useState(false);
   const [attendees, setAttendees] = useState<RoundAttendee[] | null>(null);
@@ -864,15 +872,15 @@ function AttendeesSection({
     if (!res.ok) {
       setMarkError(
         res.error === 'target_full'
-          ? 'הסבב שנבחר מלא. אפשר להוסיף כ"נוסף ידנית" מעל התפוסה.'
+          ? t('staff.rounds.moveErrorFull')
           : res.error === 'target_closed'
-            ? 'הסבב שנבחר סגור.'
-            : 'ההעברה נכשלה. נסו שוב.',
+            ? t('staff.rounds.moveErrorClosed')
+            : t('staff.rounds.moveErrorGeneric'),
       );
       return;
     }
     const target = roundsToday.find((r) => r.roundInstanceId === targetId);
-    setFlash(`${a.firstName} הועבר/ה ל${target?.label ?? 'סבב אחר'}`);
+    setFlash(t('staff.rounds.moved', { name: a.firstName, target: target?.label ?? t('staff.rounds.title') }));
     setTimeout(() => setFlash(null), 4000);
     await fetchAttendees();
     onArrivalChanged();
@@ -888,10 +896,10 @@ function AttendeesSection({
       console.warn('[staff attendees] mark fail', { bookingId: a.bookingId, error: res.error });
       setMarkError(
         res.error === 'not_today'
-          ? 'אפשר לסמן הגעה רק ביום הסבב עצמו.'
+          ? t('staff.rounds.markErrorNotToday')
           : res.error === 'round_ended'
-            ? 'הסבב הסתיים — לא ניתן לסמן הגעה.'
-            : 'לא ניתן לעדכן כרגע. נסו שוב.',
+            ? t('staff.rounds.markErrorEnded')
+            : t('staff.rounds.markErrorGeneric'),
       );
       return;
     }
@@ -937,10 +945,10 @@ function AttendeesSection({
           }}
         >
           {open
-            ? 'הסתרת הרשימה ▲'
+            ? `${t('staff.rounds.hideList')} ▲`
             : round.bookedCount > 0
-              ? 'מי הגיע? הצגת הרשימה ▼'
-              : 'ניהול משתתפים ▼'}
+              ? `${t('staff.rounds.showList')} ▼`
+              : `${t('staff.rounds.manageList')} ▼`}
         </button>
         {canMark && open && !addingWalkIn && (
           <button
@@ -958,7 +966,7 @@ function AttendeesSection({
               whiteSpace: 'nowrap',
             }}
           >
-            + הוספת משתתף
+            + {t('staff.rounds.addParticipant')}
           </button>
         )}
       </div>
@@ -976,7 +984,7 @@ function AttendeesSection({
               onCancel={() => setAddingWalkIn(false)}
               onAdded={async (name, over) => {
                 setAddingWalkIn(false);
-                setFlash(`${name} נוסף/ה לסבב${over ? ' · מעל התפוסה' : ''}`);
+                setFlash(t('staff.rounds.added', { name, over: over ? t('staff.rounds.overCapacity') : '' }));
                 setTimeout(() => setFlash(null), 4000);
                 await fetchAttendees();
                 onArrivalChanged();
@@ -984,7 +992,7 @@ function AttendeesSection({
             />
           )}
           {error ? (
-            <div style={{ fontSize: 13, color: '#a23a3a' }}>לא ניתן לטעון את הרשימה כרגע.</div>
+            <div style={{ fontSize: 13, color: '#a23a3a' }}>{t('staff.rounds.attendeesError')}</div>
           ) : attendees === null ? (
             <div style={{ fontSize: 13, color: MUTED }}>טוען…</div>
           ) : (
@@ -994,7 +1002,7 @@ function AttendeesSection({
                   type="search"
                   value={q}
                   onChange={(e) => setQ(e.target.value)}
-                  placeholder="חיפוש לפי שם או טלפון…"
+                  placeholder={t('staff.rounds.searchAttendees')}
                   style={{
                     width: '100%',
                     boxSizing: 'border-box',
@@ -1008,7 +1016,7 @@ function AttendeesSection({
               )}
               {filtered.length === 0 ? (
                 <div style={{ fontSize: 13, color: MUTED }}>
-                  {q ? 'אין תוצאות לחיפוש הזה.' : 'אין עדיין הזמנות לסבב הזה.'}
+                  {q ? t('staff.rounds.noResults') : t('staff.rounds.noAttendees')}
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -1040,12 +1048,14 @@ function AttendeesSection({
                               padding: '1px 7px',
                             }}
                           >
-                            נוסף/ה ידנית
+                            {t('staff.rounds.addedManually')}
                           </span>
                         )}
                         <span style={{ color: MUTED, fontSize: 12.5, marginInlineStart: 6 }}>
-                          {a.ticketType === 'child_under_walking' ? 'תינוק/ת' : 'ילד/ה'}
-                          {a.additionalCompanions > 0 ? ' · +מלווה נוסף' : ''}
+                          {a.ticketType === 'child_under_walking'
+                            ? t('staff.rounds.ticketBaby')
+                            : t('staff.rounds.ticketChild')}
+                          {a.additionalCompanions > 0 ? ` · ${t('staff.rounds.withCompanion')}` : ''}
                         </span>
                         <span style={{ display: 'block', fontSize: 12.5, marginTop: 2 }}>
                           {a.bookingNumber && (
@@ -1057,7 +1067,7 @@ function AttendeesSection({
                           {a.anonymous ? (
                             // Cash walk-in with no info collected — no real phone
                             // or email to show, so the booking number stands in.
-                            <span style={{ color: MUTED }}>מזומן · ללא פרטים</span>
+                            <span style={{ color: MUTED }}>{t('staff.rounds.cashNoDetails')}</span>
                           ) : (
                             <>
                               <a
@@ -1088,7 +1098,7 @@ function AttendeesSection({
                             color: a.arrived ? STATUS.green.fg : MUTED,
                           }}
                         >
-                          {a.arrived ? '✓ הגיעו' : 'טרם הגיעו'}
+                          {a.arrived ? `✓ ${t('staff.rounds.arrived')}` : t('staff.rounds.notArrived')}
                         </span>
                       ) : a.arrived ? (
                         <span
@@ -1101,7 +1111,8 @@ function AttendeesSection({
                           }}
                         >
                           <span style={{ fontSize: 12.5, fontWeight: 600, color: STATUS.green.fg }}>
-                            ✓ הגיעו{a.usedAt ? ` · ${fmtTimeHe(a.usedAt)}` : ''}
+                            ✓ {t('staff.rounds.arrived')}
+                            {a.usedAt ? ` · ${fmtTimeHe(a.usedAt)}` : ''}
                           </span>
                           <button
                             type="button"
@@ -1117,7 +1128,7 @@ function AttendeesSection({
                               textDecoration: 'underline',
                             }}
                           >
-                            ביטול
+                            {t('staff.rounds.undoArrival')}
                           </button>
                         </span>
                       ) : (
@@ -1138,7 +1149,7 @@ function AttendeesSection({
                             opacity: busyId === a.bookingId ? 0.6 : 1,
                           }}
                         >
-                          סמן הגעה
+                          {t('staff.rounds.markArrival')}
                         </button>
                       )}
                       </div>
@@ -1146,13 +1157,13 @@ function AttendeesSection({
                       {canMark && moveTargets.length > 0 && (
                         moveFor === a.bookingId ? (
                           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center', borderTop: `1px solid ${TRACK}`, paddingTop: 6 }}>
-                            <span style={{ fontSize: 12, color: MUTED }}>העברה אל:</span>
-                            {moveTargets.map((t) => (
+                            <span style={{ fontSize: 12, color: MUTED }}>{t('staff.rounds.moveTo')}</span>
+                            {moveTargets.map((target) => (
                               <button
-                                key={t.roundInstanceId}
+                                key={target.roundInstanceId}
                                 type="button"
                                 disabled={busyId === a.bookingId}
-                                onClick={() => void doMove(a, t.roundInstanceId)}
+                                onClick={() => void doMove(a, target.roundInstanceId)}
                                 style={{
                                   border: '1.5px solid #e9e0d9',
                                   background: '#fff',
@@ -1164,7 +1175,7 @@ function AttendeesSection({
                                   cursor: 'pointer',
                                 }}
                               >
-                                {t.label} {t.startTime}
+                                {target.label} {target.startTime}
                               </button>
                             ))}
                             <button
@@ -1172,7 +1183,7 @@ function AttendeesSection({
                               onClick={() => setMoveFor(null)}
                               style={{ border: 'none', background: 'transparent', color: MUTED, fontSize: 12, cursor: 'pointer', textDecoration: 'underline' }}
                             >
-                              ביטול
+                              {t('staff.rounds.moveCancel')}
                             </button>
                           </div>
                         ) : (
@@ -1181,7 +1192,7 @@ function AttendeesSection({
                             onClick={() => setMoveFor(a.bookingId)}
                             style={{ alignSelf: 'flex-start', border: 'none', background: 'transparent', color: MUTED, fontSize: 12, cursor: 'pointer', textDecoration: 'underline', padding: 0 }}
                           >
-                            העברה לסבב אחר
+                            {t('staff.rounds.moveToOther')}
                           </button>
                         )
                       )}
@@ -1202,10 +1213,10 @@ function AttendeesSection({
 
 // Maps a walk-in add failure to a floor-friendly line. Shared by the named,
 // quick-create, and anonymous add paths.
-function walkInErrorMessage(error: string): string {
-  if (error === 'round_full') return 'הסבב מלא והוספה מעל התפוסה כבויה בהגדרות.';
-  if (error === 'round_closed') return 'הסבב סגור.';
-  return 'ההוספה נכשלה. נסו שוב.';
+function walkInErrorMessage(error: string, t: T): string {
+  if (error === 'round_full') return t('staff.rounds.walkinErrorFull');
+  if (error === 'round_closed') return t('staff.rounds.walkinErrorClosed');
+  return t('staff.rounds.walkinErrorGeneric');
 }
 
 // Walk-in add for the floor: take a cash entry with no info collected, or search
@@ -1220,6 +1231,7 @@ function StaffWalkInForm({
   onCancel: () => void;
   onAdded: (customerName: string, overCapacity: boolean) => void | Promise<void>;
 }) {
+  const { t } = useContent();
   const [q, setQ] = useState('');
   const [results, setResults] = useState<Customer[]>([]);
   const [searching, setSearching] = useState(false);
@@ -1258,7 +1270,7 @@ function StaffWalkInForm({
     const res = await addWalkIn(roundInstanceId, { customerId });
     setBusy(false);
     if (!res.ok) {
-      setError(walkInErrorMessage(res.error));
+      setError(walkInErrorMessage(res.error, t));
       return;
     }
     await onAdded(name, res.data.overCapacity);
@@ -1273,10 +1285,10 @@ function StaffWalkInForm({
     const res = await addWalkIn(roundInstanceId, { anonymous: true });
     setBusy(false);
     if (!res.ok) {
-      setError(walkInErrorMessage(res.error));
+      setError(walkInErrorMessage(res.error, t));
       return;
     }
-    await onAdded('כניסה במקום', res.data.overCapacity);
+    await onAdded(t('staff.rounds.walkinName'), res.data.overCapacity);
   };
 
   const quickAdd = async () => {
@@ -1287,7 +1299,7 @@ function StaffWalkInForm({
     const created = await createCustomer({ firstName: first.trim(), lastName: last.trim(), phone: phone.trim() });
     if (!created.ok) {
       setBusy(false);
-      setError('יצירת הלקוח נכשלה — בדקו את הטלפון (ייתכן שכבר קיים).');
+      setError(t('staff.rounds.createCustomerError'));
       return;
     }
     setBusy(false);
@@ -1317,10 +1329,10 @@ function StaffWalkInForm({
     <div style={{ border: '1px solid #e7d9c8', borderRadius: 10, padding: 10, background: '#fffdf9', marginBottom: 10 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
         <span style={{ fontSize: 13, fontWeight: 600, color: INK }}>
-          {creating ? 'לקוח חדש' : 'הוספת משתתף — חיפוש לקוח'}
+          {creating ? t('staff.rounds.newCustomer') : t('staff.rounds.addSearchTitle')}
         </span>
         <button type="button" style={chip} onClick={() => { setCreating(!creating); setError(null); }}>
-          {creating ? 'חזרה לחיפוש' : 'לקוח חדש'}
+          {creating ? t('staff.rounds.backToSearch') : t('staff.rounds.newCustomer')}
         </button>
       </div>
 
@@ -1329,10 +1341,10 @@ function StaffWalkInForm({
       {creating ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-            <input placeholder="שם פרטי" value={first} onChange={(e) => setFirst(e.target.value)} style={inputStyle} />
-            <input placeholder="שם משפחה" value={last} onChange={(e) => setLast(e.target.value)} style={inputStyle} />
+            <input placeholder={t('staff.rounds.firstName')} value={first} onChange={(e) => setFirst(e.target.value)} style={inputStyle} />
+            <input placeholder={t('staff.rounds.lastName')} value={last} onChange={(e) => setLast(e.target.value)} style={inputStyle} />
           </div>
-          <input placeholder="טלפון" value={phone} onChange={(e) => setPhone(e.target.value)} style={inputStyle} inputMode="tel" />
+          <input placeholder={t('staff.rounds.phone')} value={phone} onChange={(e) => setPhone(e.target.value)} style={inputStyle} inputMode="tel" />
           <div style={{ display: 'flex', gap: 8 }}>
             <button
               type="button"
@@ -1340,9 +1352,9 @@ function StaffWalkInForm({
               onClick={() => void quickAdd()}
               style={{ border: 'none', background: ORANGE, color: '#fff', borderRadius: 9, padding: '8px 14px', fontSize: 13, fontWeight: 600, cursor: 'pointer', opacity: !first.trim() || !phone.trim() ? 0.5 : 1 }}
             >
-              {busy ? 'מוסיף…' : 'יצירה והוספה'}
+              {busy ? 'מוסיף…' : t('staff.rounds.createAndAdd')}
             </button>
-            <button type="button" disabled={busy} onClick={onCancel} style={chip}>ביטול</button>
+            <button type="button" disabled={busy} onClick={onCancel} style={chip}>{t('staff.rounds.cancel')}</button>
           </div>
         </div>
       ) : (
@@ -1366,7 +1378,7 @@ function StaffWalkInForm({
               opacity: busy ? 0.6 : 1,
             }}
           >
-            {busy ? 'מוסיף…' : 'כניסה במקום · מזומן — ללא פרטים'}
+            {busy ? 'מוסיף…' : t('staff.rounds.cashWalkin')}
           </button>
           <div
             style={{
@@ -1379,13 +1391,13 @@ function StaffWalkInForm({
             }}
           >
             <span style={{ flex: 1, height: 1, background: '#eee6dd' }} />
-            או חפשו לקוח קיים
+            {t('staff.rounds.orSearchExisting')}
             <span style={{ flex: 1, height: 1, background: '#eee6dd' }} />
           </div>
-          <input placeholder="שם, טלפון או מספר לקוח…" value={q} onChange={(e) => setQ(e.target.value)} style={inputStyle} />
+          <input placeholder={t('staff.rounds.searchCustomer')} value={q} onChange={(e) => setQ(e.target.value)} style={inputStyle} />
           {searching && <div style={{ fontSize: 12.5, color: MUTED }}>מחפש…</div>}
           {!searching && q.trim().length >= 2 && results.length === 0 && (
-            <div style={{ fontSize: 12.5, color: MUTED }}>לא נמצאו לקוחות. אפשר ליצור לקוח חדש למעלה.</div>
+            <div style={{ fontSize: 12.5, color: MUTED }}>{t('staff.rounds.noCustomers')}</div>
           )}
           {results.map((c) => (
             <button
@@ -1399,7 +1411,7 @@ function StaffWalkInForm({
               <span style={{ color: MUTED, fontSize: 11.5 }} dir="ltr">{c.phone} · {c.customerNumber}</span>
             </button>
           ))}
-          <button type="button" disabled={busy} onClick={onCancel} style={{ ...chip, alignSelf: 'flex-start' }}>ביטול</button>
+          <button type="button" disabled={busy} onClick={onCancel} style={{ ...chip, alignSelf: 'flex-start' }}>{t('staff.rounds.cancel')}</button>
         </div>
       )}
     </div>

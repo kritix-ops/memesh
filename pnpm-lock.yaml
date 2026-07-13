@@ -204,6 +204,9 @@ importers:
       '@memesh/brand':
         specifier: workspace:*
         version: link:../../packages/brand
+      '@memesh/content':
+        specifier: workspace:*
+        version: link:../../packages/content
       '@memesh/staff-auth':
         specifier: workspace:*
         version: link:../../packages/staff-auth
