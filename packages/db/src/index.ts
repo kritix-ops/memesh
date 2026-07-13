@@ -32,6 +32,7 @@ export * from './rounds-schedule.js';
 export * from './holiday-policies.js';
 export * from './rounds-cancel.js';
 export * from './rounds-walkin.js';
+export * from './walkin-customer.js';
 export * from './rounds-waitlist.js';
 export * from './rounds-reminders.js';
 export * from './round-time.js';

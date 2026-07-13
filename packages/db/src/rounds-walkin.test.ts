@@ -9,6 +9,7 @@ import { createCustomer } from './cards';
 import { createRound, listRoundAttendees, listUpcomingReservationsForCustomer } from './rounds';
 import { addWalkInBooking } from './rounds-walkin';
 import { bookings, roundInstances } from './schema';
+import { getOrCreateWalkInCustomerId } from './walkin-customer';
 
 async function freshDb() {
   const db = drizzle({ client: new PGlite() });
@@ -118,6 +119,19 @@ test('addWalkInBooking: the walk-in shows in attendees marked source=manual', as
   const attendees = await listRoundAttendees(db, instanceId);
   assert.equal(attendees.length, 1);
   assert.equal(attendees[0]!.source, 'manual');
+  // A named walk-in is not anonymous — it carries the real customer's details.
+  assert.equal(attendees[0]!.anonymous, false);
+});
+
+test('addWalkInBooking: an add under the walk-in sentinel is flagged anonymous', async () => {
+  const db = await freshDb();
+  const { instanceId } = await setup(db, 5);
+  const sentinelId = await getOrCreateWalkInCustomerId(db);
+  await addWalkInBooking(db, { roundInstanceId: instanceId, customerId: sentinelId, allowOverCapacity: true }, resolver, NOW);
+  const attendees = await listRoundAttendees(db, instanceId);
+  assert.equal(attendees.length, 1);
+  assert.equal(attendees[0]!.source, 'manual');
+  assert.equal(attendees[0]!.anonymous, true);
 });
 
 test('listUpcomingReservationsForCustomer: returns confirmed future reservations, soonest first', async () => {

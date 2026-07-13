@@ -33,6 +33,10 @@ export interface RoundAttendee {
   /** `manual` = a staff walk-in add — shown apart from the registered ones.
    *  Optional for resilience to an older API that predates the field. */
   source?: 'paid' | 'punchcard' | 'gift' | 'manual';
+  /** Anonymous cash walk-in — booked under the reserved walk-in customer, so
+   *  the row shows the generic "כניסה במקום" label and no contact details.
+   *  Optional for resilience to an older API that predates the field. */
+  anonymous?: boolean;
   arrived: boolean;
   usedAt: string | null;
 }
@@ -128,10 +132,14 @@ export interface WalkInResponse {
   capacity: number;
 }
 
-/** Add a walk-in to a round, over capacity when the venue allows it. */
+/** Add a walk-in to a round, over capacity when the venue allows it. Pass a
+ *  `customerId` for a named add, or `anonymous: true` for a cash entry that
+ *  collects no info (books under the reserved walk-in customer). */
 export const addWalkIn = (
   roundInstanceId: string,
-  input: { customerId: string; ticketType?: 'child_under_walking' | 'child_over_walking' },
+  input:
+    | { customerId: string; ticketType?: 'child_under_walking' | 'child_over_walking' }
+    | { anonymous: true; ticketType?: 'child_under_walking' | 'child_over_walking' },
 ): Promise<ApiResult<WalkInResponse>> =>
   apiRequest(`/staff/rounds/${roundInstanceId}/walk-in`, { method: 'POST', body: input });
 

@@ -5,6 +5,7 @@ import {
   dashboardLiveWaitlist,
   db,
   getDashboardSettings,
+  getOrCreateWalkInCustomerId,
   getRoundSettings,
   listCustomerRoundBookingsForDate,
   listRoundAttendees,
@@ -345,10 +346,21 @@ export const staffRoundsRoutes: FastifyPluginAsync = async (fastify) => {
   // 2026-07-07). The booking is source='manual' so it stays visibly separate
   // from the ones who registered. Over-capacity is gated by the venue setting
   // allowOverCapacityWalkIn (default on). Any staff role.
-  const walkInSchema = z.object({
-    customerId: z.string().uuid(),
-    ticketType: z.enum(['child_under_walking', 'child_over_walking']).optional(),
-  });
+  //
+  // `anonymous: true` is the cash-no-info path (Yanay 2026-07-13): the floor
+  // takes cash and drops a head onto the round without collecting a name or
+  // phone. It books under the reserved walk-in customer, so `customerId` is
+  // then unnecessary; without `anonymous`, `customerId` is required as before.
+  const walkInSchema = z
+    .object({
+      customerId: z.string().uuid().optional(),
+      anonymous: z.boolean().optional(),
+      ticketType: z.enum(['child_under_walking', 'child_over_walking']).optional(),
+    })
+    .refine((v) => v.anonymous === true || typeof v.customerId === 'string', {
+      message: 'customerId is required unless anonymous is true',
+      path: ['customerId'],
+    });
   fastify.post(
     '/staff/rounds/:roundInstanceId/walk-in',
     { preHandler: requireRoleHook(...STAFF) },
@@ -359,12 +371,17 @@ export const staffRoundsRoutes: FastifyPluginAsync = async (fastify) => {
       if (!parsed.success) {
         return reply.code(400).send({ error: 'invalid_body', issues: parsed.error.issues });
       }
+      const anonymous = parsed.data.anonymous === true;
+      const customerId = anonymous
+        ? await getOrCreateWalkInCustomerId(db)
+        : parsed.data.customerId;
+      if (!customerId) return reply.code(400).send({ error: 'invalid_body' });
       const settings = await getRoundSettings(db);
       const result = await addWalkInBooking(
         db,
         {
           roundInstanceId,
-          customerId: parsed.data.customerId,
+          customerId,
           allowOverCapacity: settings.allowOverCapacityWalkIn,
           ...(parsed.data.ticketType ? { ticketType: parsed.data.ticketType } : {}),
           ...(request.user ? { staffId: request.user.id } : {}),
@@ -379,7 +396,8 @@ export const staffRoundsRoutes: FastifyPluginAsync = async (fastify) => {
       request.log.info(
         {
           roundInstanceId,
-          customerId: parsed.data.customerId,
+          customerId,
+          anonymous,
           overCapacity: result.overCapacity,
           staffId: request.user?.id,
         },

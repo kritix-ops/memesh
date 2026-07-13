@@ -7,12 +7,14 @@ import {
   exists,
   getTableColumns,
   ilike,
+  ne,
   notExists,
   or,
   sql,
 } from 'drizzle-orm';
 import type { PgDatabase } from 'drizzle-orm/pg-core';
 import { customers, punchCards, type Customer } from './schema/index';
+import { WALKIN_SENTINEL_PHONE } from './walkin-customer';
 
 type AnyPgDatabase = PgDatabase<any, any, any>;
 
@@ -60,7 +62,8 @@ export const listCustomers = async (
   const limit = Math.min(Math.max(opts.limit ?? DIRECTORY_DEFAULT_LIMIT, 1), DIRECTORY_MAX_LIMIT);
   const offset = Math.max(opts.offset ?? 0, 0);
 
-  const conds = [];
+  // The anonymous walk-in sentinel is a system row, never a browsable customer.
+  const conds = [ne(customers.phone, WALKIN_SENTINEL_PHONE)];
   const q = opts.q?.trim();
   if (q) {
     // Token-AND search: every whitespace-separated token must match at least

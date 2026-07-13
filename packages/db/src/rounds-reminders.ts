@@ -9,11 +9,12 @@
 // ON CONFLICT DO NOTHING) is the idempotency guard, so each (round, offset) fires
 // exactly once even across overlapping cron runs.
 
-import { and, eq } from 'drizzle-orm';
+import { and, eq, ne } from 'drizzle-orm';
 import type { PgDatabase } from 'drizzle-orm/pg-core';
 import { getRoundSettings } from './round-settings';
 import { roundStartWallMs, venueTodayIso, venueWallMs } from './round-time';
 import { bookings, customers, roundInstances, roundReminderLog, rounds } from './schema/index';
+import { WALKIN_SENTINEL_PHONE } from './walkin-customer';
 
 type AnyPgDatabase = PgDatabase<any, any, any>;
 
@@ -91,7 +92,15 @@ export const claimDueReminders = async (
         .select({ firstName: customers.firstName, phone: customers.phone, email: customers.email })
         .from(bookings)
         .innerJoin(customers, eq(customers.id, bookings.customerId))
-        .where(and(eq(bookings.roundInstanceId, inst.id), eq(bookings.status, 'confirmed')));
+        // Anonymous cash walk-ins book under the sentinel customer, which has a
+        // placeholder phone — never hand it to the SMS cron.
+        .where(
+          and(
+            eq(bookings.roundInstanceId, inst.id),
+            eq(bookings.status, 'confirmed'),
+            ne(customers.phone, WALKIN_SENTINEL_PHONE),
+          ),
+        );
 
       await db
         .update(roundReminderLog)

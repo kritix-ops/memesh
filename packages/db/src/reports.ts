@@ -11,6 +11,7 @@ import {
   isNull,
   lt,
   lte,
+  ne,
   or,
   sql,
 } from 'drizzle-orm';
@@ -27,6 +28,7 @@ import {
   rounds,
   staff,
 } from './schema/index';
+import { WALKIN_SENTINEL_PHONE } from './walkin-customer';
 
 type AnyPgDatabase = PgDatabase<any, any, any>;
 
@@ -231,7 +233,8 @@ export const customersReport = async (
   now: Date = new Date(),
 ): Promise<CustomersReportRow[]> => {
   const limit = Math.min(filters.limit ?? REPORT_DEFAULT_LIMIT, REPORT_MAX_LIMIT);
-  const conds = [];
+  // The anonymous walk-in sentinel is a system row, never a reportable customer.
+  const conds = [ne(customers.phone, WALKIN_SENTINEL_PHONE)];
   const q = filters.q?.trim();
   if (q) {
     const p = `%${q}%`;

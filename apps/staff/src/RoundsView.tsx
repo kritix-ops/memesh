@@ -1035,20 +1035,28 @@ function AttendeesSection({
                               {' · '}
                             </span>
                           )}
-                          <a
-                            href={`tel:${a.phone}`}
-                            style={{ color: MUTED, textDecoration: 'none' }}
-                            dir="ltr"
-                          >
-                            {a.phone}
-                          </a>
-                          {a.email && (
-                            <span style={{ color: '#c9c9c9' }}>
-                              {' · '}
-                              <span style={{ color: MUTED }} dir="ltr">
-                                {a.email}
-                              </span>
-                            </span>
+                          {a.anonymous ? (
+                            // Cash walk-in with no info collected — no real phone
+                            // or email to show, so the booking number stands in.
+                            <span style={{ color: MUTED }}>מזומן · ללא פרטים</span>
+                          ) : (
+                            <>
+                              <a
+                                href={`tel:${a.phone}`}
+                                style={{ color: MUTED, textDecoration: 'none' }}
+                                dir="ltr"
+                              >
+                                {a.phone}
+                              </a>
+                              {a.email && (
+                                <span style={{ color: '#c9c9c9' }}>
+                                  {' · '}
+                                  <span style={{ color: MUTED }} dir="ltr">
+                                    {a.email}
+                                  </span>
+                                </span>
+                              )}
+                            </>
                           )}
                         </span>
                       </span>
@@ -1173,8 +1181,17 @@ function AttendeesSection({
   );
 }
 
-// Walk-in add for the floor: search an existing customer or quick-add a new one,
-// then add them to the round (over capacity when the venue allows it).
+// Maps a walk-in add failure to a floor-friendly line. Shared by the named,
+// quick-create, and anonymous add paths.
+function walkInErrorMessage(error: string): string {
+  if (error === 'round_full') return 'הסבב מלא והוספה מעל התפוסה כבויה בהגדרות.';
+  if (error === 'round_closed') return 'הסבב סגור.';
+  return 'ההוספה נכשלה. נסו שוב.';
+}
+
+// Walk-in add for the floor: take a cash entry with no info collected, or search
+// an existing customer / quick-add a new one, then add them to the round (over
+// capacity when the venue allows it).
 function StaffWalkInForm({
   roundInstanceId,
   onCancel,
@@ -1222,16 +1239,25 @@ function StaffWalkInForm({
     const res = await addWalkIn(roundInstanceId, { customerId });
     setBusy(false);
     if (!res.ok) {
-      setError(
-        res.error === 'round_full'
-          ? 'הסבב מלא והוספה מעל התפוסה כבויה בהגדרות.'
-          : res.error === 'round_closed'
-            ? 'הסבב סגור.'
-            : 'ההוספה נכשלה. נסו שוב.',
-      );
+      setError(walkInErrorMessage(res.error));
       return;
     }
     await onAdded(name, res.data.overCapacity);
+  };
+
+  // Cash entry, no info collected (Yanay 2026-07-13): one tap adds an anonymous
+  // head to the round under the reserved walk-in customer.
+  const addAnonymous = async () => {
+    setBusy(true);
+    setError(null);
+    console.info('[staff attendees] walk-in anonymous add', { roundInstanceId });
+    const res = await addWalkIn(roundInstanceId, { anonymous: true });
+    setBusy(false);
+    if (!res.ok) {
+      setError(walkInErrorMessage(res.error));
+      return;
+    }
+    await onAdded('כניסה במקום', res.data.overCapacity);
   };
 
   const quickAdd = async () => {
@@ -1302,7 +1328,42 @@ function StaffWalkInForm({
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <input placeholder="שם, טלפון או מספר לקוח…" value={q} onChange={(e) => setQ(e.target.value)} style={inputStyle} autoFocus />
+          {/* Fast cash path first — one tap, no info. The counter reaches for
+              this most; searching a known customer sits below it. */}
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void addAnonymous()}
+            style={{
+              border: 'none',
+              background: ORANGE,
+              color: '#fff',
+              borderRadius: 10,
+              padding: '11px 14px',
+              fontSize: 13.5,
+              fontWeight: 700,
+              cursor: 'pointer',
+              width: '100%',
+              opacity: busy ? 0.6 : 1,
+            }}
+          >
+            {busy ? 'מוסיף…' : 'כניסה במקום · מזומן — ללא פרטים'}
+          </button>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              color: MUTED,
+              fontSize: 11.5,
+              margin: '2px 0',
+            }}
+          >
+            <span style={{ flex: 1, height: 1, background: '#eee6dd' }} />
+            או חפשו לקוח קיים
+            <span style={{ flex: 1, height: 1, background: '#eee6dd' }} />
+          </div>
+          <input placeholder="שם, טלפון או מספר לקוח…" value={q} onChange={(e) => setQ(e.target.value)} style={inputStyle} />
           {searching && <div style={{ fontSize: 12.5, color: MUTED }}>מחפש…</div>}
           {!searching && q.trim().length >= 2 && results.length === 0 && (
             <div style={{ fontSize: 12.5, color: MUTED }}>לא נמצאו לקוחות. אפשר ליצור לקוח חדש למעלה.</div>
