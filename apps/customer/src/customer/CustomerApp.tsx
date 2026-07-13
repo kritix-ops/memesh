@@ -856,20 +856,23 @@ function CustomerHome({ profile }: { profile: CustomerProfile }) {
   );
 }
 
-const BOOKING_SCOPES: { key: CustomerBookingScope; label: string }[] = [
-  { key: 'upcoming', label: 'קרובות' },
-  { key: 'past', label: 'עבר' },
-  { key: 'cancelled', label: 'בוטלו' },
-  { key: 'all', label: 'הכל' },
+// Labels live in the content registry (customer.bookings.scope.* /
+// customer.bookings.period.*), resolved by key at render — these carry only
+// structure (which scope, which lower bound).
+const BOOKING_SCOPES: { key: CustomerBookingScope }[] = [
+  { key: 'upcoming' },
+  { key: 'past' },
+  { key: 'cancelled' },
+  { key: 'all' },
 ];
 
 // Period chips for the history scope (brief §4). null = no lower bound.
-const BOOKING_PERIODS: { key: string; label: string; days: number | null }[] = [
-  { key: 'm1', label: 'חודש אחרון', days: 30 },
-  { key: 'm3', label: '3 חודשים', days: 90 },
-  { key: 'm6', label: 'חצי שנה', days: 180 },
-  { key: 'y1', label: 'שנה', days: 365 },
-  { key: 'all', label: 'הכל', days: null },
+const BOOKING_PERIODS: { key: string; days: number | null }[] = [
+  { key: 'm1', days: 30 },
+  { key: 'm3', days: 90 },
+  { key: 'm6', days: 180 },
+  { key: 'y1', days: 365 },
+  { key: 'all', days: null },
 ];
 
 /** YYYY-MM-DD `days` before today (local) — the period-chip lower bound. */
@@ -878,13 +881,6 @@ function isoDaysAgo(days: number): string {
   d.setDate(d.getDate() - days);
   return d.toISOString().slice(0, 10);
 }
-
-const EMPTY_COPY: Record<CustomerBookingScope, string> = {
-  upcoming: 'אין הזמנות קרובות. אפשר להזמין סבב ממסך הכרטיסיות.',
-  past: 'אין הזמנות שהתקיימו בטווח הזה.',
-  cancelled: 'אין הזמנות שבוטלו.',
-  all: 'עדיין אין הזמנות.',
-};
 
 // One booking as an accordion row (brief §2/§4): a summary header that expands
 // to the full card (QR + actions). The first booking opens by default.
@@ -1032,6 +1028,7 @@ function BookingsScreen({
   onReloadUpcoming: () => void | Promise<void>;
   onReloadWaitlist: () => void | Promise<void>;
 }) {
+  const { t } = useContent();
   const [scope, setScope] = useState<CustomerBookingScope>('upcoming');
   const [periodKey, setPeriodKey] = useState('all');
   const [others, setOthers] = useState<CustomerRoundBooking[] | null>(null);
@@ -1125,7 +1122,7 @@ function BookingsScreen({
                 whiteSpace: 'nowrap',
               }}
             >
-              {s.label}
+              {t(`customer.bookings.scope.${s.key}`)}
             </button>
           );
         })}
@@ -1136,7 +1133,7 @@ function BookingsScreen({
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           {BOOKING_PERIODS.map((p) => (
             <button key={p.key} type="button" onClick={() => setPeriodKey(p.key)} style={chip(periodKey === p.key)}>
-              {p.label}
+              {t(`customer.bookings.period.${p.key}`)}
             </button>
           ))}
         </div>
@@ -1144,12 +1141,14 @@ function BookingsScreen({
 
       {othersError ? (
         <div style={{ ...card, color: '#a23a3a', textAlign: 'center' }}>
-          לא הצלחנו לטעון את ההזמנות. נסו שוב.
+          {t('customer.bookings.loadError')}
         </div>
       ) : list === null ? (
         <div style={{ ...card, color: MUTED, textAlign: 'center' }}>טוען…</div>
       ) : list.length === 0 && !showWaitlist ? (
-        <div style={{ ...card, color: MUTED, textAlign: 'center' }}>{EMPTY_COPY[scope]}</div>
+        <div style={{ ...card, color: MUTED, textAlign: 'center' }}>
+          {t(`customer.bookings.empty.${scope}`)}
+        </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           {list.map((b, i) => (
@@ -1170,7 +1169,9 @@ function BookingsScreen({
 
       {showWaitlist && (
         <div>
-          <div style={{ fontWeight: 600, margin: '6px 0 10px', color: INK }}>רשימת ההמתנה שלי</div>
+          <div style={{ fontWeight: 600, margin: '6px 0 10px', color: INK }}>
+            {t('customer.bookings.waitlistTitle')}
+          </div>
           {waitlist!.map((w) => (
             <WaitlistEntryCard key={w.entryId} entry={w} onChanged={onReloadWaitlist} />
           ))}
@@ -2522,10 +2523,10 @@ function RoundBookingCard({
       });
       setError(
         res.error === 'target_full'
-          ? 'הסבב התמלא. בחרו מועד אחר.'
+          ? t('customer.booking.swapErrorFull')
           : res.error === 'too_late'
-            ? 'כבר מאוחר מדי לשנות — אפשר עד שעת ההתחלה של ההזמנה המקורית.'
-            : 'לא ניתן לשנות כרגע. נסו שוב.',
+            ? t('customer.booking.swapErrorTooLate')
+            : t('customer.booking.swapErrorGeneric'),
       );
       return;
     }
@@ -2555,7 +2556,7 @@ function RoundBookingCard({
       bookingId: booking.bookingId,
       error: res.ok ? 'no_pay_url' : res.error,
     });
-    setError('לא ניתן לפתוח את התשלום כרגע. נסו שוב.');
+    setError(t('customer.booking.companionPayError'));
   };
 
   const doCancel = async () => {
@@ -2566,10 +2567,10 @@ function RoundBookingCard({
     if (!res.ok) {
       setError(
         res.error === 'too_late'
-          ? 'כבר מאוחר מדי לבטל (אפשר עד 24 שעות לפני הסבב).'
+          ? t('customer.booking.cancelErrorTooLate')
           : res.error === 'refund_failed'
-            ? 'הזיכוי לא הושלם. נסו שוב או פנו אלינו.'
-            : 'לא ניתן לבטל כרגע. נסו שוב.',
+            ? t('customer.booking.cancelErrorRefundFailed')
+            : t('customer.booking.cancelErrorGeneric'),
       );
       return;
     }
@@ -2595,15 +2596,21 @@ function RoundBookingCard({
         </div>
       )}
       {booking.barcodeToken && booking.status !== 'cancelled' && (
-        <MemeshQr value={booking.barcodeToken} size={180} title={`ברקוד — ${booking.label}`} />
+        <MemeshQr
+          value={booking.barcodeToken}
+          size={180}
+          title={t('customer.booking.qrTitle', { label: booking.label })}
+        />
       )}
       {booking.bookingNumber && (
         <div style={{ fontSize: 13, color: MUTED }}>{booking.bookingNumber}</div>
       )}
       <div style={{ fontSize: 12.5, color: MUTED }}>
-        {booking.ticketType === 'child_under_walking' ? 'תינוק/ת' : 'ילד/ה'}
-        {booking.additionalCompanions > 0 ? ' · כולל מלווה נוסף' : ''}
-        {booking.status === 'used' ? ' · נוצל' : ''}
+        {booking.ticketType === 'child_under_walking'
+          ? t('customer.booking.ticketBaby')
+          : t('customer.booking.ticketChild')}
+        {booking.additionalCompanions > 0 ? ` · ${t('customer.booking.withCompanion')}` : ''}
+        {booking.status === 'used' ? ` · ${t('customer.booking.used')}` : ''}
       </div>
 
       {booking.source === 'punchcard' && booking.status === 'confirmed' && (
@@ -2620,8 +2627,7 @@ function RoundBookingCard({
             lineHeight: 1.5,
           }}
         >
-          כניסה אחת כבר נוצלה מהכרטיסייה עבור ההזמנה הזו והיא שמורה לך לתאריך זה. שימו לב לא לנצל
-          את כל הכניסות לפני כן.
+          {t('customer.booking.punchcardNote')}
         </div>
       )}
 
@@ -2640,7 +2646,7 @@ function RoundBookingCard({
             flexWrap: 'wrap',
           }}
         >
-          <span style={{ fontSize: 13, color: '#a8643d' }}>מלווה נוסף — ממתין לתשלום</span>
+          <span style={{ fontSize: 13, color: '#a8643d' }}>{t('customer.booking.companionPending')}</span>
           <button
             disabled={busy}
             onClick={() => void doCompanionPay()}
@@ -2655,7 +2661,7 @@ function RoundBookingCard({
               cursor: busy ? 'default' : 'pointer',
             }}
           >
-            {busy ? 'רגע…' : 'השלמת תשלום'}
+            {busy ? 'רגע…' : t('customer.booking.companionPayButton')}
           </button>
         </div>
       )}
@@ -2706,9 +2712,9 @@ function RoundBookingCard({
           <div style={{ fontSize: 12.5, color: MUTED, marginBottom: 12, textAlign: 'center' }}>
             {booking.source === 'punchcard'
               ? booking.additionalCompanions > 0
-                ? 'הכניסה תוחזר לכרטיסייה שלך, והתשלום עבור המלווה הנוסף יוחזר אוטומטית.'
-                : 'הכניסה תוחזר לכרטיסייה שלך.'
-              : 'הזיכוי יוחזר אוטומטית לאמצעי התשלום שלכם.'}
+                ? t('customer.booking.cancelRefundPunchCompanion')
+                : t('customer.booking.cancelRefundPunch')
+              : t('customer.booking.cancelRefundPaid')}
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
             <button
@@ -2716,7 +2722,7 @@ function RoundBookingCard({
               onClick={() => void doCancel()}
               style={{ ...dangerBtn, flex: 1 }}
             >
-              {busy ? 'מבטל…' : 'כן, בטלו וזכו אותי'}
+              {busy ? 'מבטל…' : t('customer.booking.cancelConfirmButton')}
             </button>
             <button
               disabled={busy}
@@ -2726,7 +2732,7 @@ function RoundBookingCard({
               }}
               style={{ ...secondaryBtn, flex: 1 }}
             >
-              חזרה
+              {t('customer.booking.backButton')}
             </button>
           </div>
           {error && (
@@ -2749,11 +2755,11 @@ function RoundBookingCard({
           }}
         >
           <div style={{ fontSize: 13.5, fontWeight: 600, textAlign: 'center' }}>
-            בחרו מועד אחר — שעה אחרת או יום אחר
+            {t('customer.booking.pickerTitle')}
           </div>
           {win.daysError && (
             <div style={{ textAlign: 'center', color: '#a23a3a', fontSize: 13 }}>
-              לא ניתן לטעון זמינות כרגע. נסו לרענן את הדף.
+              {t('customer.booking.availabilityError')}
             </div>
           )}
           {!win.daysError && win.days === null && (
@@ -2793,18 +2799,20 @@ function RoundBookingCard({
           {win.selectedDay && (
             <div style={{ fontSize: 14, fontWeight: 700, textAlign: 'center' }}>
               יום {dowLetter(win.selectedDay.date)}׳, {fmtDate(win.selectedDay.date)}
-              {win.selectedDay.date === booking.date ? ' (התאריך של ההזמנה)' : ''}
+              {win.selectedDay.date === booking.date
+                ? ` ${t('customer.booking.pickerOwnDateBadge')}`
+                : ''}
             </div>
           )}
           {win.selectedDay && swapTargets.length === 0 && (
             <div style={{ textAlign: 'center', color: MUTED, fontSize: 13 }}>
               {win.selectedDay.closed
-                ? 'המקום סגור בתאריך זה — בחרו יום אחר.'
+                ? t('customer.booking.pickerEmptyClosed')
                 : !win.selectedDay.roundsRequired
-                  ? 'בתאריך זה הכניסה חופשית — אין סבבים להזמנה.'
+                  ? t('customer.booking.pickerEmptyFreePlay')
                   : win.selectedDay.date === booking.date
-                    ? 'אין סבב אחר פנוי ביום זה — אפשר לבחור יום אחר מהפס למעלה.'
-                    : 'אין סבבים פנויים ביום זה — בחרו יום אחר.'}
+                    ? t('customer.booking.pickerEmptySameDay')
+                    : t('customer.booking.pickerEmptyOtherDay')}
             </div>
           )}
           {swapTargets.length > 0 && (
@@ -2820,7 +2828,7 @@ function RoundBookingCard({
             </div>
           )}
           <div style={{ textAlign: 'center', color: MUTED, fontSize: 12 }}>
-            אפשר לשנות מועד עד שעת ההתחלה של ההזמנה המקורית.
+            {t('customer.policy.reschedule')}
           </div>
           {error && (
             <div style={{ color: '#a23a3a', fontSize: 13, textAlign: 'center' }}>{error}</div>
@@ -2840,7 +2848,7 @@ function RoundBookingCard({
               width: '100%',
             }}
           >
-            חזרה
+            {t('customer.booking.backButton')}
           </button>
         </div>
       )}
