@@ -856,20 +856,23 @@ function CustomerHome({ profile }: { profile: CustomerProfile }) {
   );
 }
 
-const BOOKING_SCOPES: { key: CustomerBookingScope; label: string }[] = [
-  { key: 'upcoming', label: 'קרובות' },
-  { key: 'past', label: 'עבר' },
-  { key: 'cancelled', label: 'בוטלו' },
-  { key: 'all', label: 'הכל' },
+// Labels live in the content registry (customer.bookings.scope.* /
+// customer.bookings.period.*), resolved by key at render — these carry only
+// structure (which scope, which lower bound).
+const BOOKING_SCOPES: { key: CustomerBookingScope }[] = [
+  { key: 'upcoming' },
+  { key: 'past' },
+  { key: 'cancelled' },
+  { key: 'all' },
 ];
 
 // Period chips for the history scope (brief §4). null = no lower bound.
-const BOOKING_PERIODS: { key: string; label: string; days: number | null }[] = [
-  { key: 'm1', label: 'חודש אחרון', days: 30 },
-  { key: 'm3', label: '3 חודשים', days: 90 },
-  { key: 'm6', label: 'חצי שנה', days: 180 },
-  { key: 'y1', label: 'שנה', days: 365 },
-  { key: 'all', label: 'הכל', days: null },
+const BOOKING_PERIODS: { key: string; days: number | null }[] = [
+  { key: 'm1', days: 30 },
+  { key: 'm3', days: 90 },
+  { key: 'm6', days: 180 },
+  { key: 'y1', days: 365 },
+  { key: 'all', days: null },
 ];
 
 /** YYYY-MM-DD `days` before today (local) — the period-chip lower bound. */
@@ -878,13 +881,6 @@ function isoDaysAgo(days: number): string {
   d.setDate(d.getDate() - days);
   return d.toISOString().slice(0, 10);
 }
-
-const EMPTY_COPY: Record<CustomerBookingScope, string> = {
-  upcoming: 'אין הזמנות קרובות. אפשר להזמין סבב ממסך הכרטיסיות.',
-  past: 'אין הזמנות שהתקיימו בטווח הזה.',
-  cancelled: 'אין הזמנות שבוטלו.',
-  all: 'עדיין אין הזמנות.',
-};
 
 // One booking as an accordion row (brief §2/§4): a summary header that expands
 // to the full card (QR + actions). The first booking opens by default.
@@ -1032,6 +1028,7 @@ function BookingsScreen({
   onReloadUpcoming: () => void | Promise<void>;
   onReloadWaitlist: () => void | Promise<void>;
 }) {
+  const { t } = useContent();
   const [scope, setScope] = useState<CustomerBookingScope>('upcoming');
   const [periodKey, setPeriodKey] = useState('all');
   const [others, setOthers] = useState<CustomerRoundBooking[] | null>(null);
@@ -1125,7 +1122,7 @@ function BookingsScreen({
                 whiteSpace: 'nowrap',
               }}
             >
-              {s.label}
+              {t(`customer.bookings.scope.${s.key}`)}
             </button>
           );
         })}
@@ -1136,7 +1133,7 @@ function BookingsScreen({
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           {BOOKING_PERIODS.map((p) => (
             <button key={p.key} type="button" onClick={() => setPeriodKey(p.key)} style={chip(periodKey === p.key)}>
-              {p.label}
+              {t(`customer.bookings.period.${p.key}`)}
             </button>
           ))}
         </div>
@@ -1144,12 +1141,14 @@ function BookingsScreen({
 
       {othersError ? (
         <div style={{ ...card, color: '#a23a3a', textAlign: 'center' }}>
-          לא הצלחנו לטעון את ההזמנות. נסו שוב.
+          {t('customer.bookings.loadError')}
         </div>
       ) : list === null ? (
         <div style={{ ...card, color: MUTED, textAlign: 'center' }}>טוען…</div>
       ) : list.length === 0 && !showWaitlist ? (
-        <div style={{ ...card, color: MUTED, textAlign: 'center' }}>{EMPTY_COPY[scope]}</div>
+        <div style={{ ...card, color: MUTED, textAlign: 'center' }}>
+          {t(`customer.bookings.empty.${scope}`)}
+        </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           {list.map((b, i) => (
@@ -1170,7 +1169,9 @@ function BookingsScreen({
 
       {showWaitlist && (
         <div>
-          <div style={{ fontWeight: 600, margin: '6px 0 10px', color: INK }}>רשימת ההמתנה שלי</div>
+          <div style={{ fontWeight: 600, margin: '6px 0 10px', color: INK }}>
+            {t('customer.bookings.waitlistTitle')}
+          </div>
           {waitlist!.map((w) => (
             <WaitlistEntryCard key={w.entryId} entry={w} onChanged={onReloadWaitlist} />
           ))}

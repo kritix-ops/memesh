@@ -7,7 +7,7 @@
 export type ContentKind = 'short' | 'long';
 
 /** Admin grouping bucket. Grows one entry per migrated surface. */
-export type ContentGroup = 'customer_general' | 'customer_booking';
+export type ContentGroup = 'customer_general' | 'customer_bookings' | 'customer_booking';
 
 export interface ContentGroupMeta {
   id: ContentGroup;

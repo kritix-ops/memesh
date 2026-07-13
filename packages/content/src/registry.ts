@@ -11,6 +11,7 @@ import type { ContentEntry, ContentGroup, ContentGroupMeta } from './types';
 
 export const CONTENT_GROUPS: ContentGroupMeta[] = [
   { id: 'customer_general', label: 'אזור אישי — כללי' },
+  { id: 'customer_bookings', label: 'אזור אישי — רשימת ההזמנות' },
   { id: 'customer_booking', label: 'אזור אישי — ניהול הזמנה' },
 ];
 
@@ -21,6 +22,59 @@ export const CONTENT_REGISTRY: ContentEntry[] = [
     group: 'customer_general',
     label: 'כותרת האזור האישי',
     default: 'אזור אישי',
+    kind: 'short',
+  },
+
+  // ── אזור אישי — רשימת ההזמנות (BookingsScreen) ────────────────────
+  { key: 'customer.bookings.scope.upcoming', group: 'customer_bookings', label: 'לשונית — קרובות', default: 'קרובות', kind: 'short' },
+  { key: 'customer.bookings.scope.past', group: 'customer_bookings', label: 'לשונית — עבר', default: 'עבר', kind: 'short' },
+  { key: 'customer.bookings.scope.cancelled', group: 'customer_bookings', label: 'לשונית — בוטלו', default: 'בוטלו', kind: 'short' },
+  { key: 'customer.bookings.scope.all', group: 'customer_bookings', label: 'לשונית — הכל', default: 'הכל', kind: 'short' },
+  { key: 'customer.bookings.period.m1', group: 'customer_bookings', label: 'טווח — חודש אחרון', default: 'חודש אחרון', kind: 'short' },
+  { key: 'customer.bookings.period.m3', group: 'customer_bookings', label: 'טווח — 3 חודשים', default: '3 חודשים', kind: 'short' },
+  { key: 'customer.bookings.period.m6', group: 'customer_bookings', label: 'טווח — חצי שנה', default: 'חצי שנה', kind: 'short' },
+  { key: 'customer.bookings.period.y1', group: 'customer_bookings', label: 'טווח — שנה', default: 'שנה', kind: 'short' },
+  { key: 'customer.bookings.period.all', group: 'customer_bookings', label: 'טווח — הכל', default: 'הכל', kind: 'short' },
+  {
+    key: 'customer.bookings.empty.upcoming',
+    group: 'customer_bookings',
+    label: 'אין הזמנות — קרובות',
+    default: 'אין הזמנות קרובות. אפשר להזמין סבב ממסך הכרטיסיות.',
+    kind: 'long',
+  },
+  {
+    key: 'customer.bookings.empty.past',
+    group: 'customer_bookings',
+    label: 'אין הזמנות — עבר',
+    default: 'אין הזמנות שהתקיימו בטווח הזה.',
+    kind: 'long',
+  },
+  {
+    key: 'customer.bookings.empty.cancelled',
+    group: 'customer_bookings',
+    label: 'אין הזמנות — בוטלו',
+    default: 'אין הזמנות שבוטלו.',
+    kind: 'long',
+  },
+  {
+    key: 'customer.bookings.empty.all',
+    group: 'customer_bookings',
+    label: 'אין הזמנות — הכל',
+    default: 'עדיין אין הזמנות.',
+    kind: 'long',
+  },
+  {
+    key: 'customer.bookings.loadError',
+    group: 'customer_bookings',
+    label: 'שגיאת טעינת הזמנות',
+    default: 'לא הצלחנו לטעון את ההזמנות. נסו שוב.',
+    kind: 'long',
+  },
+  {
+    key: 'customer.bookings.waitlistTitle',
+    group: 'customer_bookings',
+    label: 'כותרת רשימת המתנה',
+    default: 'רשימת ההמתנה שלי',
     kind: 'short',
   },
 
