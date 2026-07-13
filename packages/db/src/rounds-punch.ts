@@ -63,7 +63,10 @@ export const bookRoundWithPunch = async (
   // filtered out by the date's schedule rule is not bookable, punch included.
   const settings = await getRoundSettings(db);
   if (!settings.roundsEnabled) return { ok: false, error: 'round_closed' as const };
-  const schedulable = await isInstanceSchedulable(db, input.roundInstanceId);
+  const schedulable = await isInstanceSchedulable(db, input.roundInstanceId, {
+    now,
+    bookingHorizonDays: settings.bookingHorizonDays,
+  });
   if (!schedulable.ok) {
     return {
       ok: false,

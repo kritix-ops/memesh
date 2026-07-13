@@ -207,6 +207,20 @@ async function roundOn(db: Awaited<ReturnType<typeof freshDb>>, start: string, e
   return inst.id;
 }
 
+test('booking horizon: a date beyond the window is not schedulable', async () => {
+  const db = await freshDb();
+  const inst = await roundOn(db, '14:00', '16:00'); // on FRIDAY (2026-07-10)
+
+  // From NOW (2026-07-01) FRIDAY is 9 days out: inside a 30-day horizon, outside 5.
+  assert.equal((await isInstanceSchedulable(db, inst, { now: NOW, bookingHorizonDays: 30 })).ok, true);
+  const tight = await isInstanceSchedulable(db, inst, { now: NOW, bookingHorizonDays: 5 });
+  assert.equal(tight.ok, false);
+  if (!tight.ok) assert.equal(tight.reason, 'beyond_horizon');
+
+  // Omitting the horizon skips the check (schedule-only callers stay unaffected).
+  assert.equal((await isInstanceSchedulable(db, inst)).ok, true);
+});
+
 test('guards: a rule filters holds and punch bookings for non-fitting rounds', async () => {
   const db = await freshDb();
   const fitting = await roundOn(db, '14:00', '16:00');

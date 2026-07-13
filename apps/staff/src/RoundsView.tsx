@@ -48,6 +48,17 @@ function statusLevel(pct: number, warn: number, danger: number): StatusLevel {
   return 'green';
 }
 
+// True once a round's end time (plus the marking grace) has passed. The floor
+// tablet runs in Israel, so the browser's local wall-clock is the venue's — a
+// plain minutes-of-day compare. The server (setBookingArrival) is the authority
+// on the same grace; this only greys the controls so staff don't tap a round
+// that's already closed for marking (Yanay 2026-07-13).
+function markingClosedLocal(endTimeHhmm: string, graceMinutes: number, now: Date): boolean {
+  const hhmm = endTimeHhmm.slice(0, 5);
+  const endMin = Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3, 5));
+  return endMin + graceMinutes <= now.getHours() * 60 + now.getMinutes();
+}
+
 const card: CSSProperties = {
   background: '#fff',
   borderRadius: 16,
@@ -654,7 +665,10 @@ export function RoundsView() {
                   warnPct={data.settings.capacityWarningPct}
                   dangerPct={data.settings.capacityDangerPct}
                   waitingCount={waiting}
-                  canMark={isToday}
+                  canMark={
+                    isToday &&
+                    !markingClosedLocal(round.endTime, data.settings.markingGraceMinutes, new Date())
+                  }
                   onArrivalChanged={() => void load()}
                 />
               );
@@ -680,7 +694,10 @@ function RoundStatusCard({
   warnPct: number;
   dangerPct: number;
   waitingCount: number;
-  /** Arrival + move + walk-in controls only make sense when the page shows today. */
+  /**
+   * Arrival + move + walk-in controls only make sense when the page shows today
+   * AND the round is still running — a finished round is read-only.
+   */
   canMark: boolean;
   onArrivalChanged: () => void;
 }) {
@@ -872,7 +889,9 @@ function AttendeesSection({
       setMarkError(
         res.error === 'not_today'
           ? 'אפשר לסמן הגעה רק ביום הסבב עצמו.'
-          : 'לא ניתן לעדכן כרגע. נסו שוב.',
+          : res.error === 'round_ended'
+            ? 'הסבב הסתיים — לא ניתן לסמן הגעה.'
+            : 'לא ניתן לעדכן כרגע. נסו שוב.',
       );
       return;
     }

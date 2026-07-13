@@ -1,0 +1,1 @@
+ALTER TABLE "round_settings" ADD COLUMN "marking_grace_minutes" smallint DEFAULT 30 NOT NULL;

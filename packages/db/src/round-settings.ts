@@ -16,6 +16,10 @@ const CLAIM_WINDOW_MIN = 1;
 const CLAIM_WINDOW_MAX = 1440; // 24h
 const ACTIVE_HOUR_MIN = 0;
 const ACTIVE_HOUR_MAX = 23;
+const BOOKING_HORIZON_MIN = 1;
+const BOOKING_HORIZON_MAX = 365;
+const MARKING_GRACE_MIN = 0;
+const MARKING_GRACE_MAX = 240;
 
 export type UpdateRoundSettingsInput = {
   roundsEnabled?: boolean;
@@ -29,6 +33,8 @@ export type UpdateRoundSettingsInput = {
   skipLastRoundReminder?: boolean;
   allowOverCapacityWalkIn?: boolean;
   warnUpcomingReservationAtDoor?: boolean;
+  bookingHorizonDays?: number;
+  markingGraceMinutes?: number;
 };
 
 export type RoundSettingsValidationError =
@@ -36,6 +42,8 @@ export type RoundSettingsValidationError =
   | { code: 'cancellation_window_out_of_range'; min: number; max: number }
   | { code: 'claim_window_out_of_range'; min: number; max: number }
   | { code: 'active_hours_out_of_range'; min: number; max: number }
+  | { code: 'booking_horizon_out_of_range'; min: number; max: number }
+  | { code: 'marking_grace_out_of_range'; min: number; max: number }
   | { code: 'reminder_offsets_invalid' }
   | { code: 'closing_time_invalid' };
 
@@ -86,6 +94,24 @@ export const validateRoundSettingsPatch = (
   for (const h of [patch.activeHoursStart, patch.activeHoursEnd]) {
     if (h !== undefined && (!Number.isInteger(h) || h < ACTIVE_HOUR_MIN || h > ACTIVE_HOUR_MAX)) {
       return { code: 'active_hours_out_of_range', min: ACTIVE_HOUR_MIN, max: ACTIVE_HOUR_MAX };
+    }
+  }
+  if (patch.bookingHorizonDays !== undefined) {
+    if (
+      !Number.isInteger(patch.bookingHorizonDays) ||
+      patch.bookingHorizonDays < BOOKING_HORIZON_MIN ||
+      patch.bookingHorizonDays > BOOKING_HORIZON_MAX
+    ) {
+      return { code: 'booking_horizon_out_of_range', min: BOOKING_HORIZON_MIN, max: BOOKING_HORIZON_MAX };
+    }
+  }
+  if (patch.markingGraceMinutes !== undefined) {
+    if (
+      !Number.isInteger(patch.markingGraceMinutes) ||
+      patch.markingGraceMinutes < MARKING_GRACE_MIN ||
+      patch.markingGraceMinutes > MARKING_GRACE_MAX
+    ) {
+      return { code: 'marking_grace_out_of_range', min: MARKING_GRACE_MIN, max: MARKING_GRACE_MAX };
     }
   }
   if (patch.reminderOffsets !== undefined) {
@@ -183,6 +209,20 @@ export const updateRoundSettings = async (
       patch.warnUpcomingReservationAtDoor,
     ];
     next.warnUpcomingReservationAtDoor = patch.warnUpcomingReservationAtDoor;
+  }
+  if (
+    patch.bookingHorizonDays !== undefined &&
+    patch.bookingHorizonDays !== current.bookingHorizonDays
+  ) {
+    diff.bookingHorizonDays = [current.bookingHorizonDays, patch.bookingHorizonDays];
+    next.bookingHorizonDays = patch.bookingHorizonDays;
+  }
+  if (
+    patch.markingGraceMinutes !== undefined &&
+    patch.markingGraceMinutes !== current.markingGraceMinutes
+  ) {
+    diff.markingGraceMinutes = [current.markingGraceMinutes, patch.markingGraceMinutes];
+    next.markingGraceMinutes = patch.markingGraceMinutes;
   }
 
   if (Object.keys(diff).length === 0) return { ok: true, row: current, diff: {} };

@@ -81,6 +81,8 @@ export type StaffRoundsSettings = {
   refreshIntervalSeconds: number;
   capacityWarningPct: number;
   capacityDangerPct: number;
+  /** Minutes after a round ends that staff may still mark arrivals. */
+  markingGraceMinutes: number;
 };
 
 export type StaffRoundsResponse = {
@@ -108,6 +110,7 @@ async function computeStaffRounds(dateIso: string, todayIso: string): Promise<St
   // Sequential — PGlite (test fixture) is single-connection; prod driver is
   // fine serial and the total stays well under 100ms.
   const settings = await getDashboardSettings(db);
+  const roundSettings = await getRoundSettings(db);
   const rounds = await dashboardLiveRoundsForDate(db, dateIso, now);
   const waitlistRows = dateIso === todayIso ? await dashboardLiveWaitlist(db, now) : [];
   return {
@@ -117,6 +120,7 @@ async function computeStaffRounds(dateIso: string, todayIso: string): Promise<St
       refreshIntervalSeconds: settings.refreshIntervalSeconds,
       capacityWarningPct: settings.capacityWarningPct,
       capacityDangerPct: settings.capacityDangerPct,
+      markingGraceMinutes: roundSettings.markingGraceMinutes,
     },
     rounds: rounds.map((r) => ({
       roundInstanceId: r.roundInstanceId,
@@ -224,7 +228,7 @@ export const staffRoundsRoutes: FastifyPluginAsync = async (fastify) => {
       }
       const result = await setBookingArrival(db, { bookingId, arrived: parsed.data.arrived });
       if (!result.ok) {
-        const code = result.error === 'not_found' ? 404 : 409; // not_markable / not_today
+        const code = result.error === 'not_found' ? 404 : 409; // not_markable / not_today / round_ended
         return reply.code(code).send({ error: result.error });
       }
       request.log.info(

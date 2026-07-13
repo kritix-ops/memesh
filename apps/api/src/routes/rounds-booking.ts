@@ -188,9 +188,9 @@ export const roundsBookingRoutes: FastifyPluginAsync = async (fastify) => {
   // the WP product-page picker. Same public shape as the single-date endpoint,
   // one entry per day, so a strip renders every dot from one request. Public
   // like availability but at half the rate — each call is up to a month deep.
-  // The instance horizon is a full year (INSTANCE_HORIZON_DAYS); the calendar
-  // popups page through it month by month with `from`, capped at 31 days per
-  // request, and stop at `maxDate` — the last date instances exist for.
+  // The calendar popups page month by month with `from`, capped at 31 days per
+  // request, and stop at `maxDate` — today plus the configured booking horizon
+  // (round_settings.bookingHorizonDays), never past the materialized instances.
   fastify.get(
     '/rounds/availability-range',
     { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } },
@@ -206,15 +206,20 @@ export const roundsBookingRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(400).send({ error: 'invalid_days' });
       }
       const cardSettings = await getCardSettings(db);
+      const roundSettings = await getRoundSettings(db);
       const range = await roundAvailabilityRange(db, from, days);
+      // Booking window: today + the configured horizon (Yanay 2026-07-13), never
+      // past the last materialized instance day. The booking-path guard enforces
+      // the same cap authoritatively; this only bounds the calendar.
+      const horizonDays = Math.min(roundSettings.bookingHorizonDays, INSTANCE_HORIZON_DAYS - 1);
       request.log.info(
-        { from, days, daysWithRounds: range.filter((d) => d.rounds.length > 0).length },
+        { from, days, horizonDays, daysWithRounds: range.filter((d) => d.rounds.length > 0).length },
         '[rounds availability-range]',
       );
       return {
         from,
         // End of the booking window — calendars disable navigation past it.
-        maxDate: addIsoDays(venueTodayIso(), INSTANCE_HORIZON_DAYS - 1),
+        maxDate: addIsoDays(venueTodayIso(), horizonDays),
         companionPriceIls: cardSettings.roundAdditionalCompanionPriceIls,
         days: range.map((d) => ({
           date: d.date,

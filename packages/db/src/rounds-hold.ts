@@ -73,7 +73,10 @@ export const createHold = async (
   // seat is not purchasable — even via a direct API call the pickers would
   // never make. 'closed' matches what the callers already map to 409.
   if (!settings.roundsEnabled) return { ok: false, error: 'closed' as const };
-  const schedulable = await isInstanceSchedulable(db, input.roundInstanceId);
+  const schedulable = await isInstanceSchedulable(db, input.roundInstanceId, {
+    now,
+    bookingHorizonDays: settings.bookingHorizonDays,
+  });
   if (!schedulable.ok) {
     return { ok: false, error: schedulable.reason === 'not_found' ? ('not_found' as const) : ('closed' as const) };
   }

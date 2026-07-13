@@ -218,6 +218,20 @@
       "when": 1783458400117,
       "tag": "0030_flimsy_chameleon",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1783968106901,
+      "tag": "0031_careful_queen_noir",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1783968990809,
+      "tag": "0032_cynical_mattie_franklin",
+      "breakpoints": true
     }
   ]
 }

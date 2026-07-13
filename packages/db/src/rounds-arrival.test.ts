@@ -15,6 +15,7 @@ import {
   lookupBookingForCheckin,
   setBookingArrival,
 } from './rounds-arrival';
+import { updateRoundSettings } from './round-settings';
 import { bookRoundWithPunch } from './rounds-punch';
 import { createRound } from './rounds';
 import { bookings, roundInstances } from './schema';
@@ -134,6 +135,43 @@ test('setBookingArrival refuses other days, cancelled bookings, and unknown ids'
   );
   assert.equal(missing.ok, false);
   if (!missing.ok) assert.equal(missing.error, 'not_found');
+});
+
+test('setBookingArrival refuses a round whose end time has already passed', async () => {
+  const db = await freshDb();
+  const { bookingId } = await setup(db);
+  // The round runs 09:00–14:00 on ROUND_DAY; 15:00 venue time is the same
+  // calendar day (so not_today passes) but after the round ended.
+  const AFTER_ROUND = new Date('2026-07-11T15:00:00+03:00');
+
+  const ended = await setBookingArrival(db, { bookingId, arrived: true }, AFTER_ROUND);
+  assert.equal(ended.ok, false);
+  if (!ended.ok) assert.equal(ended.error, 'round_ended');
+
+  // Undo is blocked too — a finished round is fully read-only.
+  const undo = await setBookingArrival(db, { bookingId, arrived: false }, AFTER_ROUND);
+  assert.equal(undo.ok, false);
+  if (!undo.ok) assert.equal(undo.error, 'round_ended');
+
+  // Sanity: still markable while the round is in progress.
+  const during = await setBookingArrival(db, { bookingId, arrived: true }, ON_ROUND_DAY);
+  assert.equal(during.ok, true);
+});
+
+test('marking honors the grace window after a round ends, and the 0 hard lock', async () => {
+  const db = await freshDb();
+  const { bookingId } = await setup(db); // round 09:00–14:00 on ROUND_DAY
+
+  // Default grace is 30 min: 14:20 (20 min past end) is still open.
+  const inGrace = await setBookingArrival(db, { bookingId, arrived: true }, new Date('2026-07-11T14:20:00+03:00'));
+  assert.equal(inGrace.ok, true);
+  await setBookingArrival(db, { bookingId, arrived: false }, new Date('2026-07-11T14:20:00+03:00'));
+
+  // Tighten to a hard lock: even one minute past end is now closed.
+  await updateRoundSettings(db, { markingGraceMinutes: 0 });
+  const hardLocked = await setBookingArrival(db, { bookingId, arrived: true }, new Date('2026-07-11T14:05:00+03:00'));
+  assert.equal(hardLocked.ok, false);
+  if (!hardLocked.ok) assert.equal(hardLocked.error, 'round_ended');
 });
 
 test('punch bookings are born with distinct R- booking numbers', async () => {

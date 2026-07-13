@@ -19,6 +19,8 @@ function humanizeError(code: string): string {
   if (code === 'cancellation_window_out_of_range') return 'חלון הביטול חייב להיות בין 0 ל-720 שעות.';
   if (code === 'claim_window_out_of_range') return 'חלון תפיסת המקום חייב להיות בין 1 ל-1440 דקות.';
   if (code === 'active_hours_out_of_range') return 'שעות הפעילות חייבות להיות בין 0 ל-23.';
+  if (code === 'booking_horizon_out_of_range') return 'חלון ההרשמה חייב להיות בין 1 ל-365 ימים.';
+  if (code === 'marking_grace_out_of_range') return 'חלון סימון ההגעה חייב להיות בין 0 ל-240 דקות.';
   if (code === 'reminder_offsets_invalid')
     return 'זמני התזכורת: עד 5 מספרים, כל אחד בין 1 ל-240 דקות.';
   if (code === 'closing_time_invalid') return 'שעת הסגירה חייבת להיות בפורמט HH:MM.';
@@ -43,6 +45,7 @@ export function RoundSettingsSection() {
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [holdTtl, setHoldTtl] = useState('15');
+  const [bookingHorizon, setBookingHorizon] = useState('30');
   const [cancelWindow, setCancelWindow] = useState('24');
   const [claimWindow, setClaimWindow] = useState('60');
   const [activeStart, setActiveStart] = useState('8');
@@ -52,6 +55,7 @@ export function RoundSettingsSection() {
   const [skipLast, setSkipLast] = useState(true);
   const [allowOverCapacity, setAllowOverCapacity] = useState(true);
   const [warnUpcoming, setWarnUpcoming] = useState(true);
+  const [markingGrace, setMarkingGrace] = useState('30');
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -59,6 +63,7 @@ export function RoundSettingsSection() {
 
   const hydrate = (s: RoundSettings) => {
     setHoldTtl(String(s.holdTtlMinutes));
+    setBookingHorizon(String(s.bookingHorizonDays));
     setCancelWindow(String(s.cancellationWindowHours));
     setClaimWindow(String(s.claimWindowMinutes));
     setActiveStart(String(s.activeHoursStart));
@@ -68,6 +73,7 @@ export function RoundSettingsSection() {
     setSkipLast(s.skipLastRoundReminder);
     setAllowOverCapacity(s.allowOverCapacityWalkIn);
     setWarnUpcoming(s.warnUpcomingReservationAtDoor);
+    setMarkingGrace(String(s.markingGraceMinutes));
   };
 
   useEffect(() => {
@@ -113,6 +119,7 @@ export function RoundSettingsSection() {
   const offsetsChanged = JSON.stringify(parsedOffsets) !== JSON.stringify(loaded.reminderOffsets);
   const dirty =
     holdTtl !== String(loaded.holdTtlMinutes) ||
+    bookingHorizon !== String(loaded.bookingHorizonDays) ||
     cancelWindow !== String(loaded.cancellationWindowHours) ||
     claimWindow !== String(loaded.claimWindowMinutes) ||
     activeStart !== String(loaded.activeHoursStart) ||
@@ -121,13 +128,16 @@ export function RoundSettingsSection() {
     closing !== loaded.closingTime.slice(0, 5) ||
     skipLast !== loaded.skipLastRoundReminder ||
     allowOverCapacity !== loaded.allowOverCapacityWalkIn ||
-    warnUpcoming !== loaded.warnUpcomingReservationAtDoor;
+    warnUpcoming !== loaded.warnUpcomingReservationAtDoor ||
+    markingGrace !== String(loaded.markingGraceMinutes);
 
   const submit = async () => {
     const patch: RoundSettingsPatch = {};
     const num = (s: string) => (Number.isInteger(Number(s)) && s.trim() !== '' ? Number(s) : null);
     const ttl = num(holdTtl);
     if (ttl !== null && ttl !== loaded.holdTtlMinutes) patch.holdTtlMinutes = ttl;
+    const bh = num(bookingHorizon);
+    if (bh !== null && bh !== loaded.bookingHorizonDays) patch.bookingHorizonDays = bh;
     const cw = num(cancelWindow);
     if (cw !== null && cw !== loaded.cancellationWindowHours) patch.cancellationWindowHours = cw;
     const clw = num(claimWindow);
@@ -143,6 +153,8 @@ export function RoundSettingsSection() {
       patch.allowOverCapacityWalkIn = allowOverCapacity;
     if (warnUpcoming !== loaded.warnUpcomingReservationAtDoor)
       patch.warnUpcomingReservationAtDoor = warnUpcoming;
+    const mg = num(markingGrace);
+    if (mg !== null && mg !== loaded.markingGraceMinutes) patch.markingGraceMinutes = mg;
     if (Object.keys(patch).length === 0) return;
 
     setSubmitting(true);
@@ -189,6 +201,20 @@ export function RoundSettingsSection() {
             disabled={submitting}
             suffix="דקות"
             hint="כמה זמן יש ללקוח לתפוס מקום שהתפנה מרשימת המתנה. ברירת מחדל 60."
+          />
+        </div>
+
+        <div style={{ fontSize: 13.5, color: MUTED, fontWeight: 600, marginTop: 4 }}>
+          חלון הרשמה
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: 14 }}>
+          <NumberField
+            label="הרשמה עד כמה ימים קדימה"
+            value={bookingHorizon}
+            onChange={setBookingHorizon}
+            disabled={submitting}
+            suffix="ימים"
+            hint="עד כמה ימים מהיום לקוח יכול להירשם מראש. ברירת מחדל 30 (חודש)."
           />
         </div>
 
@@ -253,6 +279,16 @@ export function RoundSettingsSection() {
 
         <div style={{ fontSize: 13.5, color: MUTED, fontWeight: 600, marginTop: 8 }}>
           ניהול משתתפים בסבב
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: 14 }}>
+          <NumberField
+            label="סימון הגעה עד כמה דקות אחרי סוף הסבב"
+            value={markingGrace}
+            onChange={setMarkingGrace}
+            disabled={submitting}
+            suffix="דקות"
+            hint="כמה דקות אחרי סיום הסבב עדיין אפשר לסמן הגעה בצוות. 0 = נעילה מיד בסיום. ברירת מחדל 30."
+          />
         </div>
         <BooleanField
           label="הוספה ידנית מעל התפוסה"

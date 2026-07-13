@@ -51,6 +51,8 @@ export interface StaffRoundsSettings {
   refreshIntervalSeconds: number;
   capacityWarningPct: number;
   capacityDangerPct: number;
+  /** Minutes after a round ends that staff may still mark arrivals. */
+  markingGraceMinutes: number;
 }
 
 export interface StaffRoundsResponse {
