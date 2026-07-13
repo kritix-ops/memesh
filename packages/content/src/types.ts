@@ -17,7 +17,10 @@ export type ContentGroup =
   | 'customer_cards'
   | 'customer_profile'
   | 'customer_waitlist'
-  | 'email_cancel';
+  | 'email_cancel'
+  | 'staff_general'
+  | 'staff_rounds'
+  | 'staff_pos';
 
 export interface ContentGroupMeta {
   id: ContentGroup;

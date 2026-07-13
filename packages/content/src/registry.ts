@@ -20,6 +20,9 @@ export const CONTENT_GROUPS: ContentGroupMeta[] = [
   { id: 'customer_waitlist', label: 'אזור אישי — רשימת המתנה' },
   { id: 'customer_profile', label: 'אזור אישי — פרופיל' },
   { id: 'email_cancel', label: 'מיילים — ביטול הזמנה' },
+  { id: 'staff_general', label: 'צוות — כללי וניווט' },
+  { id: 'staff_rounds', label: 'צוות — מסך סבבים' },
+  { id: 'staff_pos', label: 'צוות — קופה' },
 ];
 
 export const CONTENT_REGISTRY: ContentEntry[] = [
@@ -675,6 +678,12 @@ export const CONTENT_REGISTRY: ContentEntry[] = [
     default: 'הזיכוי יטופל ויוחזר לאמצעי התשלום שלך בקרוב. אם יש שאלה, אפשר לפנות אלינו.',
     kind: 'long',
   },
+
+  // ── צוות — כללי וניווט (App shell) ────────────────────────────────
+  { key: 'staff.nav.signOut', group: 'staff_general', label: 'כפתור — התנתקות', default: 'התנתק', kind: 'short' },
+  { key: 'staff.nav.label', group: 'staff_general', label: 'ניווט — תווית נגישות', default: 'ניווט', kind: 'short' },
+  { key: 'staff.nav.pos', group: 'staff_general', label: 'לשונית — קופה', default: 'קופה', kind: 'short' },
+  { key: 'staff.nav.rounds', group: 'staff_general', label: 'לשונית — סבבים', default: 'סבבים', kind: 'short' },
 ];
 
 /** key → default text, for the fail-safe fallback the apps bundle. */
