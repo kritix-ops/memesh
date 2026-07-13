@@ -1,4 +1,5 @@
 import { Logo } from '@memesh/brand';
+import { ContentProvider } from '@memesh/content/react';
 import { CustomerSessionProvider } from '@memesh/customer-auth';
 import type { CSSProperties } from 'react';
 import { CheckoutComplete } from './customer/CheckoutComplete';
@@ -47,7 +48,8 @@ const readGiftClaimToken = (): string | null => {
 export function App() {
   return (
     <CustomerSessionProvider>
-      <div dir="rtl" style={canvasStyle}>
+      <ContentProvider audience="customer">
+        <div dir="rtl" style={canvasStyle}>
         <header style={headerStyle}>
           <a href={MAIN_SITE_URL} style={logoLinkStyle} aria-label="לאתר הראשי של ממש">
             <Logo />
@@ -63,7 +65,8 @@ export function App() {
           if (isCheckoutComplete()) return <CheckoutComplete />;
           return <CustomerApp />;
         })()}
-      </div>
+        </div>
+      </ContentProvider>
     </CustomerSessionProvider>
   );
 }

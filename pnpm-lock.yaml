@@ -23,6 +23,9 @@ importers:
       '@memesh/brand':
         specifier: workspace:*
         version: link:../../packages/brand
+      '@memesh/content':
+        specifier: workspace:*
+        version: link:../../packages/content
       '@memesh/staff-auth':
         specifier: workspace:*
         version: link:../../packages/staff-auth
@@ -81,6 +84,9 @@ importers:
       '@memesh/auth':
         specifier: workspace:*
         version: link:../../packages/auth
+      '@memesh/content':
+        specifier: workspace:*
+        version: link:../../packages/content
       '@memesh/db':
         specifier: workspace:*
         version: link:../../packages/db
@@ -149,6 +155,9 @@ importers:
       '@memesh/brand':
         specifier: workspace:*
         version: link:../../packages/brand
+      '@memesh/content':
+        specifier: workspace:*
+        version: link:../../packages/content
       '@memesh/customer-auth':
         specifier: workspace:*
         version: link:../../packages/customer-auth
@@ -274,6 +283,28 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
+  packages/content:
+    dependencies:
+      '@memesh/web-shared':
+        specifier: workspace:*
+        version: link:../web-shared
+    devDependencies:
+      '@types/node':
+        specifier: ^24.0.0
+        version: 24.12.4
+      '@types/react':
+        specifier: ^19.0.0
+        version: 19.2.14
+      react:
+        specifier: ^19.0.0
+        version: 19.2.6
+      tsx:
+        specifier: ^4.19.0
+        version: 4.22.1
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
   packages/customer-auth:
     dependencies:
       '@memesh/web-shared':
@@ -298,6 +329,9 @@ importers:
 
   packages/db:
     dependencies:
+      '@memesh/content':
+        specifier: workspace:*
+        version: link:../content
       '@memesh/qr-engine':
         specifier: workspace:*
         version: link:../qr-engine

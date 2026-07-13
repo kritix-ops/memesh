@@ -9,6 +9,7 @@ import { adminRoutes } from './routes/admin.js';
 import { authRoutes } from './routes/auth.js';
 import { cardSettingsRoutes } from './routes/card-settings.js';
 import { cardsRoutes } from './routes/cards.js';
+import { contentRoutes } from './routes/content.js';
 import { customerAuthRoutes } from './routes/customer-auth.js';
 import { customersRoutes } from './routes/customers.js';
 import { debugQrRoutes } from './routes/debug-qr.js';
@@ -100,6 +101,7 @@ export const buildApp = async (): Promise<FastifyInstance> => {
   await fastify.register(cardsRoutes);
   await fastify.register(cardSettingsRoutes);
   await fastify.register(roundSettingsRoutes);
+  await fastify.register(contentRoutes);
   await fastify.register(punchRoutes);
   await fastify.register(debugQrRoutes);
   await fastify.register(staffRoutes);
