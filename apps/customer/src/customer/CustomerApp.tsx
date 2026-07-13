@@ -91,6 +91,7 @@ const giftCardAccent: CSSProperties = {
 // — warm orange, rounded, deliberately friendly. When buyer name is unknown
 // (legacy gift rows or rare data gaps) we drop the "מ-X" tail.
 function GiftBadge({ buyerName }: { buyerName: string | null }) {
+  const { t } = useContent();
   return (
     <div
       style={{
@@ -110,7 +111,9 @@ function GiftBadge({ buyerName }: { buyerName: string | null }) {
       }}
     >
       <span aria-hidden="true">🎁</span>
-      <span>{buyerName ? `מתנה מ-${buyerName}` : 'כרטיסיית מתנה'}</span>
+      <span>
+        {buyerName ? t('customer.gift.badgeFrom', { buyer: buyerName }) : t('customer.gift.badge')}
+      </span>
     </div>
   );
 }
@@ -184,6 +187,7 @@ export function CustomerApp() {
 // ---------------------------------------------------------------------------
 
 function CustomerLogin() {
+  const { t } = useContent();
   const { requestOtp, verifyOtp, requestEmailOtp, verifyEmailOtp } = useCustomerSession();
   const [step, setStep] = useState<'phone' | 'code' | 'email' | 'email-code'>('phone');
   const [phone, setPhone] = useState('');
@@ -223,7 +227,7 @@ function CustomerLogin() {
     e.preventDefault();
     const trimmed = phone.trim();
     if (!trimmed) {
-      setError('נא להזין מספר טלפון');
+      setError(t('customer.login.errPhone'));
       return;
     }
     setSubmitting(true);
@@ -231,7 +235,7 @@ function CustomerLogin() {
     const res = await requestOtp(trimmed);
     setSubmitting(false);
     if (!res.ok) {
-      setError(humanizeCustomerAuthError(res.error));
+      setError(humanizeCustomerAuthError(res.error, t));
       return;
     }
     setCode('');
@@ -247,7 +251,7 @@ function CustomerLogin() {
     const res = await requestOtp(trimmed);
     setSubmitting(false);
     if (!res.ok) {
-      setError(humanizeCustomerAuthError(res.error));
+      setError(humanizeCustomerAuthError(res.error, t));
       return;
     }
     setCode('');
@@ -258,7 +262,7 @@ function CustomerLogin() {
     e.preventDefault();
     const trimmed = code.trim();
     if (!trimmed) {
-      setError('נא להזין את הקוד');
+      setError(t('customer.login.errCode'));
       return;
     }
     setSubmitting(true);
@@ -266,7 +270,7 @@ function CustomerLogin() {
     const res = await verifyOtp(phone.trim(), trimmed);
     setSubmitting(false);
     if (!res.ok) {
-      setError(humanizeCustomerAuthError(res.error));
+      setError(humanizeCustomerAuthError(res.error, t));
     }
   };
 
@@ -274,7 +278,7 @@ function CustomerLogin() {
     e.preventDefault();
     const trimmed = email.trim();
     if (!trimmed || !/^\S+@\S+\.\S+$/.test(trimmed)) {
-      setError('נא להזין כתובת אימייל תקינה');
+      setError(t('customer.login.errEmail'));
       return;
     }
     setSubmitting(true);
@@ -282,7 +286,7 @@ function CustomerLogin() {
     const res = await requestEmailOtp(trimmed);
     setSubmitting(false);
     if (!res.ok) {
-      setError(humanizeCustomerAuthError(res.error));
+      setError(humanizeCustomerAuthError(res.error, t));
       return;
     }
     setCode('');
@@ -298,7 +302,7 @@ function CustomerLogin() {
     const res = await requestEmailOtp(trimmed);
     setSubmitting(false);
     if (!res.ok) {
-      setError(humanizeCustomerAuthError(res.error));
+      setError(humanizeCustomerAuthError(res.error, t));
       return;
     }
     setCode('');
@@ -309,7 +313,7 @@ function CustomerLogin() {
     e.preventDefault();
     const trimmed = code.trim();
     if (!trimmed) {
-      setError('נא להזין את הקוד מהאימייל');
+      setError(t('customer.login.errEmailCode'));
       return;
     }
     setSubmitting(true);
@@ -317,7 +321,7 @@ function CustomerLogin() {
     const res = await verifyEmailOtp(email.trim(), trimmed);
     setSubmitting(false);
     if (!res.ok) {
-      setError(humanizeCustomerAuthError(res.error));
+      setError(humanizeCustomerAuthError(res.error, t));
     }
   };
 
@@ -326,11 +330,13 @@ function CustomerLogin() {
       <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 8 }}>
         <Sun size={56} />
       </div>
-      <div style={{ textAlign: 'center', fontSize: 22, fontWeight: 600 }}>אזור אישי</div>
+      <div style={{ textAlign: 'center', fontSize: 22, fontWeight: 600 }}>
+        {t('customer.login.title')}
+      </div>
       {step === 'phone' && (
         <form onSubmit={onRequest}>
           <div style={{ color: MUTED, textAlign: 'center', fontSize: 14, margin: '6px 0 18px' }}>
-            הזינו מספר טלפון ונשלח לכם קוד כניסה
+            {t('customer.login.phonePrompt')}
           </div>
           <input
             value={phone}
@@ -353,7 +359,7 @@ function CustomerLogin() {
               cursor: submitting ? 'default' : 'pointer',
             }}
           >
-            {submitting ? 'שולח…' : 'שלחו לי קוד'}
+            {submitting ? 'שולח…' : t('customer.login.sendCode')}
           </button>
           <button
             type="button"
@@ -374,17 +380,17 @@ function CustomerLogin() {
               textDecoration: 'underline',
             }}
           >
-            לא קיבלתי SMS — להתחבר באימייל
+            {t('customer.login.useEmail')}
           </button>
         </form>
       )}
       {step === 'code' && (
         <form onSubmit={onVerify}>
           <div style={{ color: MUTED, textAlign: 'center', fontSize: 14, margin: '6px 0 4px' }}>
-            הזינו את הקוד שנשלח אליכם
+            {t('customer.login.enterCode')}
           </div>
           <div style={{ color: MUTED, textAlign: 'center', fontSize: 13, marginBottom: 18 }}>
-            קוד נשלח אל {phone}
+            {t('customer.login.codeSentTo', { target: phone })}
           </div>
           <input
             value={code}
@@ -411,7 +417,7 @@ function CustomerLogin() {
               cursor: submitting ? 'default' : 'pointer',
             }}
           >
-            {submitting ? 'מאמת…' : 'כניסה'}
+            {submitting ? 'מאמת…' : t('customer.login.enter')}
           </button>
           <button
             type="button"
@@ -428,7 +434,9 @@ function CustomerLogin() {
               fontWeight: 600,
             }}
           >
-            {resendIn > 0 ? `שליחת קוד חדש בעוד ${resendIn} שניות` : 'שלחו לי קוד חדש'}
+            {resendIn > 0
+              ? t('customer.login.resendIn', { seconds: resendIn })
+              : t('customer.login.resend')}
           </button>
           <button
             type="button"
@@ -448,14 +456,14 @@ function CustomerLogin() {
               fontSize: 14,
             }}
           >
-            שינוי מספר טלפון
+            {t('customer.login.changePhone')}
           </button>
         </form>
       )}
       {step === 'email' && (
         <form onSubmit={onRequestEmail}>
           <div style={{ color: MUTED, textAlign: 'center', fontSize: 14, margin: '6px 0 18px' }}>
-            הזינו את כתובת האימייל שלכם ונשלח לכם קוד כניסה. רק אימייל שכבר רשום במערכת.
+            {t('customer.login.emailPrompt')}
           </div>
           <input
             value={email}
@@ -478,7 +486,7 @@ function CustomerLogin() {
               cursor: submitting ? 'default' : 'pointer',
             }}
           >
-            {submitting ? 'שולח…' : 'שלחו לי קוד באימייל'}
+            {submitting ? 'שולח…' : t('customer.login.sendEmailCode')}
           </button>
           <button
             type="button"
@@ -498,17 +506,17 @@ function CustomerLogin() {
               fontSize: 14,
             }}
           >
-            חזרה להתחברות ב-SMS
+            {t('customer.login.backToSms')}
           </button>
         </form>
       )}
       {step === 'email-code' && (
         <form onSubmit={onVerifyEmail}>
           <div style={{ color: MUTED, textAlign: 'center', fontSize: 14, margin: '6px 0 4px' }}>
-            הזינו את הקוד שנשלח אליכם באימייל
+            {t('customer.login.enterEmailCode')}
           </div>
           <div style={{ color: MUTED, textAlign: 'center', fontSize: 13, marginBottom: 18 }}>
-            קוד נשלח אל {email}
+            {t('customer.login.codeSentTo', { target: email })}
           </div>
           <input
             value={code}
@@ -535,7 +543,7 @@ function CustomerLogin() {
               cursor: submitting ? 'default' : 'pointer',
             }}
           >
-            {submitting ? 'מאמת…' : 'כניסה'}
+            {submitting ? 'מאמת…' : t('customer.login.enter')}
           </button>
           <button
             type="button"
@@ -552,7 +560,9 @@ function CustomerLogin() {
               fontWeight: 600,
             }}
           >
-            {resendIn > 0 ? `שליחת קוד חדש בעוד ${resendIn} שניות` : 'שלחו לי קוד חדש'}
+            {resendIn > 0
+              ? t('customer.login.resendIn', { seconds: resendIn })
+              : t('customer.login.resend')}
           </button>
           <button
             type="button"
@@ -572,7 +582,7 @@ function CustomerLogin() {
               fontSize: 14,
             }}
           >
-            שינוי כתובת האימייל
+            {t('customer.login.changeEmail')}
           </button>
         </form>
       )}
@@ -599,16 +609,15 @@ function ErrorBanner({ message }: { message: string }) {
   );
 }
 
-function humanizeCustomerAuthError(code: string): string {
+function humanizeCustomerAuthError(code: string, t: (key: string) => string): string {
   // Surfaces the new server reasons from /verify-otp so a stuck customer
   // sees a real recovery path instead of the catch-all "wrong code" loop.
-  if (code === 'invalid_code') return 'הקוד אינו תקין. בדקו שוב את הספרות.';
-  if (code === 'code_expired') return 'הקוד פג תוקף. שלחו לעצמכם קוד חדש.';
-  if (code === 'code_locked')
-    return 'הגעתם למספר ניסיונות מירבי. נסו שוב בעוד כ-15 דקות, או שלחו קוד חדש.';
-  if (code === 'invalid_body') return 'הקלט אינו תקין.';
-  if (code === 'http_429') return 'יותר מדי ניסיונות. נסו שוב בעוד דקה.';
-  return 'תקלה זמנית. נסו שוב בעוד רגע.';
+  if (code === 'invalid_code') return t('customer.login.errInvalidCode');
+  if (code === 'code_expired') return t('customer.login.errCodeExpired');
+  if (code === 'code_locked') return t('customer.login.errTooMany');
+  if (code === 'invalid_body') return t('customer.login.errInvalidBody');
+  if (code === 'http_429') return t('customer.login.err429');
+  return t('customer.login.errGeneric');
 }
 
 // ---------------------------------------------------------------------------
@@ -624,11 +633,9 @@ function humanizeCustomerAuthError(code: string): string {
 
 type Screen = 'bookings' | 'cards' | 'profile';
 
-const NAV: { key: Screen; label: string }[] = [
-  { key: 'bookings', label: 'הזמנות' },
-  { key: 'cards', label: 'כרטיסיות' },
-  { key: 'profile', label: 'פרופיל' },
-];
+// Labels live in the content registry (customer.nav.*), resolved by key at
+// render — this carries only which screens exist and their order.
+const NAV: { key: Screen }[] = [{ key: 'bookings' }, { key: 'cards' }, { key: 'profile' }];
 
 const navItemStyle = (active: boolean): CSSProperties => ({
   display: 'flex',
@@ -715,8 +722,9 @@ function AppShell({
   onSignOut: () => void;
   children: ReactNode;
 }) {
+  const { t } = useContent();
   const isMobile = useIsMobile();
-  const title = NAV.find((n) => n.key === active)?.label ?? '';
+  const title = t(`customer.nav.${active}`);
 
   if (isMobile) {
     return (
@@ -724,7 +732,7 @@ function AppShell({
         <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '18px 18px 6px' }}>
           <div style={{ fontSize: 21, fontWeight: 600, color: INK }}>{title}</div>
           <button onClick={onSignOut} style={{ border: 'none', background: 'transparent', color: MUTED, fontSize: 13, cursor: 'pointer' }}>
-            יציאה
+            {t('customer.nav.signOut')}
           </button>
         </header>
         <main style={{ flex: 1, width: '100%', maxWidth: 560, margin: '0 auto', padding: '8px 16px 92px', boxSizing: 'border-box' }}>
@@ -733,7 +741,7 @@ function AppShell({
         <nav style={bottomNavStyle}>
           {NAV.map((n) => (
             <button key={n.key} onClick={() => onNavigate(n.key)} style={bottomItemStyle(active === n.key)} aria-current={active === n.key ? 'page' : undefined}>
-              <span>{n.label}</span>
+              <span>{t(`customer.nav.${n.key}`)}</span>
               {counts[n.key] ? <NavCountBadge n={counts[n.key]!} /> : null}
             </button>
           ))}
@@ -756,13 +764,13 @@ function AppShell({
           </div>
           {NAV.map((n) => (
             <button key={n.key} onClick={() => onNavigate(n.key)} style={navItemStyle(active === n.key)} aria-current={active === n.key ? 'page' : undefined}>
-              <span>{n.label}</span>
+              <span>{t(`customer.nav.${n.key}`)}</span>
               {counts[n.key] ? <span style={navCount(active === n.key)}>{counts[n.key]}</span> : null}
             </button>
           ))}
           <div style={{ borderTop: `1px solid ${BORDER}`, marginTop: 6, paddingTop: 6 }}>
             <button onClick={onSignOut} style={navItemStyle(false)}>
-              יציאה
+              {t('customer.nav.signOut')}
             </button>
           </div>
         </aside>
@@ -1418,6 +1426,7 @@ function MonthCalendar({
   onMonthChange: (ym: string) => void;
   onPick: (dateIso: string) => void;
 }) {
+  const { t } = useContent();
   const { leadingBlanks, dates } = monthGrid(month);
   const canPrev = month > monthOfIso(todayIso);
   const canNext = maxDate !== null && month < monthOfIso(maxDate);
@@ -1447,7 +1456,7 @@ function MonthCalendar({
         {/* RTL: the past sits to the right, so the right-hand button walks back. */}
         <button
           type="button"
-          title="חודש קודם"
+          title={t('customer.picker.prevMonth')}
           disabled={!canPrev}
           onClick={() => canPrev && onMonthChange(addMonths(month, -1))}
           style={navBtn(canPrev)}
@@ -1457,7 +1466,7 @@ function MonthCalendar({
         <div style={{ fontSize: 14.5, fontWeight: 700 }}>{monthLabelHe(month)}</div>
         <button
           type="button"
-          title="חודש הבא"
+          title={t('customer.picker.nextMonth')}
           disabled={!canNext}
           onClick={() => canNext && onMonthChange(addMonths(month, 1))}
           style={navBtn(canNext)}
@@ -1723,13 +1732,14 @@ function DayStrip({
   onToggleCalendar: () => void;
   onPick: (dateIso: string) => void;
 }) {
+  const { t } = useContent();
   return (
     <div style={{ display: 'flex', gap: 6, alignItems: 'stretch' }}>
       {/* Fixed beside the strip so far-future dates are one tap away
           without scrolling (Yanay 2026-07-05). */}
       <button
         onClick={onToggleCalendar}
-        title="בחירת תאריך מלוח שנה"
+        title={t('customer.picker.calendarTitle')}
         style={{
           flex: '0 0 auto',
           minWidth: 52,
@@ -1746,7 +1756,9 @@ function DayStrip({
         }}
       >
         <span style={{ fontSize: 17, lineHeight: 1 }}>📅</span>
-        <span style={{ fontSize: 9.5, color: MUTED, fontWeight: 600 }}>לוח שנה</span>
+        <span style={{ fontSize: 9.5, color: MUTED, fontWeight: 600 }}>
+          {t('customer.picker.calendar')}
+        </span>
       </button>
       <div
         style={{
@@ -1779,7 +1791,7 @@ function DayStrip({
               }}
             >
               <span style={{ fontSize: 10.5, color: MUTED, fontWeight: 600 }}>
-                {i === 0 ? 'היום' : `${dowLetter(d.date)}׳`}
+                {i === 0 ? t('customer.picker.today') : `${dowLetter(d.date)}׳`}
               </span>
               <span
                 style={{
@@ -1808,6 +1820,7 @@ function DayStrip({
 
 /** The dot legend under a picker — what green/amber/red/grey mean. */
 function DayDotLegend() {
+  const { t } = useContent();
   return (
     <div
       style={{
@@ -1823,13 +1836,13 @@ function DayDotLegend() {
     >
       {(
         [
-          ['ok', 'הרבה מקום'],
-          ['warn', 'נשארו מעט'],
-          ['full', 'מלא'],
-          ['free', 'כניסה חופשית'],
-          ['closed', 'סגור'],
+          ['ok', 'customer.picker.legendOk'],
+          ['warn', 'customer.picker.legendWarn'],
+          ['full', 'customer.picker.legendFull'],
+          ['free', 'customer.picker.legendFree'],
+          ['closed', 'customer.picker.legendClosed'],
         ] as const
-      ).map(([k, label]) => (
+      ).map(([k, labelKey]) => (
         <span key={k} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
           <span
             style={{
@@ -1839,7 +1852,7 @@ function DayDotLegend() {
               background: DAY_DOT[k],
             }}
           />
-          {label}
+          {t(labelKey)}
         </span>
       ))}
     </div>
@@ -1860,6 +1873,7 @@ function RoundChoiceRow({
   disabled?: boolean;
   onClick: () => void;
 }) {
+  const { t } = useContent();
   const scarce = round.capacity > 0 && round.available / round.capacity <= 0.25;
   return (
     <button
@@ -1905,7 +1919,7 @@ function RoundChoiceRow({
             color: scarce ? '#b9772a' : '#5b7a34',
           }}
         >
-          {round.available} פנויים
+          {t('customer.picker.available', { count: round.available })}
         </span>
         <span
           style={{
