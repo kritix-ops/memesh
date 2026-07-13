@@ -599,6 +599,7 @@ export const CONTENT_REGISTRY: ContentEntry[] = [
   { key: 'customer.profile.phoneLocked', group: 'customer_profile', label: 'הערה — טלפון נעול', default: 'לא ניתן לשנות טלפון · פנו לצוות', kind: 'short' },
   { key: 'customer.profile.email', group: 'customer_profile', label: 'תווית — מייל', default: 'מייל', kind: 'short' },
   { key: 'customer.profile.preferredChannel', group: 'customer_profile', label: 'תווית — ערוץ מועדף', default: 'ערוץ עדכונים מועדף', kind: 'short' },
+  { key: 'customer.profile.channelSms', group: 'customer_profile', label: 'ערוץ — SMS', default: 'SMS', kind: 'short' },
   { key: 'customer.profile.channelWhatsapp', group: 'customer_profile', label: 'ערוץ — וואטסאפ', default: 'וואטסאפ', kind: 'short' },
   { key: 'customer.profile.channelEmail', group: 'customer_profile', label: 'ערוץ — מייל', default: 'מייל', kind: 'short' },
   { key: 'customer.profile.children', group: 'customer_profile', label: 'תווית — ילדים רשומים', default: 'ילדים רשומים', kind: 'short' },

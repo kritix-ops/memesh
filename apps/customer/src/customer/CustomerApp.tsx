@@ -152,10 +152,12 @@ const inputStyle: CSSProperties = {
 
 const yyyyMmDd = (iso: string): string => iso.slice(0, 10);
 
+// Labels live in the content registry (customer.profile.channel*), resolved by
+// key at render — this carries only the channel value and its label key.
 const CHANNELS = [
-  { k: 'sms', l: 'SMS' },
-  { k: 'whatsapp', l: 'וואטסאפ' },
-  { k: 'email', l: 'מייל' },
+  { k: 'sms', labelKey: 'customer.profile.channelSms' },
+  { k: 'whatsapp', labelKey: 'customer.profile.channelWhatsapp' },
+  { k: 'email', labelKey: 'customer.profile.channelEmail' },
 ] as const;
 type Channel = (typeof CHANNELS)[number]['k'];
 
@@ -907,6 +909,7 @@ function CollapsibleBooking({
   /** Reports a successful reschedule up to the list (with this booking's id). */
   onMoved?: (bookingId: string) => void;
 }) {
+  const { t } = useContent();
   const [open, setOpen] = useState(defaultOpen);
   const rootRef = useRef<HTMLDivElement>(null);
   // A rescheduled booking re-sorts into its new date slot, so without a
@@ -919,9 +922,9 @@ function CollapsibleBooking({
   }, [justMoved]);
   const pill =
     booking.status === 'cancelled'
-      ? { text: 'בוטל', bg: '#f6e7e7', fg: '#a23a3a' }
+      ? { text: t('customer.booking.statusCancelled'), bg: '#f6e7e7', fg: '#a23a3a' }
       : booking.status === 'used'
-        ? { text: 'נוצל', bg: '#eef1f4', fg: MUTED }
+        ? { text: t('customer.booking.used'), bg: '#eef1f4', fg: MUTED }
         : null;
   const labelHasT = labelHasTime(booking.label);
   return (
@@ -1010,7 +1013,7 @@ function CollapsibleBooking({
                 textAlign: 'center',
               }}
             >
-              המועד שונה בהצלחה! שימו לב — זה הברקוד החדש לכניסה.
+              {t('customer.booking.rescheduleSuccess')}
             </div>
           )}
           <RoundBookingCard
@@ -1207,9 +1210,13 @@ function CollapsibleCard({
   onBooked: () => void | Promise<void>;
   onWaitlisted: () => void | Promise<void>;
 }) {
+  const { t } = useContent();
   const [open, setOpen] = useState(defaultOpen);
   const remaining = c.totalEntries - c.usedEntries;
-  const expiry = c.expiresAt === null ? 'ללא תפוגה' : `תוקף עד ${fmtDate(yyyyMmDd(c.expiresAt))}`;
+  const expiry =
+    c.expiresAt === null
+      ? t('customer.cards.noExpiry')
+      : t('customer.cards.expiryUntil', { date: fmtDate(yyyyMmDd(c.expiresAt)) });
   const next = linkedUpcoming[0];
   return (
     <div style={{ ...card, padding: 0, overflow: 'hidden', ...(c.isGift && giftCardAccent) }}>
@@ -1237,14 +1244,14 @@ function CollapsibleCard({
         <span style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
           <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 8 }}>
             <span style={{ fontSize: 15, fontWeight: 600, color: INK }}>
-              {c.isGift ? 'כרטיסייה במתנה' : 'כרטיסייה'}
+              {c.isGift ? t('customer.cards.giftCard') : t('customer.cards.card')}
             </span>
             <span style={{ fontSize: 12, color: MUTED }} dir="ltr">
               {c.serialNumber}
             </span>
           </span>
           <span style={{ fontSize: 12.5, color: MUTED }}>
-            נותרו {remaining} מתוך {c.totalEntries} כניסות · {expiry}
+            {t('customer.cards.remaining', { remaining, total: c.totalEntries, expiry })}
           </span>
         </span>
         <span
@@ -1273,7 +1280,11 @@ function CollapsibleCard({
         >
           {c.isGift && <GiftBadge buyerName={c.giftBuyerFirstName ?? null} />}
           <PunchCard used={c.usedEntries} total={c.totalEntries} compact />
-          <MemeshQr value={c.qrToken} size={180} title={`קוד QR — ${c.serialNumber}`} />
+          <MemeshQr
+            value={c.qrToken}
+            size={180}
+            title={t('customer.cards.qrTitle', { serial: c.serialNumber })}
+          />
           {next && (
             <button
               type="button"
@@ -1290,7 +1301,7 @@ function CollapsibleCard({
                 textAlign: 'right',
               }}
             >
-              יש לך הזמנה עתידית מכרטיסייה זו ·{' '}
+              {t('customer.cards.upcomingFromCard')}{' '}
               <span dir="ltr" style={{ unicodeBidi: 'isolate' }}>
                 {fmtDate(next.date)} {next.startTime}
               </span>{' '}
@@ -1321,16 +1332,17 @@ function CardsScreen({
   onWaitlisted: () => void | Promise<void>;
   onGoToBookings: () => void;
 }) {
+  const { t } = useContent();
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       {error ? (
         <div style={{ ...card, color: '#a23a3a', textAlign: 'center' }}>
-          לא הצלחנו לטעון את הכרטיסיות. רעננו את הדף.
+          {t('customer.cards.loadError')}
         </div>
       ) : cards === null ? (
         <div style={{ ...card, color: MUTED, textAlign: 'center' }}>טוען…</div>
       ) : cards.length === 0 ? (
-        <div style={{ ...card, color: MUTED, textAlign: 'center' }}>אין כרטיסיות פעילות.</div>
+        <div style={{ ...card, color: MUTED, textAlign: 'center' }}>{t('customer.cards.empty')}</div>
       ) : (
         cards.map((c, i) => (
           <CollapsibleCard
@@ -1359,11 +1371,12 @@ function ProfileScreen({
   savedAt: number | null;
   onSaved: () => void;
 }) {
+  const { t } = useContent();
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       {savedAt !== null && (
         <div style={{ ...card, background: '#f0f5e3', boxShadow: 'none', color: '#6f8f37', padding: '12px 16px' }}>
-          הפרטים נשמרו
+          {t('customer.profile.saved')}
         </div>
       )}
       <ProfileEdit profile={profile} onSaved={onSaved} />
@@ -1962,6 +1975,7 @@ function PunchRoundBooking({
   onBooked: () => void | Promise<void>;
   onWaitlisted: () => void | Promise<void>;
 }) {
+  const { t } = useContent();
   const [open, setOpen] = useState(false);
   const [joinMsg, setJoinMsg] = useState<string | null>(null);
   const [count, setCount] = useState(1);
@@ -2037,12 +2051,12 @@ function PunchRoundBooking({
     if (!res.ok) {
       setError(
         res.error === 'has_availability'
-          ? 'יש מקום פנוי — אפשר להזמין ישירות.'
-          : 'לא ניתן להצטרף לרשימה כרגע.',
+          ? t('customer.bookflow.spaceAvailable')
+          : t('customer.bookflow.joinError'),
       );
       return;
     }
-    setJoinMsg(`נרשמת לרשימת ההמתנה לסבב ${r.startTime}. נודיע לך אם יתפנה מקום.`);
+    setJoinMsg(t('customer.bookflow.joinedWaitlist', { time: r.startTime }));
     await onWaitlisted();
   };
 
@@ -2060,14 +2074,14 @@ function PunchRoundBooking({
       setBusy(false);
       setError(
         res.error === 'round_full'
-          ? 'אין מספיק מקומות פנויים בסבב. בחרו זמן אחר.'
+          ? t('customer.bookflow.errNotEnoughSpace')
           : res.error === 'not_enough_entries'
-            ? 'לא נותרו מספיק כניסות בכרטיסייה.'
+            ? t('customer.bookflow.errNotEnoughEntries')
             : res.error === 'card_exhausted' || res.error === 'card_inactive'
-              ? 'לכרטיסייה לא נותרו כניסות.'
+              ? t('customer.bookflow.errNoEntries')
               : res.error === 'card_expired'
-                ? 'הכרטיסייה פגה.'
-                : 'לא ניתן להזמין כרגע. נסו שוב.',
+                ? t('customer.bookflow.errCardExpired')
+                : t('customer.bookflow.errGeneric'),
       );
       return;
     }
@@ -2090,9 +2104,7 @@ function PunchRoundBooking({
         return;
       }
       if (!checkout.ok || (!checkout.data.confirmed && !checkout.data.alreadyPaid)) {
-        setCompanionNote(
-          'ההזמנה נקלטה, אבל התשלום עבור המלווה הנוסף לא הושלם. אפשר להשלים אותו מכרטיס ההזמנה למטה.',
-        );
+        setCompanionNote(t('customer.bookflow.companionPendingNote'));
       }
     }
     setBusy(false);
@@ -2103,7 +2115,7 @@ function PunchRoundBooking({
   if (!open) {
     return (
       <button onClick={() => setOpen(true)} style={{ ...primaryBtn, width: '100%' }}>
-        הזמנת כניסה לסבב
+        {t('customer.bookflow.title')}
       </button>
     );
   }
@@ -2120,7 +2132,7 @@ function PunchRoundBooking({
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={{ fontSize: 16, fontWeight: 700 }}>הזמנת כניסה לסבב</div>
+        <div style={{ fontSize: 16, fontWeight: 700 }}>{t('customer.bookflow.title')}</div>
         <button
           onClick={() => {
             setOpen(false);
@@ -2136,7 +2148,7 @@ function PunchRoundBooking({
             cursor: 'pointer',
           }}
         >
-          סגירה
+          {t('customer.bookflow.close')}
         </button>
       </div>
 
@@ -2144,8 +2156,8 @@ function PunchRoundBooking({
         <div style={{ textAlign: 'center', fontSize: 14.5, padding: '8px 0' }}>
           <div style={{ color: '#6f8f37' }}>
             {count > 1
-              ? 'ההזמנות נקלטו! הברקודים מחכים לך למעלה תחת "הסבבים שלי".'
-              : 'ההזמנה נקלטה! הברקוד מחכה לך למעלה תחת "הסבבים שלי".'}
+              ? t('customer.bookflow.successMulti')
+              : t('customer.bookflow.successSingle')}
           </div>
           {companionNote && (
             <div style={{ color: '#a8643d', fontSize: 13, marginTop: 8 }}>{companionNote}</div>
@@ -2155,7 +2167,7 @@ function PunchRoundBooking({
         <>
           {daysError && (
             <div style={{ textAlign: 'center', color: '#a23a3a', fontSize: 13 }}>
-              לא ניתן לטעון זמינות כרגע. נסו לרענן את הדף.
+              {t('customer.booking.availabilityError')}
             </div>
           )}
           {!daysError && days === null && (
@@ -2205,14 +2217,14 @@ function PunchRoundBooking({
           {selectedDay && openRounds.length === 0 && (
             <div style={{ textAlign: 'center', color: MUTED, fontSize: 13 }}>
               {selectedDay.closed
-                ? 'המקום סגור בתאריך זה.'
+                ? t('customer.bookflow.emptyClosed')
                 : selectedDay.rounds.length === 0
                   ? roundsOff
-                    ? 'בתאריך זה הכניסה חופשית — אין צורך בהזמנת סבב, פשוט מגיעים.'
-                    : 'אין סבבים פנויים ביום זה.'
+                    ? t('customer.bookflow.emptyFreePlay')
+                    : t('customer.bookflow.emptyNoRounds')
                   : fullRounds.length > 0
-                    ? 'כל הסבבים מלאים ביום זה — אפשר להצטרף לרשימת ההמתנה.'
-                    : 'אין סבבים פנויים ביום זה.'}
+                    ? t('customer.bookflow.emptyAllFull')
+                    : t('customer.bookflow.emptyNoRounds')}
             </div>
           )}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -2233,7 +2245,7 @@ function PunchRoundBooking({
           {fullRounds.length > 0 && (
             <div style={{ borderTop: '1px solid #f3efea', paddingTop: 12 }}>
               <div style={{ fontSize: 12.5, color: MUTED, marginBottom: 8, textAlign: 'center' }}>
-                סבבים מלאים — אפשר להירשם לרשימת המתנה
+                {t('customer.bookflow.allFullJoin')}
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {fullRounds.map((r) => (
@@ -2256,7 +2268,7 @@ function PunchRoundBooking({
                     <span style={{ fontWeight: 600 }}>
                       {roundTitle(r.label, r.startTime, r.endTime)}
                     </span>
-                    <span style={{ fontSize: 13 }}>רשימת המתנה</span>
+                    <span style={{ fontSize: 13 }}>{t('customer.bookflow.waitlist')}</span>
                   </button>
                 ))}
               </div>
@@ -2286,7 +2298,7 @@ function PunchRoundBooking({
                     gap: 14,
                   }}
                 >
-                  <span style={{ fontSize: 13.5 }}>כמה כניסות?</span>
+                  <span style={{ fontSize: 13.5 }}>{t('customer.bookflow.howManyEntries')}</span>
                   <button
                     disabled={busy || count <= 1}
                     onClick={() => setCount((c) => Math.max(1, c - 1))}
@@ -2311,13 +2323,20 @@ function PunchRoundBooking({
 
               <div style={{ fontSize: 13.5, textAlign: 'center' }}>
                 {count === 1
-                  ? `כניסה לסבב ${chosen.startTime}–${chosen.endTime}. ינוקב כרטיס אחד מתוך ${remaining} שנותרו.`
-                  : `${count} כניסות לסבב ${chosen.startTime}–${chosen.endTime}. ינוקבו ${count} כניסות מתוך ${remaining} שנותרו.`}
+                  ? t('customer.bookflow.punchOne', {
+                      time: `${chosen.startTime}–${chosen.endTime}`,
+                      remaining,
+                    })
+                  : t('customer.bookflow.punchMany', {
+                      count,
+                      time: `${chosen.startTime}–${chosen.endTime}`,
+                      remaining,
+                    })}
               </div>
 
               {count > 1 && (
                 <div style={{ fontSize: 12.5, color: MUTED, textAlign: 'center' }}>
-                  מלווה אחד כלול בכל כניסה.
+                  {t('customer.bookflow.companionIncluded')}
                 </div>
               )}
 
@@ -2342,13 +2361,13 @@ function PunchRoundBooking({
                   />
                   <span style={{ flex: 1 }}>
                     <span style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                      <strong style={{ fontSize: 14 }}>מלווה נוסף</strong>
+                      <strong style={{ fontSize: 14 }}>{t('customer.bookflow.extraCompanion')}</strong>
                       <strong style={{ fontSize: 14, color: '#a8643d', whiteSpace: 'nowrap' }}>
                         +₪{companionPrice}
                       </strong>
                     </span>
                     <span style={{ display: 'block', fontSize: 12.5, color: MUTED, marginTop: 4 }}>
-                      מלווה אחד כלול בכניסה. התשלום מתבצע באתר בסיום ההזמנה.
+                      {t('customer.bookflow.extraCompanionNote')}
                     </span>
                   </span>
                 </label>
@@ -2363,15 +2382,15 @@ function PunchRoundBooking({
                   {busy
                     ? 'מזמין…'
                     : count === 1 && addCompanion && companionPrice
-                      ? `אישור, הזמנה ותשלום ₪${companionPrice}`
-                      : 'אישור והזמנה'}
+                      ? t('customer.bookflow.confirmPay', { price: companionPrice })
+                      : t('customer.bookflow.confirm')}
                 </button>
                 <button
                   disabled={busy}
                   onClick={() => setChosen(null)}
                   style={{ ...ghostBtn, flex: 1 }}
                 >
-                  חזרה
+                  {t('customer.booking.backButton')}
                 </button>
               </div>
             </div>
@@ -2399,6 +2418,7 @@ function WaitlistEntryCard({
   entry: CustomerWaitlistEntry;
   onChanged: () => void | Promise<void>;
 }) {
+  const { t } = useContent();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -2408,7 +2428,7 @@ function WaitlistEntryCard({
     const res = await leaveWaitlist(entry.entryId);
     setBusy(false);
     if (!res.ok) {
-      setError('לא ניתן לצאת מהרשימה כרגע.');
+      setError(t('customer.waitlist.leaveError'));
       return;
     }
     await onChanged();
@@ -2439,12 +2459,15 @@ function WaitlistEntryCard({
       <div style={{ fontSize: 13, color: MUTED, marginTop: 2 }}>{fmtDate(entry.date)}</div>
       {notified ? (
         <div style={{ marginTop: 10, color: '#5f7d2e', fontSize: 13.5, fontWeight: 600 }}>
-          התפנה מקום! הזמינו כניסה{claimTime ? ` עד השעה ${claimTime}` : ''} לפני שהמקום יעבור לבא/ה
-          בתור.
+          {t('customer.waitlist.claimAvailable', {
+            deadline: claimTime
+              ? ` ${t('customer.waitlist.claimDeadline', { time: claimTime })}`
+              : '',
+          })}
         </div>
       ) : (
         <div style={{ marginTop: 10, color: MUTED, fontSize: 13 }}>
-          ממתינ/ה ברשימה. נודיע לך ברגע שיתפנה מקום.
+          {t('customer.waitlist.waiting')}
         </div>
       )}
       <button
@@ -2459,7 +2482,7 @@ function WaitlistEntryCard({
           cursor: 'pointer',
         }}
       >
-        יציאה מהרשימה
+        {t('customer.waitlist.leave')}
       </button>
       {error && <div style={{ color: '#a23a3a', fontSize: 13, marginTop: 6 }}>{error}</div>}
     </div>
@@ -2880,6 +2903,7 @@ function ProfileEdit({
   /** Omitted inside the app shell, where the nav replaces a back button. */
   onBack?: () => void;
 }) {
+  const { t } = useContent();
   const { setProfile } = useCustomerSession();
   const [firstName, setFirstName] = useState(profile.firstName);
   const [lastName, setLastName] = useState(profile.lastName);
@@ -2894,11 +2918,11 @@ function ProfileEdit({
     const tl = lastName.trim();
     const te = email.trim();
     if (!tf || !tl) {
-      setError('שם פרטי ושם משפחה הם שדות חובה.');
+      setError(t('customer.profile.errRequired'));
       return;
     }
     if (te && !/^\S+@\S+\.\S+$/.test(te)) {
-      setError('כתובת מייל לא תקינה.');
+      setError(t('customer.profile.errEmail'));
       return;
     }
     setSubmitting(true);
@@ -2911,7 +2935,7 @@ function ProfileEdit({
     });
     setSubmitting(false);
     if (!res.ok) {
-      setError(humanizeUpdateError(res.error));
+      setError(humanizeUpdateError(res.error, t));
       return;
     }
     setProfile(res.data.profile);
@@ -2922,8 +2946,10 @@ function ProfileEdit({
     <div>
       {onBack && <BackButton onClick={onBack} />}
       <form onSubmit={onSubmit} style={card}>
-        <div style={{ fontSize: 20, fontWeight: 600, marginBottom: 14 }}>עריכת פרטים</div>
-        <Labeled label="שם פרטי">
+        <div style={{ fontSize: 20, fontWeight: 600, marginBottom: 14 }}>
+          {t('customer.profile.editTitle')}
+        </div>
+        <Labeled label={t('customer.profile.firstName')}>
           <input
             style={inputStyle}
             value={firstName}
@@ -2933,7 +2959,7 @@ function ProfileEdit({
           />
         </Labeled>
         <Spacer />
-        <Labeled label="שם משפחה">
+        <Labeled label={t('customer.profile.lastName')}>
           <input
             style={inputStyle}
             value={lastName}
@@ -2943,18 +2969,18 @@ function ProfileEdit({
           />
         </Labeled>
         <Spacer />
-        <Labeled label="טלפון">
+        <Labeled label={t('customer.profile.phone')}>
           <input
             value={profile.phone}
             disabled
             style={{ ...inputStyle, background: '#f6f3f0', color: MUTED }}
           />
           <div style={{ fontSize: 12.5, color: MUTED, marginTop: 6 }}>
-            לא ניתן לשנות טלפון · פנו לצוות
+            {t('customer.profile.phoneLocked')}
           </div>
         </Labeled>
         <Spacer />
-        <Labeled label="מייל">
+        <Labeled label={t('customer.profile.email')}>
           <input
             type="email"
             inputMode="email"
@@ -2966,7 +2992,9 @@ function ProfileEdit({
           />
         </Labeled>
         <div style={{ margin: '14px 0' }}>
-          <div style={{ fontSize: 13.5, color: MUTED, marginBottom: 8 }}>ערוץ עדכונים מועדף</div>
+          <div style={{ fontSize: 13.5, color: MUTED, marginBottom: 8 }}>
+            {t('customer.profile.preferredChannel')}
+          </div>
           <div style={{ display: 'flex', gap: 8 }}>
             {CHANNELS.map((ch) => {
               const on = channel === ch.k;
@@ -2987,7 +3015,7 @@ function ProfileEdit({
                     cursor: 'pointer',
                   }}
                 >
-                  {ch.l}
+                  {t(ch.labelKey)}
                 </button>
               );
             })}
@@ -2995,7 +3023,9 @@ function ProfileEdit({
         </div>
         {profile.children.length > 0 && (
           <div style={{ margin: '14px 0' }}>
-            <div style={{ fontSize: 13.5, color: MUTED, marginBottom: 8 }}>ילדים רשומים</div>
+            <div style={{ fontSize: 13.5, color: MUTED, marginBottom: 8 }}>
+              {t('customer.profile.children')}
+            </div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               {profile.children.map((k) => (
                 <span
@@ -3013,7 +3043,7 @@ function ProfileEdit({
               ))}
             </div>
             <div style={{ fontSize: 12, color: MUTED, marginTop: 6 }}>
-              לעריכת רשימת הילדים · פנו לצוות
+              {t('customer.profile.childrenLocked')}
             </div>
           </div>
         )}
@@ -3025,7 +3055,7 @@ function ProfileEdit({
             onClick={onBack}
             disabled={submitting}
           >
-            ביטול
+            {t('customer.profile.cancel')}
           </button>
           <button
             type="submit"
@@ -3037,7 +3067,7 @@ function ProfileEdit({
             }}
             disabled={submitting}
           >
-            {submitting ? 'שומר…' : 'שמירת שינויים'}
+            {submitting ? 'שומר…' : t('customer.profile.save')}
           </button>
         </div>
       </form>
@@ -3045,10 +3075,10 @@ function ProfileEdit({
   );
 }
 
-function humanizeUpdateError(code: string): string {
-  if (code === 'invalid_body') return 'אחד השדות לא תקין.';
-  if (code === 'not_found') return 'הפרופיל לא נמצא. רעננו את הדף.';
-  return 'תקלה זמנית. נסו שוב בעוד רגע.';
+function humanizeUpdateError(code: string, t: (key: string) => string): string {
+  if (code === 'invalid_body') return t('customer.profile.errInvalidBody');
+  if (code === 'not_found') return t('customer.profile.errNotFound');
+  return t('customer.profile.errGeneric');
 }
 
 function Labeled({ label, children }: { label: string; children: ReactNode }) {
@@ -3065,6 +3095,7 @@ function Spacer() {
 }
 
 function BackButton({ onClick }: { onClick: () => void }) {
+  const { t } = useContent();
   return (
     <button
       onClick={onClick}
@@ -3077,7 +3108,7 @@ function BackButton({ onClick }: { onClick: () => void }) {
         fontSize: 15,
       }}
     >
-      ← חזרה
+      ← {t('customer.booking.backButton')}
     </button>
   );
 }
