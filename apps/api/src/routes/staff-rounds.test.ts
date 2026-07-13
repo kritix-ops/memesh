@@ -269,6 +269,16 @@ test('POST /staff/rounds/:id/walk-in is staff-gated and validates id + body', as
   assert.equal(badBody.statusCode, 400);
   assert.equal(badBody.json().error, 'invalid_body');
 
+  // Neither a customerId nor anonymous → the refine rejects it.
+  const emptyBody = await app.inject({
+    method: 'POST',
+    url: `/staff/rounds/${inst}/walk-in`,
+    headers: auth(await tokenFor('cashier')),
+    payload: {},
+  });
+  assert.equal(emptyBody.statusCode, 400);
+  assert.equal(emptyBody.json().error, 'invalid_body');
+
   const ok = await app.inject({
     method: 'POST',
     url: `/staff/rounds/${inst}/walk-in`,
@@ -277,6 +287,17 @@ test('POST /staff/rounds/:id/walk-in is staff-gated and validates id + body', as
   });
   // Unknown instance → 404 on a real DB; 500 on the DB-less box.
   assert.ok([404, 500].includes(ok.statusCode), `got ${ok.statusCode}`);
+
+  // Anonymous cash entry needs no customerId — it passes validation and gets as
+  // far as resolving the sentinel + the (unknown) instance: 404 on a real DB,
+  // 500 on the DB-less box. A 400 here would mean the schema wrongly rejected it.
+  const anon = await app.inject({
+    method: 'POST',
+    url: `/staff/rounds/${inst}/walk-in`,
+    headers: auth(await tokenFor('cashier')),
+    payload: { anonymous: true },
+  });
+  assert.ok([404, 500].includes(anon.statusCode), `got ${anon.statusCode}`);
 });
 
 test('POST /staff/rounds/bookings/:id/cancel is ADMIN-only (cashier gets 403)', async () => {

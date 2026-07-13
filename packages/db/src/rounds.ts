@@ -17,6 +17,7 @@ import {
   type NewRoundInstance,
   type Round,
 } from './schema/index';
+import { WALKIN_SENTINEL_PHONE } from './walkin-customer';
 
 type AnyPgDatabase = PgDatabase<any, any, any>;
 
@@ -525,6 +526,10 @@ export interface RoundAttendee {
   /** Payment origin. `manual` = a staff walk-in add — shown separately from
    *  the ones who registered (Yanay 2026-07-07). */
   source: 'paid' | 'punchcard' | 'gift' | 'manual';
+  /** Anonymous cash walk-in (Yanay 2026-07-13): booked under the reserved
+   *  walk-in customer, so the floor shows the generic "כניסה במקום" label and
+   *  hides the placeholder contact details. */
+  anonymous: boolean;
   /** Checked in at the door (booking burned to 'used'). */
   arrived: boolean;
   /** ISO timestamp of the door scan; null until arrival. */
@@ -575,6 +580,7 @@ export const listRoundAttendees = async (
       ticketType: r.ticketType as 'child_under_walking' | 'child_over_walking',
       additionalCompanions: r.additionalCompanions,
       source: r.source as 'paid' | 'punchcard' | 'gift' | 'manual',
+      anonymous: r.phone === WALKIN_SENTINEL_PHONE,
       arrived: r.status === 'used',
       usedAt: r.usedAt ? r.usedAt.toISOString() : null,
     }))

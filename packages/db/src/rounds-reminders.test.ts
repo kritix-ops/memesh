@@ -9,6 +9,7 @@ import { claimDueReminders } from './rounds-reminders';
 import { createRound } from './rounds';
 import { updateRoundSettings } from './round-settings';
 import { bookings, roundInstances } from './schema';
+import { getOrCreateWalkInCustomerId } from './walkin-customer';
 
 async function freshDb() {
   const db = drizzle({ client: new PGlite() });
@@ -53,6 +54,23 @@ test('claimDueReminders offers a due reminder to the confirmed bookings of a non
   assert.equal(due[0]!.roundInstanceId, instA);
   assert.equal(due[0]!.offsetMinutes, 30);
   assert.equal(due[0]!.recipients.length, 1); // confirmed only
+});
+
+test('claimDueReminders excludes the anonymous walk-in sentinel from recipients', async () => {
+  const db = await freshDb();
+  const a = await createRound(db, { label: 'a', displayName: 'A', startTime: '16:00', endTime: '18:00', daysActive: 127, defaultCapacity: 30 }, NOW);
+  await createRound(db, { label: 'b', displayName: 'B', startTime: '18:00', endTime: '20:00', daysActive: 127, defaultCapacity: 30 }, NOW);
+  if (!a.ok) throw new Error('round');
+  const instA = await instanceFor(db, a.round.id);
+  await confirmedBooking(db, instA, 'rem-anon-1'); // a real customer → a recipient
+  // An anonymous cash walk-in books under the sentinel (placeholder phone) —
+  // it must never be handed to the SMS cron.
+  const sentinelId = await getOrCreateWalkInCustomerId(db);
+  await db.insert(bookings).values({ roundInstanceId: instA, customerId: sentinelId, ticketType: 'child_over_walking', source: 'manual', status: 'confirmed', confirmedAt: NOW, barcodeToken: 'rem-anon-2' });
+
+  const due = await claimDueReminders(db, NOW);
+  assert.equal(due.length, 1);
+  assert.equal(due[0]!.recipients.length, 1); // only the real customer, sentinel excluded
 });
 
 test('claimDueReminders does not resend a reminder it already claimed', async () => {
