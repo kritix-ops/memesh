@@ -157,6 +157,7 @@ export const cancelBooking = async (
         wcOrderId: bookings.wcOrderId,
         ticketType: bookings.ticketType,
         additionalCompanions: bookings.additionalCompanions,
+        paidTicketIls: bookings.paidTicketIls,
         date: roundInstances.date,
         startTime: rounds.startTime,
       })
@@ -190,12 +191,17 @@ export const cancelBooking = async (
     let refundAmountIls = 0;
 
     if (b.source === 'paid') {
-      // Refund value = ticket price by type + companions × companion price.
+      // Refund value = ticket price + companions × companion price. The ticket
+      // price comes from what WooCommerce actually charged (snapshotted at mint,
+      // `paidTicketIls`) so a later price-setting change can't skew the refund;
+      // it falls back to the settings price for bookings minted before that
+      // snapshot existed. The companion add-on stays settings-derived.
       const cardSettings = await getCardSettings(tx);
       const ticketPrice =
-        b.ticketType === 'child_under_walking'
+        b.paidTicketIls ??
+        (b.ticketType === 'child_under_walking'
           ? cardSettings.roundChildBabyPriceIls
-          : cardSettings.roundChildOverWalkingPriceIls;
+          : cardSettings.roundChildOverWalkingPriceIls);
       refundAmountIls = ticketPrice + b.additionalCompanions * cardSettings.roundAdditionalCompanionPriceIls;
       if (input.manualRefund) {
         // Interim: release the seat now; the money refund is handed to staff.
