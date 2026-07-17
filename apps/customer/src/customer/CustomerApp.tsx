@@ -36,6 +36,7 @@ import {
 import {
   type CSSProperties,
   type FormEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
   useCallback,
   useEffect,
@@ -730,19 +731,57 @@ function AppShell({
 
   if (isMobile) {
     return (
-      <div style={{ direction: 'rtl', minHeight: '100vh', background: BG, display: 'flex', flexDirection: 'column' }}>
-        <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '18px 18px 6px' }}>
+      <div
+        style={{
+          direction: 'rtl',
+          minHeight: '100vh',
+          background: BG,
+          display: 'flex',
+          flexDirection: 'column',
+        }}
+      >
+        <header
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            padding: '18px 18px 6px',
+          }}
+        >
           <div style={{ fontSize: 21, fontWeight: 600, color: INK }}>{title}</div>
-          <button onClick={onSignOut} style={{ border: 'none', background: 'transparent', color: MUTED, fontSize: 13, cursor: 'pointer' }}>
+          <button
+            onClick={onSignOut}
+            style={{
+              border: 'none',
+              background: 'transparent',
+              color: MUTED,
+              fontSize: 13,
+              cursor: 'pointer',
+            }}
+          >
             {t('customer.nav.signOut')}
           </button>
         </header>
-        <main style={{ flex: 1, width: '100%', maxWidth: 560, margin: '0 auto', padding: '8px 16px 92px', boxSizing: 'border-box' }}>
+        <main
+          style={{
+            flex: 1,
+            width: '100%',
+            maxWidth: 560,
+            margin: '0 auto',
+            padding: '8px 16px 92px',
+            boxSizing: 'border-box',
+          }}
+        >
           {children}
         </main>
         <nav style={bottomNavStyle}>
           {NAV.map((n) => (
-            <button key={n.key} onClick={() => onNavigate(n.key)} style={bottomItemStyle(active === n.key)} aria-current={active === n.key ? 'page' : undefined}>
+            <button
+              key={n.key}
+              onClick={() => onNavigate(n.key)}
+              style={bottomItemStyle(active === n.key)}
+              aria-current={active === n.key ? 'page' : undefined}
+            >
               <span>{t(`customer.nav.${n.key}`)}</span>
               {counts[n.key] ? <NavCountBadge n={counts[n.key]!} /> : null}
             </button>
@@ -754,8 +793,29 @@ function AppShell({
 
   return (
     <div style={{ direction: 'rtl', minHeight: '100vh', background: BG }}>
-      <div style={{ maxWidth: 860, margin: '0 auto', display: 'flex', gap: 22, padding: '32px 24px 64px', alignItems: 'flex-start' }}>
-        <aside style={{ ...card, width: 176, flex: 'none', position: 'sticky', top: 32, display: 'flex', flexDirection: 'column', gap: 4, padding: 16 }}>
+      <div
+        style={{
+          maxWidth: 860,
+          margin: '0 auto',
+          display: 'flex',
+          gap: 22,
+          padding: '32px 24px 64px',
+          alignItems: 'flex-start',
+        }}
+      >
+        <aside
+          style={{
+            ...card,
+            width: 176,
+            flex: 'none',
+            position: 'sticky',
+            top: 32,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 4,
+            padding: 16,
+          }}
+        >
           <div style={{ marginBottom: 8, padding: '0 4px' }}>
             <div style={{ fontSize: 15, fontWeight: 600, color: INK }}>
               {profile.firstName} {profile.lastName}
@@ -765,9 +825,16 @@ function AppShell({
             </div>
           </div>
           {NAV.map((n) => (
-            <button key={n.key} onClick={() => onNavigate(n.key)} style={navItemStyle(active === n.key)} aria-current={active === n.key ? 'page' : undefined}>
+            <button
+              key={n.key}
+              onClick={() => onNavigate(n.key)}
+              style={navItemStyle(active === n.key)}
+              aria-current={active === n.key ? 'page' : undefined}
+            >
               <span>{t(`customer.nav.${n.key}`)}</span>
-              {counts[n.key] ? <span style={navCount(active === n.key)}>{counts[n.key]}</span> : null}
+              {counts[n.key] ? (
+                <span style={navCount(active === n.key)}>{counts[n.key]}</span>
+              ) : null}
             </button>
           ))}
           <div style={{ borderTop: `1px solid ${BORDER}`, marginTop: 6, paddingTop: 6 }}>
@@ -816,7 +883,10 @@ function CustomerHome({ profile }: { profile: CustomerProfile }) {
   useEffect(() => {
     if (!cards) return;
     for (const c of cards) {
-      console.info('[customer card] qr rendered', { serial: c.serialNumber, tokenLen: c.qrToken.length });
+      console.info('[customer card] qr rendered', {
+        serial: c.serialNumber,
+        tokenLen: c.qrToken.length,
+      });
     }
   }, [cards]);
 
@@ -1143,7 +1213,12 @@ function BookingsScreen({
       {scope === 'past' && (
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           {BOOKING_PERIODS.map((p) => (
-            <button key={p.key} type="button" onClick={() => setPeriodKey(p.key)} style={chip(periodKey === p.key)}>
+            <button
+              key={p.key}
+              type="button"
+              onClick={() => setPeriodKey(p.key)}
+              style={chip(periodKey === p.key)}
+            >
               {t(`customer.bookings.period.${p.key}`)}
             </button>
           ))}
@@ -1342,7 +1417,9 @@ function CardsScreen({
       ) : cards === null ? (
         <div style={{ ...card, color: MUTED, textAlign: 'center' }}>טוען…</div>
       ) : cards.length === 0 ? (
-        <div style={{ ...card, color: MUTED, textAlign: 'center' }}>{t('customer.cards.empty')}</div>
+        <div style={{ ...card, color: MUTED, textAlign: 'center' }}>
+          {t('customer.cards.empty')}
+        </div>
       ) : (
         cards.map((c, i) => (
           <CollapsibleCard
@@ -1375,7 +1452,15 @@ function ProfileScreen({
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       {savedAt !== null && (
-        <div style={{ ...card, background: '#f0f5e3', boxShadow: 'none', color: '#6f8f37', padding: '12px 16px' }}>
+        <div
+          style={{
+            ...card,
+            background: '#f0f5e3',
+            boxShadow: 'none',
+            color: '#6f8f37',
+            padding: '12px 16px',
+          }}
+        >
           {t('customer.profile.saved')}
         </div>
       )}
@@ -1959,6 +2044,293 @@ function RoundChoiceRow({
   );
 }
 
+// ── Pre-booking rules popup ───────────────────────────────────────────────
+// The blocking "important things before booking" gate (Yanay, 2026-07-17):
+// fires right before a round is booked or rescheduled, mirroring the popup Yanay
+// runs on the WP site so a customer can never claim they didn't know the rules.
+// Four accordion sections (collapsed on open), acknowledged with a single tap.
+// All copy is content-registry keys (customer_infopopup) so Yanay self-edits it.
+// Presentational only — the caller owns the pending action and runs it from
+// onAcknowledge. role=dialog + focus handling + scroll lock keep it accessible.
+const INFO_SECTIONS = [
+  { stem: 's1', icon: '🧒' },
+  { stem: 's2', icon: '🧦' },
+  { stem: 's3', icon: '🎟️' },
+  { stem: 's4', icon: '📍' },
+] as const;
+
+function PreBookingInfoModal({
+  source,
+  onAcknowledge,
+  onClose,
+}: {
+  /** Which flow opened it — for the diagnostic log only. */
+  source: 'book' | 'reschedule';
+  onAcknowledge: () => void;
+  onClose: () => void;
+}) {
+  const { t } = useContent();
+  const [openIdx, setOpenIdx] = useState<number | null>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
+  const titleId = 'memesh-info-title';
+
+  // Focus into the dialog on open, lock the page scroll behind it, and return
+  // focus to whatever the customer was on once it closes.
+  useEffect(() => {
+    console.info('[customer rules-popup] open', { source });
+    const prevActive = document.activeElement as HTMLElement | null;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    cardRef.current?.focus();
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      prevActive?.focus?.();
+    };
+  }, [source]);
+
+  // ESC closes; Tab is trapped inside so focus can't wander to the page behind.
+  const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (e.key === 'Escape') {
+      e.stopPropagation();
+      onClose();
+      return;
+    }
+    if (e.key !== 'Tab' || !cardRef.current) return;
+    const focusables = cardRef.current.querySelectorAll<HTMLElement>(
+      'button, a[href], [tabindex]:not([tabindex="-1"])',
+    );
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    if (!first || !last) return;
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  };
+
+  const toggle = (i: number) => {
+    setOpenIdx((cur) => {
+      const next = cur === i ? null : i;
+      console.info('[customer rules-popup] toggle', {
+        section: INFO_SECTIONS[i]?.stem,
+        open: next === i,
+      });
+      return next;
+    });
+  };
+
+  const acknowledge = () => {
+    console.info('[customer rules-popup] acknowledge', { source });
+    onAcknowledge();
+  };
+
+  return (
+    <div
+      onClick={onClose}
+      onKeyDown={onKeyDown}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(45,52,54,0.5)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 16,
+        zIndex: 80,
+        direction: 'rtl',
+      }}
+    >
+      <div
+        ref={cardRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: '#fff',
+          borderRadius: 18,
+          boxShadow: SHADOW,
+          width: 460,
+          maxWidth: '100%',
+          maxHeight: '90vh',
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
+          outline: 'none',
+        }}
+      >
+        <div
+          style={{
+            // Deep burnt orange: white large-bold title clears WCAG AA (3:1 for
+            // 19px bold), unlike the lighter brand salmon. IS 5568 is mandatory.
+            background: '#d9722f',
+            color: '#fff',
+            padding: '16px 18px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 10,
+          }}
+        >
+          <span id={titleId} style={{ fontSize: 19, fontWeight: 700 }}>
+            {t('customer.infopopup.title')}
+          </span>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label={t('customer.infopopup.closeLabel')}
+            style={{
+              border: 'none',
+              background: 'transparent',
+              color: '#fff',
+              fontSize: 20,
+              lineHeight: 1,
+              cursor: 'pointer',
+              padding: 4,
+            }}
+          >
+            ✕
+          </button>
+        </div>
+
+        <div style={{ overflowY: 'auto', padding: '4px 0' }}>
+          {INFO_SECTIONS.map((s, i) => {
+            const isOpen = openIdx === i;
+            return (
+              <div key={s.stem} style={{ borderBottom: '1px solid #f3efea' }}>
+                <button
+                  type="button"
+                  onClick={() => toggle(i)}
+                  aria-expanded={isOpen}
+                  style={{
+                    width: '100%',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 12,
+                    padding: '14px 18px',
+                    border: 'none',
+                    background: 'transparent',
+                    cursor: 'pointer',
+                    textAlign: 'right',
+                  }}
+                >
+                  <span
+                    aria-hidden="true"
+                    style={{
+                      flex: 'none',
+                      width: 38,
+                      height: 38,
+                      borderRadius: '50%',
+                      background: ORANGE_SOFT,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontSize: 18,
+                    }}
+                  >
+                    {s.icon}
+                  </span>
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    <span
+                      style={{ display: 'block', fontSize: 14.5, fontWeight: 700, color: INK }}
+                    >
+                      {t(`customer.infopopup.${s.stem}.title`)}
+                    </span>
+                    <span
+                      style={{
+                        display: 'block',
+                        fontSize: 12.5,
+                        color: MUTED,
+                        marginTop: 2,
+                        lineHeight: 1.5,
+                      }}
+                    >
+                      {t(`customer.infopopup.${s.stem}.subtitle`)}
+                    </span>
+                  </span>
+                  <span
+                    aria-hidden="true"
+                    style={{
+                      flex: 'none',
+                      color: MUTED,
+                      fontSize: 13,
+                      transform: isOpen ? 'rotate(180deg)' : 'none',
+                      transition: 'transform 0.18s',
+                    }}
+                  >
+                    ▾
+                  </span>
+                </button>
+                {isOpen && (
+                  <div
+                    style={{
+                      paddingInlineStart: 68,
+                      paddingInlineEnd: 18,
+                      paddingBottom: 14,
+                      fontSize: 13,
+                      color: '#4a5459',
+                      lineHeight: 1.7,
+                      whiteSpace: 'pre-line',
+                    }}
+                  >
+                    {t(`customer.infopopup.${s.stem}.body`)}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        <div
+          style={{
+            padding: '14px 18px',
+            borderTop: '1px solid #f3efea',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 10,
+          }}
+        >
+          <a
+            href={t('customer.bookflow.termsUrl')}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{
+              fontSize: 12.5,
+              color: '#a8643d',
+              fontWeight: 600,
+              textAlign: 'center',
+            }}
+          >
+            {t('customer.infopopup.termsLink')}
+          </a>
+          <button
+            type="button"
+            onClick={acknowledge}
+            style={{
+              border: 'none',
+              // The app's sage green, dark enough for white text at 4.5:1 (AA).
+              background: '#5f7d2e',
+              color: '#fff',
+              borderRadius: 12,
+              padding: '13px 18px',
+              fontSize: 15,
+              fontWeight: 700,
+              cursor: 'pointer',
+              width: '100%',
+            }}
+          >
+            {t('customer.infopopup.continue')}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Book a round using this card's entries (super-brief §3.4). No WooCommerce — the
 // customer already paid for the card. Lives inside the punch-card card so the
 // "this card → book with it" link is obvious (Yanay feedback, 2026-07-04). The
@@ -1984,6 +2356,9 @@ function PunchRoundBooking({
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
   const [addCompanion, setAddCompanion] = useState(false);
+  // The rules popup gates the confirm (Yanay, 2026-07-17): the customer must
+  // acknowledge it before the booking runs. Replaces the old inline checkbox.
+  const [showRules, setShowRules] = useState(false);
   // Set when the booking succeeded but the companion payment couldn't start —
   // the done screen tells the customer to retry from the booking card.
   const [companionNote, setCompanionNote] = useState<string | null>(null);
@@ -2000,6 +2375,7 @@ function PunchRoundBooking({
     setChosen(null);
     setError(null);
     setJoinMsg(null);
+    setShowRules(false);
   }, [open]);
 
   const remaining = punchCard.totalEntries - punchCard.usedEntries;
@@ -2060,6 +2436,7 @@ function PunchRoundBooking({
     await onWaitlisted();
   };
 
+  // Runs only after the rules popup is acknowledged — the popup is the gate.
   const doBook = async () => {
     if (!chosen) return;
     setBusy(true);
@@ -2114,9 +2491,14 @@ function PunchRoundBooking({
 
   if (!open) {
     return (
-      <button onClick={() => setOpen(true)} style={{ ...primaryBtn, width: '100%' }}>
-        {t('customer.bookflow.title')}
-      </button>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: '100%' }}>
+        <button onClick={() => setOpen(true)} style={{ ...primaryBtn, width: '100%' }}>
+          {t('customer.bookflow.title')}
+        </button>
+        <div style={{ fontSize: 12, color: MUTED, textAlign: 'center', lineHeight: 1.5 }}>
+          {t('customer.cards.notReservationNote')}
+        </div>
+      </div>
     );
   }
 
@@ -2152,16 +2534,31 @@ function PunchRoundBooking({
         </button>
       </div>
 
+      {!done && (
+        <div style={{ fontSize: 12.5, color: MUTED, lineHeight: 1.5, marginTop: -6 }}>
+          {t('customer.bookflow.roundIntro')}
+        </div>
+      )}
+
       {done ? (
         <div style={{ textAlign: 'center', fontSize: 14.5, padding: '8px 0' }}>
           <div style={{ color: '#6f8f37' }}>
-            {count > 1
-              ? t('customer.bookflow.successMulti')
-              : t('customer.bookflow.successSingle')}
+            {count > 1 ? t('customer.bookflow.successMulti') : t('customer.bookflow.successSingle')}
           </div>
           {companionNote && (
             <div style={{ color: '#a8643d', fontSize: 13, marginTop: 8 }}>{companionNote}</div>
           )}
+          <div
+            style={{
+              fontSize: 12.5,
+              color: MUTED,
+              lineHeight: 1.6,
+              marginTop: 12,
+              textAlign: 'right',
+            }}
+          >
+            {t('customer.bookflow.confirmedRecap')}
+          </div>
         </div>
       ) : (
         <>
@@ -2225,6 +2622,11 @@ function PunchRoundBooking({
                   : fullRounds.length > 0
                     ? t('customer.bookflow.emptyAllFull')
                     : t('customer.bookflow.emptyNoRounds')}
+            </div>
+          )}
+          {openRounds.length > 0 && (
+            <div style={{ fontSize: 12, color: MUTED, textAlign: 'center', lineHeight: 1.5 }}>
+              {t('customer.bookflow.capacityNote')}
             </div>
           )}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -2334,6 +2736,10 @@ function PunchRoundBooking({
                     })}
               </div>
 
+              <div style={{ fontSize: 12, color: MUTED, lineHeight: 1.5, textAlign: 'center' }}>
+                {t('customer.bookflow.companionPolicy')}
+              </div>
+
               {count > 1 && (
                 <div style={{ fontSize: 12.5, color: MUTED, textAlign: 'center' }}>
                   {t('customer.bookflow.companionIncluded')}
@@ -2361,7 +2767,9 @@ function PunchRoundBooking({
                   />
                   <span style={{ flex: 1 }}>
                     <span style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                      <strong style={{ fontSize: 14 }}>{t('customer.bookflow.extraCompanion')}</strong>
+                      <strong style={{ fontSize: 14 }}>
+                        {t('customer.bookflow.extraCompanion')}
+                      </strong>
                       <strong style={{ fontSize: 14, color: '#a8643d', whiteSpace: 'nowrap' }}>
                         +₪{companionPrice}
                       </strong>
@@ -2373,10 +2781,52 @@ function PunchRoundBooking({
                 </label>
               )}
 
+              {/* Order composition + total headcount before confirming (Yanay #4 + #9).
+                  Each punch entry is one child plus one included companion; the paid
+                  extra companion is only offered on a single-entry booking. */}
+              {(() => {
+                const extra = count === 1 && addCompanion && companionPrice ? 1 : 0;
+                return (
+                  <div
+                    style={{
+                      border: '1px solid #f0e9e0',
+                      borderRadius: 10,
+                      padding: '10px 12px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 3,
+                      fontSize: 13,
+                    }}
+                  >
+                    <div style={{ fontWeight: 700, marginBottom: 2 }}>
+                      {t('customer.bookflow.summaryTitle')}
+                    </div>
+                    <div>
+                      {t('customer.bookflow.summaryDate', {
+                        date: selectedDay ? fmtDate(selectedDay.date) : '',
+                      })}
+                    </div>
+                    <div>
+                      {t('customer.bookflow.summaryRound', {
+                        time: `${chosen.startTime}–${chosen.endTime}`,
+                      })}
+                    </div>
+                    <div>{t('customer.bookflow.summaryChildren', { count })}</div>
+                    <div>{t('customer.bookflow.summaryIncluded', { count })}</div>
+                    {extra > 0 && (
+                      <div>{t('customer.bookflow.summaryExtra', { count: extra })}</div>
+                    )}
+                    <div style={{ fontWeight: 700, marginTop: 3 }}>
+                      {t('customer.bookflow.summaryTotal', { count: count * 2 + extra })}
+                    </div>
+                  </div>
+                );
+              })()}
+
               <div style={{ display: 'flex', gap: 8 }}>
                 <button
                   disabled={busy}
-                  onClick={() => void doBook()}
+                  onClick={() => setShowRules(true)}
                   style={{ ...primaryBtn, flex: 1 }}
                 >
                   {busy
@@ -2394,6 +2844,17 @@ function PunchRoundBooking({
                 </button>
               </div>
             </div>
+          )}
+
+          {showRules && (
+            <PreBookingInfoModal
+              source="book"
+              onClose={() => setShowRules(false)}
+              onAcknowledge={() => {
+                setShowRules(false);
+                void doBook();
+              }}
+            />
           )}
 
           {error && (
@@ -2513,6 +2974,9 @@ function RoundBookingCard({
   const [confirmingCancel, setConfirmingCancel] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The rules popup gates the swap too (Yanay, 2026-07-17): choosing a target
+  // stashes it here and opens the popup; the swap runs once it's acknowledged.
+  const [pendingSwap, setPendingSwap] = useState<string | null>(null);
   // The same strip+calendar window as the punch flow, preselected to the
   // booking's own date — "keep the day, change the time" is the common case,
   // but any open day is a tap away (Yanay 2026-07-09: date change, not just
@@ -2620,8 +3084,21 @@ function RoundBookingCard({
     <div
       style={
         compact
-          ? { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14, width: '100%' }
-          : { ...card, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14, marginBottom: 12 }
+          ? {
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              gap: 14,
+              width: '100%',
+            }
+          : {
+              ...card,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              gap: 14,
+              marginBottom: 12,
+            }
       }
     >
       {!compact && <div style={{ fontSize: 16, fontWeight: 600 }}>{booking.label}</div>}
@@ -2683,7 +3160,9 @@ function RoundBookingCard({
             flexWrap: 'wrap',
           }}
         >
-          <span style={{ fontSize: 13, color: '#a8643d' }}>{t('customer.booking.companionPending')}</span>
+          <span style={{ fontSize: 13, color: '#a8643d' }}>
+            {t('customer.booking.companionPending')}
+          </span>
           <button
             disabled={busy}
             onClick={() => void doCompanionPay()}
@@ -2863,7 +3342,7 @@ function RoundBookingCard({
                   key={r.roundInstanceId}
                   round={r}
                   disabled={busy}
-                  onClick={() => void doSwap(r.roundInstanceId)}
+                  onClick={() => setPendingSwap(r.roundInstanceId)}
                 />
               ))}
             </div>
@@ -2871,6 +3350,17 @@ function RoundBookingCard({
           <div style={{ textAlign: 'center', color: MUTED, fontSize: 12 }}>
             {t('customer.policy.reschedule')}
           </div>
+          {pendingSwap && (
+            <PreBookingInfoModal
+              source="reschedule"
+              onClose={() => setPendingSwap(null)}
+              onAcknowledge={() => {
+                const target = pendingSwap;
+                setPendingSwap(null);
+                if (target) void doSwap(target);
+              }}
+            />
+          )}
           {error && (
             <div style={{ color: '#a23a3a', fontSize: 13, textAlign: 'center' }}>{error}</div>
           )}
