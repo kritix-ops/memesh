@@ -2053,10 +2053,10 @@ function RoundChoiceRow({
 // Presentational only — the caller owns the pending action and runs it from
 // onAcknowledge. role=dialog + focus handling + scroll lock keep it accessible.
 const INFO_SECTIONS = [
-  { stem: 's1', icon: '🧒' },
-  { stem: 's2', icon: '🧦' },
-  { stem: 's3', icon: '🎟️' },
-  { stem: 's4', icon: '📍' },
+  { stem: 's1' },
+  { stem: 's2' },
+  { stem: 's3' },
+  { stem: 's4' },
 ] as const;
 
 function PreBookingInfoModal({
@@ -2218,22 +2218,18 @@ function PreBookingInfoModal({
                     textAlign: 'right',
                   }}
                 >
+                  {/* Plain solid-salmon marker, no icon — matches Yanay's WP
+                      site (2026-07-18). Decorative only, hidden from readers. */}
                   <span
                     aria-hidden="true"
                     style={{
                       flex: 'none',
-                      width: 38,
-                      height: 38,
+                      width: 30,
+                      height: 30,
                       borderRadius: '50%',
-                      background: ORANGE_SOFT,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      fontSize: 18,
+                      background: ORANGE,
                     }}
-                  >
-                    {s.icon}
-                  </span>
+                  />
                   <span style={{ flex: 1, minWidth: 0 }}>
                     <span
                       style={{ display: 'block', fontSize: 14.5, fontWeight: 700, color: INK }}
@@ -2268,7 +2264,7 @@ function PreBookingInfoModal({
                 {isOpen && (
                   <div
                     style={{
-                      paddingInlineStart: 68,
+                      paddingInlineStart: 60,
                       paddingInlineEnd: 18,
                       paddingBottom: 14,
                       fontSize: 13,
