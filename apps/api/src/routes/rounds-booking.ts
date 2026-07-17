@@ -31,6 +31,7 @@ import {
 import type { FastifyBaseLogger, FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { env } from '../config.js';
+import { fireBookingConfirmation } from '../lib/booking-confirmation-notify.js';
 import { fireCancellationEmails } from '../lib/cancellation-email.js';
 import { requireCustomer } from '../lib/customer-guard.js';
 import { phoneSchema } from '../lib/phone-schema.js';
@@ -106,15 +107,16 @@ const constantTimeEqual = (a: string, b: string): boolean => {
 // error is logged and the next slot-release (or the hold-sweep cron) retries.
 // Push notification is wired in the follow-up; the offer already shows in the
 // customer's personal area via /rounds/waitlist/mine.
-const promoteFreedSeat = async (
-  roundInstanceId: string,
-  log: FastifyBaseLogger,
-): Promise<void> => {
+const promoteFreedSeat = async (roundInstanceId: string, log: FastifyBaseLogger): Promise<void> => {
   try {
     const res = await promoteWaitlist(db, roundInstanceId);
     if (res.promoted) {
       log.info(
-        { roundInstanceId, entryId: res.promoted.entryId, claimExpiresAt: res.promoted.claimExpiresAt },
+        {
+          roundInstanceId,
+          entryId: res.promoted.entryId,
+          claimExpiresAt: res.promoted.claimExpiresAt,
+        },
         '[rounds waitlist] promoted',
       );
       await fireWaitlistOffer(res.promoted, log);
@@ -214,7 +216,12 @@ export const roundsBookingRoutes: FastifyPluginAsync = async (fastify) => {
       // the same cap authoritatively; this only bounds the calendar.
       const horizonDays = Math.min(roundSettings.bookingHorizonDays, INSTANCE_HORIZON_DAYS - 1);
       request.log.info(
-        { from, days, horizonDays, daysWithRounds: range.filter((d) => d.rounds.length > 0).length },
+        {
+          from,
+          days,
+          horizonDays,
+          daysWithRounds: range.filter((d) => d.rounds.length > 0).length,
+        },
         '[rounds availability-range]',
       );
       return {
@@ -465,6 +472,14 @@ export const roundsBookingRoutes: FastifyPluginAsync = async (fastify) => {
       },
       '[rounds book-punch] done',
     );
+    // Booking-confirmation email + SMS (Yanay #10). One message per visit — the
+    // N minted bookings share round/date/customer, so notify on the first.
+    // Awaited so the send completes before the function can freeze, but it never
+    // throws, so it cannot fail the (already committed) booking.
+    const firstBookingId = result.bookings[0]?.bookingId;
+    if (firstBookingId) {
+      await fireBookingConfirmation(db, { bookingId: firstBookingId, log: request.log });
+    }
     return {
       bookings: result.bookings,
       remaining: result.remaining,
@@ -490,17 +505,25 @@ export const roundsBookingRoutes: FastifyPluginAsync = async (fastify) => {
 
       const prep = await prepareCompanionCheckout(db, { bookingId, customerId });
       if (!prep.ok) {
-        const code =
-          prep.error === 'not_found' ? 404 : prep.error === 'forbidden' ? 403 : 409;
-        request.log.info({ bookingId, customerId, error: prep.error }, '[rounds companion checkout] rejected');
+        const code = prep.error === 'not_found' ? 404 : prep.error === 'forbidden' ? 403 : 409;
+        request.log.info(
+          { bookingId, customerId, error: prep.error },
+          '[rounds companion checkout] rejected',
+        );
         return reply.code(code).send({ error: prep.error });
       }
 
       // Free per settings (price 0) — no order, confirm on the spot.
       if (prep.priceIls <= 0) {
-        const res = await confirmCompanionUpgrade(db, { bookingId, wcOrderId: `free-${bookingId}` });
+        const res = await confirmCompanionUpgrade(db, {
+          bookingId,
+          wcOrderId: `free-${bookingId}`,
+        });
         if (!res.ok) return reply.code(409).send({ error: res.error });
-        request.log.info({ bookingId, customerId }, '[rounds companion checkout] free — confirmed inline');
+        request.log.info(
+          { bookingId, customerId },
+          '[rounds companion checkout] free — confirmed inline',
+        );
         return { confirmed: true, priceIls: 0 };
       }
 
@@ -525,12 +548,20 @@ export const roundsBookingRoutes: FastifyPluginAsync = async (fastify) => {
             );
             return { alreadyPaid: true, wcOrderId: existing.id };
           }
-          if (existing.status === 'pending' || existing.status === 'on-hold' || existing.status === 'failed') {
+          if (
+            existing.status === 'pending' ||
+            existing.status === 'on-hold' ||
+            existing.status === 'failed'
+          ) {
             request.log.info(
               { bookingId, wcOrderId: existing.id, status: existing.status },
               '[rounds companion checkout] reusing pending order',
             );
-            return { payUrl: payUrlFor(existing.id, existing.orderKey), wcOrderId: existing.id, priceIls: prep.priceIls };
+            return {
+              payUrl: payUrlFor(existing.id, existing.orderKey),
+              wcOrderId: existing.id,
+              priceIls: prep.priceIls,
+            };
           }
           // cancelled / refunded / trash → create a fresh order below.
         } catch (err) {
@@ -569,7 +600,11 @@ export const roundsBookingRoutes: FastifyPluginAsync = async (fastify) => {
         { bookingId, customerId, wcOrderId: order.id, priceIls: prep.priceIls },
         '[rounds companion checkout] order created',
       );
-      return { payUrl: payUrlFor(order.id, order.orderKey), wcOrderId: order.id, priceIls: prep.priceIls };
+      return {
+        payUrl: payUrlFor(order.id, order.orderKey),
+        wcOrderId: order.id,
+        priceIls: prep.priceIls,
+      };
     },
   );
 
@@ -594,7 +629,10 @@ export const roundsBookingRoutes: FastifyPluginAsync = async (fastify) => {
       }
       try {
         const r = await wcClient.createOrderRefund(wcOrderId, amountIls);
-        request.log.info({ wcOrderId, refundId: r.id, amount: r.amount }, '[rounds cancel] refunded');
+        request.log.info(
+          { wcOrderId, refundId: r.id, amount: r.amount },
+          '[rounds cancel] refunded',
+        );
         return true;
       } catch (err) {
         request.log.error({ err, wcOrderId }, '[rounds cancel] refund failed');
@@ -680,24 +718,32 @@ export const roundsBookingRoutes: FastifyPluginAsync = async (fastify) => {
       { entryId: result.entryId, customerId, position: result.position },
       '[rounds waitlist] joined',
     );
-    return { entryId: result.entryId, position: result.position, alreadyOnList: result.alreadyOnList };
+    return {
+      entryId: result.entryId,
+      position: result.position,
+      alreadyOnList: result.alreadyOnList,
+    };
   });
 
   // Leave the waitlist. Owner-gated in the DB helper.
-  fastify.post('/rounds/waitlist/leave', { preHandler: requireCustomer }, async (request, reply) => {
-    const customerId = request.customer?.id;
-    if (!customerId) return reply.code(401).send({ error: 'unauthorized' });
-    const parsed = waitlistLeaveSchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.code(400).send({ error: 'invalid_body', issues: parsed.error.issues });
-    }
-    const result = await leaveWaitlist(db, parsed.data.entryId, customerId);
-    if (!result.ok) {
-      const code = result.error === 'not_found' ? 404 : result.error === 'forbidden' ? 403 : 409;
-      return reply.code(code).send({ error: result.error });
-    }
-    return { ok: true };
-  });
+  fastify.post(
+    '/rounds/waitlist/leave',
+    { preHandler: requireCustomer },
+    async (request, reply) => {
+      const customerId = request.customer?.id;
+      if (!customerId) return reply.code(401).send({ error: 'unauthorized' });
+      const parsed = waitlistLeaveSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.code(400).send({ error: 'invalid_body', issues: parsed.error.issues });
+      }
+      const result = await leaveWaitlist(db, parsed.data.entryId, customerId);
+      if (!result.ok) {
+        const code = result.error === 'not_found' ? 404 : result.error === 'forbidden' ? 403 : 409;
+        return reply.code(code).send({ error: result.error });
+      }
+      return { ok: true };
+    },
+  );
 
   // The customer's active waitlist entries (waiting + notified offers).
   fastify.get('/rounds/waitlist/mine', { preHandler: requireCustomer }, async (request, reply) => {
@@ -735,7 +781,10 @@ export const roundsBookingRoutes: FastifyPluginAsync = async (fastify) => {
       const code = result.error === 'not_found' ? 404 : result.error === 'forbidden' ? 403 : 409;
       return reply.code(code).send({ error: result.error });
     }
-    request.log.info({ bookingId: result.booking.bookingId, customerId }, '[rounds dev-pay] minted');
+    request.log.info(
+      { bookingId: result.booking.bookingId, customerId },
+      '[rounds dev-pay] minted',
+    );
     return {
       bookingId: result.booking.bookingId,
       barcodeToken: result.booking.barcodeToken,
