@@ -13,6 +13,7 @@ export type ContentGroup =
   | 'customer_bookings'
   | 'customer_booking'
   | 'customer_bookflow'
+  | 'customer_infopopup'
   | 'customer_picker'
   | 'customer_cards'
   | 'customer_profile'
