@@ -14,23 +14,28 @@ import { requireRoleHook } from '../lib/auth-guards.js';
 // stay-duration reminder knobs. Range/format validation lives in the DB helper;
 // this route just shapes the request and maps the error.
 
-const updateBodySchema = z.object({
-  roundsEnabled: z.boolean().optional(),
-  holdTtlMinutes: z.number().int().optional(),
-  cancellationWindowHours: z.number().int().optional(),
-  claimWindowMinutes: z.number().int().optional(),
-  activeHoursStart: z.number().int().optional(),
-  activeHoursEnd: z.number().int().optional(),
-  reminderOffsets: z.array(z.number().int()).optional(),
-  closingTime: z.string().optional(),
-  skipLastRoundReminder: z.boolean().optional(),
-  allowOverCapacityWalkIn: z.boolean().optional(),
-  warnUpcomingReservationAtDoor: z.boolean().optional(),
-  bookingHorizonDays: z.number().int().optional(),
-  markingGraceMinutes: z.number().int().optional(),
-  manualRefundOnCancel: z.boolean().optional(),
-  cancellationAlertEmail: z.string().max(200).optional(),
-}).strict();
+const updateBodySchema = z
+  .object({
+    roundsEnabled: z.boolean().optional(),
+    holdTtlMinutes: z.number().int().optional(),
+    cancellationWindowHours: z.number().int().optional(),
+    claimWindowMinutes: z.number().int().optional(),
+    activeHoursStart: z.number().int().optional(),
+    activeHoursEnd: z.number().int().optional(),
+    reminderOffsets: z.array(z.number().int()).optional(),
+    preVisitReminderOffsets: z.array(z.number().int()).optional(),
+    bookingConfirmEmail: z.boolean().optional(),
+    bookingConfirmSms: z.boolean().optional(),
+    closingTime: z.string().optional(),
+    skipLastRoundReminder: z.boolean().optional(),
+    allowOverCapacityWalkIn: z.boolean().optional(),
+    warnUpcomingReservationAtDoor: z.boolean().optional(),
+    bookingHorizonDays: z.number().int().optional(),
+    markingGraceMinutes: z.number().int().optional(),
+    manualRefundOnCancel: z.boolean().optional(),
+    cancellationAlertEmail: z.string().max(200).optional(),
+  })
+  .strict();
 
 const validationStatus: Record<RoundSettingsValidationError['code'], number> = {
   hold_ttl_out_of_range: 400,
@@ -41,6 +46,7 @@ const validationStatus: Record<RoundSettingsValidationError['code'], number> = {
   marking_grace_out_of_range: 400,
   cancellation_alert_email_invalid: 400,
   reminder_offsets_invalid: 400,
+  pre_visit_reminder_offsets_invalid: 400,
   closing_time_invalid: 400,
 };
 

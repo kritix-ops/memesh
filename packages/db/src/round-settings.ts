@@ -29,6 +29,9 @@ export type UpdateRoundSettingsInput = {
   activeHoursStart?: number;
   activeHoursEnd?: number;
   reminderOffsets?: number[];
+  preVisitReminderOffsets?: number[];
+  bookingConfirmEmail?: boolean;
+  bookingConfirmSms?: boolean;
   closingTime?: string;
   skipLastRoundReminder?: boolean;
   allowOverCapacityWalkIn?: boolean;
@@ -48,10 +51,14 @@ export type RoundSettingsValidationError =
   | { code: 'marking_grace_out_of_range'; min: number; max: number }
   | { code: 'cancellation_alert_email_invalid' }
   | { code: 'reminder_offsets_invalid' }
+  | { code: 'pre_visit_reminder_offsets_invalid' }
   | { code: 'closing_time_invalid' };
 
 const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 const REMINDER_OFFSET_MAX = 240;
+// Pre-visit reminders fire before the round START, so the useful range is much
+// wider than the stay-duration one — up to two days ahead (48h = 2880 min).
+const PRE_VISIT_OFFSET_MAX = 2880;
 
 /** Read the singleton row, self-healing the seed if a misconfigured DB lost it. */
 export const getRoundSettings = async (db: AnyPgDatabase): Promise<RoundSettingsRow> => {
@@ -82,7 +89,11 @@ export const validateRoundSettingsPatch = (
       patch.cancellationWindowHours < CANCEL_WINDOW_MIN ||
       patch.cancellationWindowHours > CANCEL_WINDOW_MAX
     ) {
-      return { code: 'cancellation_window_out_of_range', min: CANCEL_WINDOW_MIN, max: CANCEL_WINDOW_MAX };
+      return {
+        code: 'cancellation_window_out_of_range',
+        min: CANCEL_WINDOW_MIN,
+        max: CANCEL_WINDOW_MAX,
+      };
     }
   }
   if (patch.claimWindowMinutes !== undefined) {
@@ -105,7 +116,11 @@ export const validateRoundSettingsPatch = (
       patch.bookingHorizonDays < BOOKING_HORIZON_MIN ||
       patch.bookingHorizonDays > BOOKING_HORIZON_MAX
     ) {
-      return { code: 'booking_horizon_out_of_range', min: BOOKING_HORIZON_MIN, max: BOOKING_HORIZON_MAX };
+      return {
+        code: 'booking_horizon_out_of_range',
+        min: BOOKING_HORIZON_MIN,
+        max: BOOKING_HORIZON_MAX,
+      };
     }
   }
   if (patch.markingGraceMinutes !== undefined) {
@@ -132,6 +147,17 @@ export const validateRoundSettingsPatch = (
       a.some((n) => !Number.isInteger(n) || n < 1 || n > REMINDER_OFFSET_MAX)
     ) {
       return { code: 'reminder_offsets_invalid' };
+    }
+  }
+  if (patch.preVisitReminderOffsets !== undefined) {
+    // Empty array = pre-visit reminders disabled. Up to 5 offsets, each 1-2880 minutes.
+    const a = patch.preVisitReminderOffsets;
+    if (
+      !Array.isArray(a) ||
+      a.length > 5 ||
+      a.some((n) => !Number.isInteger(n) || n < 1 || n > PRE_VISIT_OFFSET_MAX)
+    ) {
+      return { code: 'pre_visit_reminder_offsets_invalid' };
     }
   }
   if (patch.closingTime !== undefined && !HHMM_RE.test(patch.closingTime)) {
@@ -171,7 +197,10 @@ export const updateRoundSettings = async (
     diff.cancellationWindowHours = [current.cancellationWindowHours, patch.cancellationWindowHours];
     next.cancellationWindowHours = patch.cancellationWindowHours;
   }
-  if (patch.claimWindowMinutes !== undefined && patch.claimWindowMinutes !== current.claimWindowMinutes) {
+  if (
+    patch.claimWindowMinutes !== undefined &&
+    patch.claimWindowMinutes !== current.claimWindowMinutes
+  ) {
     diff.claimWindowMinutes = [current.claimWindowMinutes, patch.claimWindowMinutes];
     next.claimWindowMinutes = patch.claimWindowMinutes;
   }
@@ -189,6 +218,28 @@ export const updateRoundSettings = async (
   ) {
     diff.reminderOffsets = [current.reminderOffsets, patch.reminderOffsets];
     next.reminderOffsets = patch.reminderOffsets;
+  }
+  if (
+    patch.preVisitReminderOffsets !== undefined &&
+    JSON.stringify(patch.preVisitReminderOffsets) !==
+      JSON.stringify(current.preVisitReminderOffsets)
+  ) {
+    diff.preVisitReminderOffsets = [current.preVisitReminderOffsets, patch.preVisitReminderOffsets];
+    next.preVisitReminderOffsets = patch.preVisitReminderOffsets;
+  }
+  if (
+    patch.bookingConfirmEmail !== undefined &&
+    patch.bookingConfirmEmail !== current.bookingConfirmEmail
+  ) {
+    diff.bookingConfirmEmail = [current.bookingConfirmEmail, patch.bookingConfirmEmail];
+    next.bookingConfirmEmail = patch.bookingConfirmEmail;
+  }
+  if (
+    patch.bookingConfirmSms !== undefined &&
+    patch.bookingConfirmSms !== current.bookingConfirmSms
+  ) {
+    diff.bookingConfirmSms = [current.bookingConfirmSms, patch.bookingConfirmSms];
+    next.bookingConfirmSms = patch.bookingConfirmSms;
   }
   // DB stores time as 'HH:MM:SS'; compare on the 'HH:MM' the admin sends.
   if (patch.closingTime !== undefined && patch.closingTime !== current.closingTime.slice(0, 5)) {

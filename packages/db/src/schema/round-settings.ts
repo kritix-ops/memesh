@@ -32,7 +32,21 @@ export const roundSettings = pgTable('round_settings', {
   activeHoursEnd: smallint('active_hours_end').notNull().default(22),
   // Minutes before a round's end_time to send a stay-duration reminder to its
   // confirmed bookings (super-brief §9). Default [30, 10].
-  reminderOffsets: integer('reminder_offsets').array().notNull().default(sql`'{30,10}'::integer[]`),
+  reminderOffsets: integer('reminder_offsets')
+    .array()
+    .notNull()
+    .default(sql`'{30,10}'::integer[]`),
+  // Minutes before a round's START to send the pre-visit reminder (Yanay #11,
+  // "מחכים לכם מחר"). Default [1440] = 24h before. Empty = pre-visit reminders off.
+  preVisitReminderOffsets: integer('pre_visit_reminder_offsets')
+    .array()
+    .notNull()
+    .default(sql`'{1440}'::integer[]`),
+  // Booking-confirmation notifications sent the moment a round booking is
+  // confirmed (Yanay #10). Both default on; SMS carries a per-message cost, so
+  // it is a separate toggle from the free email.
+  bookingConfirmEmail: boolean('booking_confirm_email').notNull().default(true),
+  bookingConfirmSms: boolean('booking_confirm_sms').notNull().default(true),
   // The venue's daily closing time; used with skipLastRoundReminder to suppress
   // a pointless "almost done" ping on the final round of the day.
   closingTime: time('closing_time').notNull().default('19:00:00'),
@@ -43,7 +57,9 @@ export const roundSettings = pgTable('round_settings', {
   // Warn the cashier at the door when the scanned card's customer has an
   // upcoming reserved round whose entry is already committed (Yanay
   // 2026-07-07). Default on.
-  warnUpcomingReservationAtDoor: boolean('warn_upcoming_reservation_at_door').notNull().default(true),
+  warnUpcomingReservationAtDoor: boolean('warn_upcoming_reservation_at_door')
+    .notNull()
+    .default(true),
   // How many days ahead a customer may register (Yanay 2026-07-13: "let them
   // register a month ahead, not more"). The calendar caps at today + this many
   // days, and the booking-path guard refuses a round dated beyond it. Default
