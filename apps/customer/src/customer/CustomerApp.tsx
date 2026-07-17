@@ -2977,6 +2977,14 @@ function RoundBookingCard({
   // The rules popup gates the swap too (Yanay, 2026-07-17): choosing a target
   // stashes it here and opens the popup; the swap runs once it's acknowledged.
   const [pendingSwap, setPendingSwap] = useState<string | null>(null);
+  // Once the round has started there's nothing to cancel or reschedule, so the
+  // actions are hidden for past bookings (Yanay, 2026-07-18). Compared in venue
+  // time (Asia/Jerusalem) so it doesn't drift with the visitor's device zone;
+  // the server enforces the same window — this just stops offering dead buttons.
+  const nowVenue = new Date()
+    .toLocaleString('sv-SE', { timeZone: 'Asia/Jerusalem' })
+    .slice(0, 16);
+  const isPast = `${booking.date} ${booking.startTime}` < nowVenue;
   // The same strip+calendar window as the punch flow, preselected to the
   // booking's own date — "keep the day, change the time" is the common case,
   // but any open day is a tap away (Yanay 2026-07-09: date change, not just
@@ -3182,7 +3190,7 @@ function RoundBookingCard({
         </div>
       )}
 
-      {booking.status === 'confirmed' && !picking && !confirmingCancel && (
+      {booking.status === 'confirmed' && !isPast && !picking && !confirmingCancel && (
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
           <button
             onClick={() => {

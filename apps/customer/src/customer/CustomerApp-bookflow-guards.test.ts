@@ -103,3 +103,21 @@ test('the total headcount counts a companion per child plus the paid extra (Yana
     'total must be count*2 + extra',
   );
 });
+
+test('past bookings never offer cancel / reschedule (Yanay 2026-07-18)', async () => {
+  const src = await read();
+  // isPast compares the round's start to venue-time "now" (Asia/Jerusalem), and
+  // the action block must be gated on it — a round that already started can be
+  // neither cancelled nor rescheduled.
+  assert.match(
+    src,
+    /const isPast = `\$\{booking\.date\} \$\{booking\.startTime\}` < nowVenue/,
+    'isPast must compare the round start to venue-time now',
+  );
+  assert.match(src, /timeZone: 'Asia\/Jerusalem'/, 'venue now must use Asia/Jerusalem');
+  assert.match(
+    src,
+    /booking\.status === 'confirmed' && !isPast &&/,
+    'the cancel/reschedule block must be gated on !isPast',
+  );
+});
