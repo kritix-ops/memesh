@@ -68,11 +68,18 @@ export type ProcessRoundOrderResult =
       /** Booking ids minted (or idempotently replayed) on this delivery. */
       minted: string[];
       /**
-       * Holds that could not be minted — a bad hold id, or a seat that was
-       * taken while the customer paid (sold_out_after_payment). These need a
-       * refund; the refund workflow lands with the cancel PR. Logged for now.
+       * Holds that could not be minted for a REAL reason — a bad hold id, or a
+       * seat that was taken while the customer paid (sold_out_after_payment).
+       * These are genuine orphaned paid seats that need an operator refund.
        */
       failed: Array<{ holdId: string; error: string }>;
+      /**
+       * Holds whose booking was already cancelled when a webhook re-delivered.
+       * This is expected and benign (the seat was booked then deliberately
+       * cancelled) — kept separate from `failed` so it never triggers the
+       * "paid seat with no booking" refund alarm.
+       */
+      alreadyCancelled: string[];
       /**
        * Companion-upgrade outcome when the order carried
        * `_memesh_companion_booking_id`. An error here is money for a dead or
@@ -110,6 +117,7 @@ export const processRoundOrderWebhook = async (
 
   const minted: string[] = [];
   const failed: Array<{ holdId: string; error: string }> = [];
+  const alreadyCancelled: string[] = [];
   for (const holdId of holdIds) {
     if (!UUID_RE.test(holdId)) {
       failed.push({ holdId, error: 'invalid_hold_id' });
@@ -122,6 +130,9 @@ export const processRoundOrderWebhook = async (
       input.now,
     );
     if (res.ok) minted.push(res.booking.bookingId);
+    // A cancelled booking is an expected webhook re-delivery, not an orphaned
+    // paid seat — keep it out of `failed` so it never trips the refund alarm.
+    else if (res.error === 'cancelled') alreadyCancelled.push(holdId);
     else failed.push({ holdId, error: res.error });
   }
 
@@ -143,5 +154,12 @@ export const processRoundOrderWebhook = async (
     }
   }
 
-  return { status: 'processed', orderId, minted, failed, ...(companion ? { companion } : {}) };
+  return {
+    status: 'processed',
+    orderId,
+    minted,
+    failed,
+    alreadyCancelled,
+    ...(companion ? { companion } : {}),
+  };
 };
