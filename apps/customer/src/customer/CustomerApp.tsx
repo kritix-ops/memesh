@@ -2057,6 +2057,8 @@ const INFO_SECTIONS = [
   { stem: 's2' },
   { stem: 's3' },
   { stem: 's4' },
+  { stem: 's5' },
+  { stem: 's6' },
 ] as const;
 
 function PreBookingInfoModal({
@@ -2071,6 +2073,7 @@ function PreBookingInfoModal({
 }) {
   const { t } = useContent();
   const [openIdx, setOpenIdx] = useState<number | null>(null);
+  const [continueHover, setContinueHover] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
   const titleId = 'memesh-info-title';
 
@@ -2165,9 +2168,9 @@ function PreBookingInfoModal({
       >
         <div
           style={{
-            // Deep burnt orange: white large-bold title clears WCAG AA (3:1 for
-            // 19px bold), unlike the lighter brand salmon. IS 5568 is mandatory.
-            background: '#d9722f',
+            // Brand salmon header with white title — Yanay's exact color spec
+            // (2026-07-18), matching the WP popup.
+            background: ORANGE,
             color: '#fff',
             padding: '16px 18px',
             display: 'flex',
@@ -2201,7 +2204,7 @@ function PreBookingInfoModal({
           {INFO_SECTIONS.map((s, i) => {
             const isOpen = openIdx === i;
             return (
-              <div key={s.stem} style={{ borderBottom: '1px solid #f3efea' }}>
+              <div key={s.stem} style={{ borderBottom: '1px solid #f0f0f0' }}>
                 <button
                   type="button"
                   onClick={() => toggle(i)}
@@ -2252,7 +2255,7 @@ function PreBookingInfoModal({
                     aria-hidden="true"
                     style={{
                       flex: 'none',
-                      color: MUTED,
+                      color: ORANGE,
                       fontSize: 13,
                       transform: isOpen ? 'rotate(180deg)' : 'none',
                       transition: 'transform 0.18s',
@@ -2284,32 +2287,21 @@ function PreBookingInfoModal({
         <div
           style={{
             padding: '14px 18px',
-            borderTop: '1px solid #f3efea',
+            borderTop: '1px solid #f0f0f0',
             display: 'flex',
             flexDirection: 'column',
             gap: 10,
           }}
         >
-          <a
-            href={t('customer.bookflow.termsUrl')}
-            target="_blank"
-            rel="noopener noreferrer"
-            style={{
-              fontSize: 12.5,
-              color: '#a8643d',
-              fontWeight: 600,
-              textAlign: 'center',
-            }}
-          >
-            {t('customer.infopopup.termsLink')}
-          </a>
           <button
             type="button"
             onClick={acknowledge}
+            onMouseEnter={() => setContinueHover(true)}
+            onMouseLeave={() => setContinueHover(false)}
             style={{
               border: 'none',
-              // The app's sage green, dark enough for white text at 4.5:1 (AA).
-              background: '#5f7d2e',
+              // Yanay's exact spec (2026-07-18): sage button, salmon on hover.
+              background: continueHover ? ORANGE : '#c4d898',
               color: '#fff',
               borderRadius: 12,
               padding: '13px 18px',
@@ -2317,10 +2309,22 @@ function PreBookingInfoModal({
               fontWeight: 700,
               cursor: 'pointer',
               width: '100%',
+              transition: 'background 0.15s',
             }}
           >
             {t('customer.infopopup.continue')}
           </button>
+          <div style={{ fontSize: 12, color: MUTED, textAlign: 'center' }}>
+            {t('customer.infopopup.termsPrefix')}{' '}
+            <a
+              href={t('customer.bookflow.termsUrl')}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: ORANGE, textDecoration: 'underline' }}
+            >
+              {t('customer.infopopup.termsLink')}
+            </a>
+          </div>
         </div>
       </div>
     </div>

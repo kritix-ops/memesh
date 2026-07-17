@@ -662,15 +662,15 @@ export const CONTENT_REGISTRY: ContentEntry[] = [
 
   // ── אזור אישי — חלון כללים לפני הזמנה (PreBookingInfoModal) ────────
   // The blocking rules popup that fires before every round booking and every
-  // reschedule (Yanay, 2026-07-17). Four accordion sections; the customer must
-  // tap "הבנתי" to proceed. Each section is a title + a one-line subtitle (both
-  // shown collapsed) + the full body (shown on expand). The terms link reuses
-  // customer.bookflow.termsUrl — one source for the terms address, no duplicate.
+  // reschedule (Yanay, 2026-07-18 — expanded to six accordion sections for the
+  // punch-card slot flow). The customer must tap "קראתי" to proceed. Each
+  // section is a title + a one-line subtitle (both shown collapsed) + the full
+  // body (shown on expand). The footer terms link reuses customer.bookflow.termsUrl.
   {
     key: 'customer.infopopup.title',
     group: 'customer_infopopup',
     label: 'כותרת החלון',
-    default: 'כמה דברים חשובים לפני ההזמנה',
+    default: 'כמה דברים חשובים לפני אישור הסבב',
     kind: 'short',
   },
   {
@@ -684,7 +684,7 @@ export const CONTENT_REGISTRY: ContentEntry[] = [
     key: 'customer.infopopup.s1.subtitle',
     group: 'customer_infopopup',
     label: 'סעיף 1 — שורת תקציר',
-    default: 'המתחם מיועד לילדים עד גיל 6.',
+    default: 'המתחם מיועד לילדים עד גיל 6 בלבד.',
     kind: 'short',
   },
   {
@@ -692,7 +692,7 @@ export const CONTENT_REGISTRY: ContentEntry[] = [
     group: 'customer_infopopup',
     label: 'סעיף 1 — טקסט מלא',
     default:
-      'מֶמֶשׁ תוכנן במיוחד עבור ילדים קטנים, ולכן אזורי המשחק מיועדים לילדים עד גיל 6.\nכדי לשמור על חוויה נעימה ובטוחה לכולם, ילדים גדולים יותר אינם נכנסים לאזורי המשחק, גם אם הם מגיעים כאחים או מלווים לילדים קטנים.\nאנחנו יודעים שלפעמים זה לא פשוט כשמגיעים עם כמה ילדים בגילאים שונים, ולכן חשוב לנו שהדברים יהיו ברורים מראש ולפני ההזמנה.',
+      'מֶמֶשׁ תוכננה במיוחד עבור תינוקות וילדים קטנים, ולכן הכניסה מיועדת לילדים עד גיל 6 בלבד.\nלא תתאפשר כניסה לילדים מעל גיל 6, גם אם הם מגיעים כאחים או כמלווים של ילדים צעירים יותר.\nמכיוון שרוב המבקרים במקום הם תינוקות וילדים קטנים, אנו מבקשים להקפיד במיוחד על השגחה צמודה על ילדים בני 5–6 ועל משחק זהיר ומתחשב.',
     kind: 'long',
   },
   {
@@ -706,7 +706,7 @@ export const CONTENT_REGISTRY: ContentEntry[] = [
     key: 'customer.infopopup.s2.subtitle',
     group: 'customer_infopopup',
     label: 'סעיף 2 — שורת תקציר',
-    default: 'לילדים ולמבוגרים. אפשר להביא מהבית או לרכוש במקום.',
+    default: 'לילדים ולמבוגרים, כולל תינוקות. אפשר להביא מהבית או לרכוש במקום.',
     kind: 'short',
   },
   {
@@ -714,21 +714,21 @@ export const CONTENT_REGISTRY: ContentEntry[] = [
     group: 'customer_infopopup',
     label: 'סעיף 2 — טקסט מלא',
     default:
-      'הכניסה לאזורי המשחק היא עם גרביים בלבד — גם לילדים וגם למבוגרים.\nהכלל הזה עוזר לנו לשמור על ניקיון, היגיינה וחוויה נעימה לכל הילדים.\nאפשר כמובן להביא גרביים מהבית, ואם שכחתם — ניתן לרכוש אצלנו במקום.',
+      'הכניסה לאזורי המשחק היא עם גרביים בלבד — לילדים, למבוגרים ולתינוקות, גם אם התינוק עדיין אינו הולך.\nאין להיכנס לאזורי המשחק עם נעליים או ברגליים יחפות. הכלל מסייע לנו לשמור על ניקיון, היגיינה וחוויה נעימה לכל המבקרים.\nאפשר להביא גרביים מהבית, ואם שכחתם ניתן לרכוש אצלנו גרביים לילדים ולמבוגרים.',
     kind: 'long',
   },
   {
     key: 'customer.infopopup.s3.title',
     group: 'customer_infopopup',
     label: 'סעיף 3 — כותרת',
-    default: 'מה כולל כרטיס כניסה?',
+    default: 'מה כוללת כל כניסה מהכרטיסייה?',
     kind: 'short',
   },
   {
     key: 'customer.infopopup.s3.subtitle',
     group: 'customer_infopopup',
     label: 'סעיף 3 — שורת תקציר',
-    default: 'כל כרטיס ילד/ה כולל מבוגר/ת מלווה אחד/ת.',
+    default: 'כל כניסה כוללת ילד/ה ומלווה אחד/ת מגיל 16 ומעלה.',
     kind: 'short',
   },
   {
@@ -736,21 +736,21 @@ export const CONTENT_REGISTRY: ContentEntry[] = [
     group: 'customer_infopopup',
     label: 'סעיף 3 — טקסט מלא',
     default:
-      'כרטיס הכניסה הוא עבור הילד/ה, וכל כרטיס כולל מבוגר/ת מלווה אחד/ת.\nלדוגמה: אם מגיעים שני ילדים ושני מבוגרים — אין צורך לשלם על מלווה נוסף. אם מגיעים ילד אחד ושני מבוגרים — יש להוסיף מלווה נוסף בעלות 12₪.\nמלווה נוסף מעבר למלווה הכלול בכרטיס ניתן להוסיף באתר או במקום, בעלות 12₪.\nמלווה שלישי ומעלה — בכפוף למקום פנוי ובהתאם לתפוסה בזמן ההגעה.',
+      'כל כניסה מהכרטיסייה מיועדת לילד או לילדה מגיל הליכה ועד גיל 6, וכוללת מלווה אחד מגיל 16 ומעלה.\nלדוגמה:\nאם מגיעים שני ילדים ושני מלווים — יש לממש שתי כניסות מהכרטיסייה, ואין צורך לשלם על מלווה נוסף.\nאם מגיעים ילד אחד ושני מלווים — יש לממש כניסה אחת ולהוסיף מלווה נוסף בעלות 12 ₪.\nניתן להזמין מראש מלווה נוסף אחד לכל כניסה שממומשת מהכרטיסייה.\nכניסת מלווים נוספים מעבר לכך תתאפשר רק בהגעה למקום, בתשלום ועל בסיס מקום פנוי.\nכל מלווה חייב להיות בן 16 ומעלה, ובהגעה עשוי להתבקש להציג תעודת זהות או מסמך מזהה הכולל תאריך לידה.',
     kind: 'long',
   },
   {
     key: 'customer.infopopup.s4.title',
     group: 'customer_infopopup',
     label: 'סעיף 4 — כותרת',
-    default: 'הגעה וחניה',
+    default: 'הרשמה לסבב כניסה',
     kind: 'short',
   },
   {
     key: 'customer.infopopup.s4.subtitle',
     group: 'customer_infopopup',
     label: 'סעיף 4 — שורת תקציר',
-    default: 'החרושת 18, רמת השרון, בניין בית בלורי, קומה 4.',
+    default: 'ההזמנה תקפה לסבב שנבחר בלבד.',
     kind: 'short',
   },
   {
@@ -758,22 +758,73 @@ export const CONTENT_REGISTRY: ContentEntry[] = [
     group: 'customer_infopopup',
     label: 'סעיף 4 — טקסט מלא',
     default:
-      'אנחנו נמצאים בהחרושת 18, רמת השרון, בבניין בית בלורי, קומה 4.\nכשעולים במעלית לקומה 4, פונים למסדרון השמאלי וממשיכים עד הסוף שמאלה.\nאם מגיעים ברכב: אחרי שעוברים את הבניין — לא לפנות ימינה לכיוון כביש 5 / הכביש המהיר. מומלץ להאט לפני הבניין של יוחננוף ולחפש חניה באזור.\nאין לנו חניה פרטית ואין לנו הסדר עם חניון כלשהו. ההמלצה שלנו היא לחנות באחד החניונים שממולנו — אפשר לכתוב בוויז: "החרושת 17". יש שם חניה בכחול-לבן וגם באפור, ומשם רק חוצים את הכביש ומגיעים לבניין.\nשימו לב שחניון יוחננוף הוא חניון בתשלום של הסופר, הוא לא קשור אלינו ואין לנו הסדר איתו. קישורי ניווט לחניות באזור אפשר למצוא גם בהיילייט "חניה" באינסטגרם שלנו.',
+      'הכרטיסייה אינה מהווה הזמנת מקום בפני עצמה. לפני כל ביקור יש לבחור תאריך וסבב כניסה.\nהזמנת הסבב שומרת מקום עבור הילדים והמלווים שנכללו בהזמנה.\nניתן להגיע בכל שעה במהלך הסבב, אך הביקור מסתיים בשעת הסיום המוצגת בהזמנה, גם במקרה של הגעה מאוחרת.\nהגעה ללא הרשמה מראש תתאפשר על בסיס מקום פנוי בלבד.',
     kind: 'long',
+  },
+  {
+    key: 'customer.infopopup.s5.title',
+    group: 'customer_infopopup',
+    label: 'סעיף 5 — כותרת',
+    default: 'ביטול ושינוי הזמנה',
+    kind: 'short',
+  },
+  {
+    key: 'customer.infopopup.s5.subtitle',
+    group: 'customer_infopopup',
+    label: 'סעיף 5 — שורת תקציר',
+    default: 'ביטול עד 24 שעות לפני. שינוי עד תחילת הסבב המקורי ובכפוף לזמינות.',
+    kind: 'short',
+  },
+  {
+    key: 'customer.infopopup.s5.body',
+    group: 'customer_infopopup',
+    label: 'סעיף 5 — טקסט מלא',
+    default:
+      'ביטול הרשמה לסבב אפשרי עד 24 שעות לפני תחילת הסבב. בביטול שבוצע בזמן הכניסה תוחזר לכרטיסייה.\nשינוי תאריך או שעה אפשרי עד תחילת הסבב המקורי, בכפוף לזמינות בסבב החדש.\nבמקרה של אי־הגעה הכניסה לא תוחזר לכרטיסייה.',
+    kind: 'long',
+  },
+  {
+    key: 'customer.infopopup.s6.title',
+    group: 'customer_infopopup',
+    label: 'סעיף 6 — כותרת',
+    default: 'הגעה וחניה',
+    kind: 'short',
+  },
+  {
+    key: 'customer.infopopup.s6.subtitle',
+    group: 'customer_infopopup',
+    label: 'סעיף 6 — שורת תקציר',
+    default: 'החרושת 18, רמת השרון, בניין בית בלורי, קומה 4.',
+    kind: 'short',
+  },
+  {
+    key: 'customer.infopopup.s6.body',
+    group: 'customer_infopopup',
+    label: 'סעיף 6 — טקסט מלא',
+    default:
+      'אנחנו נמצאים ברחוב החרושת 18, רמת השרון, בבניין בית בלורי, קומה 4.\nכשיוצאים מהמעלית בקומה 4, פונים שמאלה וממשיכים עד סוף המסדרון.\nאם מגיעים ברכב: לאחר שעוברים את הבניין, אין לפנות ימינה לכיוון כביש 5. מומלץ להאט לפני הבניין של יוחננוף ולחפש חניה באזור.\nאין לנו חניה פרטית ואין לנו הסדר עם חניון כלשהו.\nאפשר לחפש ב־Waze את הכתובת "החרושת 17, רמת השרון". באזור יש חניה בכחול־לבן וגם מקומות חניה נוספים, בכפוף לזמינות.\nחניון יוחננוף הוא חניון בתשלום של הסופר, אינו קשור אלינו ואין לנו הסדר איתו.\nקישורי Waze לחניות באזור מופיעים גם בהיילייט "חניה" בעמוד האינסטגרם שלנו.',
+    kind: 'long',
+  },
+  {
+    key: 'customer.infopopup.termsPrefix',
+    group: 'customer_infopopup',
+    label: 'תחתית — טקסט לפני הקישור',
+    default: 'בהמשך ההזמנה אתם מסכימים',
+    kind: 'short',
   },
   {
     key: 'customer.infopopup.termsLink',
     group: 'customer_infopopup',
-    label: 'קישור לתקנון המלא',
+    label: 'תחתית — טקסט הקישור לתקנון',
     help: 'הטקסט של הקישור בתחתית החלון. הכתובת עצמה נערכת תחת "אזור אישי — הזמנת סבב".',
-    default: 'לתקנון ולמדיניות המלאה',
+    default: 'לתקנון האתר',
     kind: 'short',
   },
   {
     key: 'customer.infopopup.continue',
     group: 'customer_infopopup',
     label: 'כפתור אישור והמשך',
-    default: 'הבנתי, אפשר להמשיך',
+    default: 'קראתי, אפשר לאשר את הסבב',
     kind: 'short',
   },
   {

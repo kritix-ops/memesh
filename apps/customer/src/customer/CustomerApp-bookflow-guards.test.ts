@@ -70,25 +70,26 @@ test('the booking-clarity content keys stay wired', async () => {
   }
 });
 
-test('the rules popup renders all four sections + acknowledge from the registry', async () => {
+test('the rules popup renders all six sections + acknowledge from the registry', async () => {
   const src = await read();
-  // The popup copy is admin-editable; pin every section title/subtitle/body key
-  // plus the header and CTA so a refactor can't silently drop a rule section.
+  // The popup copy is admin-editable; pin the header, CTA and footer terms
+  // so a refactor can't silently drop them.
   for (const key of [
     'customer.infopopup.title',
     'customer.infopopup.continue',
+    'customer.infopopup.termsPrefix',
     'customer.infopopup.termsLink',
     'customer.infopopup.closeLabel',
   ]) {
     assert.match(src, new RegExp(key.replace(/\./g, '\\.')), `missing t('${key}')`);
   }
-  // The four sections are rendered from INFO_SECTIONS via a template key.
+  // The six sections are rendered from INFO_SECTIONS via a template key.
   assert.match(src, /customer\.infopopup\.\$\{s\.stem\}\.title/, 'section titles must be wired');
   assert.match(src, /customer\.infopopup\.\$\{s\.stem\}\.body/, 'section bodies must be wired');
   assert.match(
     src,
-    /\{ stem: 's1'.*\}[\s\S]*\{ stem: 's4'/,
-    'INFO_SECTIONS must define s1 through s4',
+    /\{ stem: 's1'.*\}[\s\S]*\{ stem: 's6'/,
+    'INFO_SECTIONS must define s1 through s6',
   );
 });
 
