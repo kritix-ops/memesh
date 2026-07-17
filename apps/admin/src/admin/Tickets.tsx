@@ -403,6 +403,9 @@ function TicketDetail({
   const [flash, setFlash] = useState<string | null>(null);
   const [moving, setMoving] = useState(false);
   const [confirmingRemove, setConfirmingRemove] = useState(false);
+  // Flips the remove confirm to the "cancel + refund by hand" escape hatch after
+  // an auto-refund fails on a pre-swap Grow order.
+  const [manualRemove, setManualRemove] = useState(false);
   const [targets, setTargets] = useState<MoveTargetRound[] | null>(null);
 
   const isToday = r.date === today;
@@ -469,20 +472,31 @@ function TicketDetail({
     afterChange(`הכרטיס הועבר ל${target.label} ${target.startTime}.`);
   };
 
-  const doRemove = async () => {
+  const doRemove = async (manual = false) => {
     setBusy(true);
     setActionError(null);
-    console.info('[web tickets] remove submit', { bookingId: r.bookingId, source: r.source });
-    const res = await removeBooking(r.bookingId);
+    console.info('[web tickets] remove submit', { bookingId: r.bookingId, source: r.source, manual });
+    const res = await removeBooking(r.bookingId, manual ? { manualRefund: true } : undefined);
     setBusy(false);
-    setConfirmingRemove(false);
     if (!res.ok) {
+      // A pre-swap Grow order can't be auto-refunded (502 refund_failed). Offer
+      // the manual escape hatch instead of dead-ending on the error.
+      if (res.error === 'refund_failed' && !manual) {
+        console.warn('[web tickets] auto-refund failed — offering manual', { bookingId: r.bookingId });
+        setManualRemove(true);
+        return;
+      }
       console.warn('[web tickets] remove error', { bookingId: r.bookingId, error: res.error });
+      setConfirmingRemove(false);
+      setManualRemove(false);
       setActionError(removeError(res.error));
       return;
     }
+    setConfirmingRemove(false);
+    setManualRemove(false);
     const bits: string[] = [];
     if (res.data.refunded) bits.push(`הוחזרו ₪${res.data.refundAmountIls}`);
+    if (res.data.refundPending) bits.push(`יש לזַכּות ₪${res.data.refundAmountIls} ידנית`);
     if (res.data.punchReturned) bits.push('הכניסה הוחזרה לכרטיסייה');
     console.info('[web tickets] remove success', { bookingId: r.bookingId, ...res.data });
     afterChange(`הכרטיס הוסר${bits.length ? ' · ' + bits.join(' · ') : ''}.`);
@@ -549,6 +563,7 @@ function TicketDetail({
               onClick={() => {
                 setActionError(null);
                 setMoving(false);
+                setManualRemove(false);
                 setConfirmingRemove(!confirmingRemove);
               }}
             >
@@ -583,21 +598,35 @@ function TicketDetail({
 
       {confirmingRemove && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', justifyContent: 'space-between' }}>
-          <span style={{ fontSize: 12.5, color: INK }}>
-            להסיר את הכרטיס?{' '}
-            {r.source === 'paid' && 'הכסף יוחזר אוטומטית ב-WooCommerce. '}
-            {r.source === 'punchcard' && 'הכניסה תוחזר לכרטיסייה. '}
+          <span style={{ fontSize: 12.5, color: manualRemove ? '#a23a3a' : INK }}>
+            {manualRemove ? (
+              <>ההחזר האוטומטי נכשל (כנראה הזמנה ישנה מ-Grow). לבטל בכל זאת ולזַכּות ידנית? המקום יתפנה, ותקבלו מייל עם פרטי הזיכוי.</>
+            ) : (
+              <>
+                להסיר את הכרטיס?{' '}
+                {r.source === 'paid' && 'הכסף יוחזר אוטומטית ב-WooCommerce. '}
+                {r.source === 'punchcard' && 'הכניסה תוחזר לכרטיסייה. '}
+              </>
+            )}
           </span>
           <div style={{ display: 'flex', gap: 6 }}>
             <button
               type="button"
               disabled={busy}
               style={{ ...ghostBtn, background: '#c0554b', color: '#fff', border: 'none' }}
-              onClick={() => void doRemove()}
+              onClick={() => void doRemove(manualRemove)}
             >
-              {busy ? 'מסיר…' : 'כן, הסירו'}
+              {busy ? (manualRemove ? 'מבטל…' : 'מסיר…') : manualRemove ? 'בטל וזַכֵּה ידנית' : 'כן, הסירו'}
             </button>
-            <button type="button" disabled={busy} style={ghostBtn} onClick={() => setConfirmingRemove(false)}>
+            <button
+              type="button"
+              disabled={busy}
+              style={ghostBtn}
+              onClick={() => {
+                setConfirmingRemove(false);
+                setManualRemove(false);
+              }}
+            >
               ביטול
             </button>
           </div>

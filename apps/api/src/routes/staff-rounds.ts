@@ -19,6 +19,7 @@ import { verifyBookingToken } from '@memesh/qr-engine';
 import type { FastifyBaseLogger, FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { requireRoleHook } from '../lib/auth-guards.js';
+import { fireCancellationEmails } from '../lib/cancellation-email.js';
 import { makeRoundRefund } from '../lib/round-refund.js';
 import { fireWaitlistOffer } from '../lib/waitlist-notify.js';
 import { envKeyResolver } from '../qr.js';
@@ -316,6 +317,12 @@ export const staffRoundsRoutes: FastifyPluginAsync = async (fastify) => {
   // skips the customer's "before original start" gate. The target's capacity
   // still applies — a full target is refused; use a walk-in for over-capacity.
   const moveSchema = z.object({ targetRoundInstanceId: z.string().uuid() });
+
+  // Admin cancel body. `manualRefund: true` forces the manual path for this one
+  // booking even when auto-refund is the global default — the escape hatch for a
+  // pre-swap Grow order WooCommerce can't auto-refund. Body is optional; the
+  // normal remove sends none and follows the global setting.
+  const adminCancelSchema = z.object({ manualRefund: z.boolean().optional() });
   fastify.post(
     '/staff/rounds/bookings/:bookingId/move',
     { preHandler: requireRoleHook(...STAFF) },
@@ -428,14 +435,18 @@ export const staffRoundsRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       const { bookingId } = request.params as { bookingId: string };
       if (!UUID_RE.test(bookingId)) return reply.code(400).send({ error: 'invalid_id' });
-      // Same interim manual-refund mode as the customer route (Yanay 2026-07-13):
-      // while auto-refund is down, an admin removal frees the seat and the admin
-      // refunds by hand, instead of failing closed with a 502.
+      const parsed = adminCancelSchema.safeParse(request.body ?? {});
+      if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
+      // Manual mode frees the seat and leaves the money refund to staff. It kicks
+      // in either from the global interim setting (Yanay 2026-07-13) OR when the
+      // admin explicitly forces it per-booking — the escape hatch for a pre-swap
+      // Grow order that WooCommerce can't auto-refund once the global flag is off.
       const settings = await getRoundSettings(db);
+      const useManual = parsed.data.manualRefund === true || settings.manualRefundOnCancel;
       const refund = makeRoundRefund(request.log);
       const result = await cancelBooking(
         db,
-        { bookingId, skipWindow: true, manualRefund: settings.manualRefundOnCancel },
+        { bookingId, skipWindow: true, manualRefund: useManual },
         { refund },
       );
       if (!result.ok) {
@@ -451,16 +462,31 @@ export const staffRoundsRoutes: FastifyPluginAsync = async (fastify) => {
         {
           bookingId,
           staffId: request.user?.id,
+          manualRefundRequested: parsed.data.manualRefund === true,
           refunded: result.refunded,
+          refundPending: result.refundPending,
           punchReturned: result.punchReturned,
         },
         '[staff rounds remove] done',
       );
+      // Manual mode freed the seat without moving money — email staff the
+      // "refund by hand" alert (with the WC order number) and confirm to the
+      // customer. Same invariant as the customer route; fire-and-log, never
+      // blocks the (already committed) cancel.
+      if (result.refundPending) {
+        await fireCancellationEmails(db, {
+          bookingId,
+          refundAmountIls: result.refundAmountIls,
+          alertEmail: settings.cancellationAlertEmail,
+          log: request.log,
+        });
+      }
       // The removal freed a seat — offer it to the round's waitlist.
       await promoteFreedSeat(result.roundInstanceId, request.log);
       return {
         ok: true,
         refunded: result.refunded,
+        refundPending: result.refundPending,
         punchReturned: result.punchReturned,
         refundAmountIls: result.refundAmountIls,
       };

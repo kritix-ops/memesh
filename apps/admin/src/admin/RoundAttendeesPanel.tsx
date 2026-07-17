@@ -73,6 +73,9 @@ export function RoundAttendeesPanel({
   const [flash, setFlash] = useState<string | null>(null);
   const [moveFor, setMoveFor] = useState<string | null>(null);
   const [removeFor, setRemoveFor] = useState<string | null>(null);
+  // Set to a booking whose auto-refund just failed (pre-swap Grow order), which
+  // switches its confirm row to the "cancel + refund by hand" escape hatch.
+  const [manualFor, setManualFor] = useState<string | null>(null);
   const [addingWalkIn, setAddingWalkIn] = useState(false);
 
   const load = useCallback(async () => {
@@ -97,19 +100,31 @@ export function RoundAttendeesPanel({
     setTimeout(() => setFlash(null), 4500);
   };
 
-  const doRemove = async (a: RoundAttendee) => {
+  const doRemove = async (a: RoundAttendee, manual = false) => {
     setRowBusy(a.bookingId);
     setRowError(null);
-    console.info('[admin round panel] remove', { bookingId: a.bookingId, source: a.source });
-    const res = await removeBooking(a.bookingId);
+    console.info('[admin round panel] remove', { bookingId: a.bookingId, source: a.source, manual });
+    const res = await removeBooking(a.bookingId, manual ? { manualRefund: true } : undefined);
     setRowBusy(null);
-    setRemoveFor(null);
     if (!res.ok) {
+      // A pre-swap Grow order can't be auto-refunded (502 refund_failed). Don't
+      // dead-end — reveal the manual escape hatch on this row so staff can free
+      // the seat now and refund by hand.
+      if (res.error === 'refund_failed' && !manual) {
+        console.warn('[admin round panel] auto-refund failed — offering manual', { bookingId: a.bookingId });
+        setManualFor(a.bookingId);
+        return;
+      }
+      setRemoveFor(null);
+      setManualFor(null);
       setRowError(removeError(res.error));
       return;
     }
+    setRemoveFor(null);
+    setManualFor(null);
     const bits: string[] = [];
     if (res.data.refunded) bits.push(`הוחזרו ₪${res.data.refundAmountIls}`);
+    if (res.data.refundPending) bits.push(`יש לזַכּות ₪${res.data.refundAmountIls} ידנית`);
     if (res.data.punchReturned) bits.push('כניסה הוחזרה לכרטיסייה');
     await afterChange(`${a.firstName} הוסר/ה מהסבב${bits.length ? ' · ' + bits.join(' · ') : ''}`);
   };
@@ -202,6 +217,7 @@ export function RoundAttendeesPanel({
             onClick={() => {
               setRowError(null);
               setMoveFor(null);
+              setManualFor(null); // reopen starts fresh with a normal auto-refund attempt
               setRemoveFor(removeFor === a.bookingId ? null : a.bookingId);
             }}
           >
@@ -229,21 +245,41 @@ export function RoundAttendeesPanel({
 
       {removeFor === a.bookingId && (
         <div style={{ borderTop: '1px solid #eddad3', paddingTop: 8, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', justifyContent: 'space-between' }}>
-          <span style={{ fontSize: 12.5, color: INK }}>
-            להסיר את {a.firstName}?{' '}
-            {a.source === 'paid' && 'הכסף יוחזר אוטומטית ב-WooCommerce. '}
-            {a.source === 'punchcard' && 'הכניסה תוחזר לכרטיסייה. '}
+          <span style={{ fontSize: 12.5, color: manualFor === a.bookingId ? '#a23a3a' : INK }}>
+            {manualFor === a.bookingId ? (
+              <>ההחזר האוטומטי נכשל (כנראה הזמנה ישנה מ-Grow). לבטל בכל זאת ולזַכּות ידנית? המקום יתפנה, ותקבלו מייל עם פרטי הזיכוי.</>
+            ) : (
+              <>
+                להסיר את {a.firstName}?{' '}
+                {a.source === 'paid' && 'הכסף יוחזר אוטומטית ב-WooCommerce. '}
+                {a.source === 'punchcard' && 'הכניסה תוחזר לכרטיסייה. '}
+              </>
+            )}
           </span>
           <div style={{ display: 'flex', gap: 6 }}>
             <button
               type="button"
               disabled={rowBusy === a.bookingId}
               style={{ ...ghostBtn, background: '#c0554b', color: '#fff', border: 'none' }}
-              onClick={() => void doRemove(a)}
+              onClick={() => void doRemove(a, manualFor === a.bookingId)}
             >
-              {rowBusy === a.bookingId ? 'מסיר…' : 'כן, הסירו'}
+              {rowBusy === a.bookingId
+                ? manualFor === a.bookingId
+                  ? 'מבטל…'
+                  : 'מסיר…'
+                : manualFor === a.bookingId
+                  ? 'בטל וזַכֵּה ידנית'
+                  : 'כן, הסירו'}
             </button>
-            <button type="button" disabled={rowBusy === a.bookingId} style={ghostBtn} onClick={() => setRemoveFor(null)}>
+            <button
+              type="button"
+              disabled={rowBusy === a.bookingId}
+              style={ghostBtn}
+              onClick={() => {
+                setRemoveFor(null);
+                setManualFor(null);
+              }}
+            >
               ביטול
             </button>
           </div>

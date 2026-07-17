@@ -30,16 +30,29 @@ export interface RemoveBookingResponse {
   ok: true;
   /** A paid booking was refunded via WooCommerce. */
   refunded: boolean;
+  /** The seat was freed but the money refund is left for staff to do by hand
+   *  (manual mode / manual override). Mutually exclusive with `refunded`. */
+  refundPending: boolean;
   /** A punch-card entry was returned to the customer's card. */
   punchReturned: boolean;
   refundAmountIls: number;
 }
 
-/** Remove a booking from its round (admin only). Refunds paid / returns punch. */
+/**
+ * Remove a booking from its round (admin only). Refunds paid / returns punch.
+ * Pass `{ manualRefund: true }` to force the manual path for this one booking —
+ * frees the seat and leaves the money refund to staff — even when auto-refund is
+ * the global default. That's the escape hatch for a pre-swap Grow order that
+ * WooCommerce can't auto-refund (a normal remove would 502 with `refund_failed`).
+ */
 export const removeBooking = (
   bookingId: string,
+  opts?: { manualRefund?: boolean },
 ): Promise<ApiResult<RemoveBookingResponse>> =>
-  apiRequest(`/staff/rounds/bookings/${bookingId}/cancel`, { method: 'POST' });
+  apiRequest(`/staff/rounds/bookings/${bookingId}/cancel`, {
+    method: 'POST',
+    ...(opts?.manualRefund ? { body: { manualRefund: true } } : {}),
+  });
 
 /** Move a booking to another round instance (the early/late-arrival case). */
 export const moveBooking = (
