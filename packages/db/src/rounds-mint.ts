@@ -20,6 +20,12 @@ export type MintBookingInput = {
   /** Overrides the provisional hold source (e.g. 'punchcard'). */
   source?: 'paid' | 'punchcard' | 'gift' | 'manual';
   /**
+   * Actual amount (₪, incl. VAT) charged for this booking's WooCommerce ticket
+   * line, snapshotted onto the booking so the cancellation refund uses the real
+   * charge instead of a settings-derived price. Set only on the paid WC mint.
+   */
+  paidTicketIls?: number;
+  /**
    * When set, the hold must belong to this customer or the mint is rejected.
    * Used by customer-initiated confirmation (the dev-pay stub); the real WC
    * webhook path is server-to-server and leaves it unset.
@@ -35,7 +41,7 @@ export type MintedBooking = {
 
 export type MintBookingResult =
   | { ok: true; booking: MintedBooking; idempotentReplay: boolean }
-  | { ok: false; error: 'not_found' | 'forbidden' | 'sold_out_after_payment' };
+  | { ok: false; error: 'not_found' | 'forbidden' | 'sold_out_after_payment' | 'cancelled' };
 
 export const mintBooking = async (
   db: AnyPgDatabase,
@@ -61,8 +67,11 @@ export const mintBooking = async (
         idempotentReplay: true,
       };
     }
-    // A cancelled booking can't be minted.
-    if (booking.status === 'cancelled') return { ok: false, error: 'not_found' as const };
+    // A cancelled booking can't be minted — but this is NOT an orphaned paid
+    // seat. It means the booking was created and then deliberately cancelled,
+    // and a webhook is now re-delivering. Return a distinct `cancelled` so the
+    // caller treats it as an expected no-op, not a "paid seat with no booking".
+    if (booking.status === 'cancelled') return { ok: false, error: 'cancelled' as const };
 
     // If the hold is no longer active (expired by TTL or swept), re-check that a
     // seat is still free before confirming (hold-expired-during-payment, §4.2).
@@ -103,6 +112,7 @@ export const mintBooking = async (
         holdExpiresAt: null,
         ...(input.wcOrderId ? { wcOrderId: input.wcOrderId } : {}),
         ...(input.source ? { source: input.source } : {}),
+        ...(input.paidTicketIls !== undefined ? { paidTicketIls: input.paidTicketIls } : {}),
         updatedAt: now,
       })
       .where(eq(bookings.id, booking.id))

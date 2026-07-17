@@ -28,7 +28,13 @@ const HOLD_ID_KEY = '_memesh_hold_id';
 const COMPANION_BOOKING_KEY = '_memesh_companion_booking_id';
 
 const metaItemSchema = z.object({ key: z.string(), value: z.unknown() });
-const lineItemSchema = z.object({ meta_data: z.array(metaItemSchema).optional() });
+// WC reports the line net (`total`) and its tax (`total_tax`) as decimal
+// strings; the customer paid the sum. We snapshot that gross onto the booking.
+const lineItemSchema = z.object({
+  meta_data: z.array(metaItemSchema).optional(),
+  total: z.string().optional(),
+  total_tax: z.string().optional(),
+});
 const orderSchema = z.object({
   id: z.number(),
   status: z.string(),
@@ -50,6 +56,19 @@ const readMetaString = (
   return undefined;
 };
 
+// The gross ₪ charged for a ticket line = net + tax, rounded to whole shekels
+// (round prices are integers). Returns undefined when the line carries no
+// totals, so the mint leaves paidTicketIls null and the refund falls back to the
+// settings price.
+const lineGrossIls = (li: {
+  total?: string | undefined;
+  total_tax?: string | undefined;
+}): number | undefined => {
+  if (li.total === undefined && li.total_tax === undefined) return undefined;
+  const gross = Number(li.total ?? 0) + Number(li.total_tax ?? 0);
+  return Number.isFinite(gross) && gross > 0 ? Math.round(gross) : undefined;
+};
+
 export interface ProcessRoundOrderInput {
   topic: string;
   payload: unknown;
@@ -68,11 +87,18 @@ export type ProcessRoundOrderResult =
       /** Booking ids minted (or idempotently replayed) on this delivery. */
       minted: string[];
       /**
-       * Holds that could not be minted — a bad hold id, or a seat that was
-       * taken while the customer paid (sold_out_after_payment). These need a
-       * refund; the refund workflow lands with the cancel PR. Logged for now.
+       * Holds that could not be minted for a REAL reason — a bad hold id, or a
+       * seat that was taken while the customer paid (sold_out_after_payment).
+       * These are genuine orphaned paid seats that need an operator refund.
        */
       failed: Array<{ holdId: string; error: string }>;
+      /**
+       * Holds whose booking was already cancelled when a webhook re-delivered.
+       * This is expected and benign (the seat was booked then deliberately
+       * cancelled) — kept separate from `failed` so it never triggers the
+       * "paid seat with no booking" refund alarm.
+       */
+      alreadyCancelled: string[];
       /**
        * Companion-upgrade outcome when the order carried
        * `_memesh_companion_booking_id`. An error here is money for a dead or
@@ -100,28 +126,34 @@ export const processRoundOrderWebhook = async (
   }
 
   const orderId = String(order.id);
-  const holdIds: string[] = [];
+  // Each ticket line carries its own hold id, so its line total is exactly this
+  // booking's ticket charge — even when one order holds several children.
+  const holds: Array<{ holdId: string; paidTicketIls: number | undefined }> = [];
   for (const li of order.line_items) {
     const holdId = readMetaString(li.meta_data, HOLD_ID_KEY);
-    if (holdId) holdIds.push(holdId);
+    if (holdId) holds.push({ holdId, paidTicketIls: lineGrossIls(li) });
   }
   const companionBookingId = readMetaString(order.meta_data, COMPANION_BOOKING_KEY);
-  if (holdIds.length === 0 && !companionBookingId) return { status: 'no_round_items' };
+  if (holds.length === 0 && !companionBookingId) return { status: 'no_round_items' };
 
   const minted: string[] = [];
   const failed: Array<{ holdId: string; error: string }> = [];
-  for (const holdId of holdIds) {
+  const alreadyCancelled: string[] = [];
+  for (const { holdId, paidTicketIls } of holds) {
     if (!UUID_RE.test(holdId)) {
       failed.push({ holdId, error: 'invalid_hold_id' });
       continue;
     }
     const res = await mintBooking(
       db,
-      { holdId, wcOrderId: orderId, source: 'paid' },
+      { holdId, wcOrderId: orderId, source: 'paid', ...(paidTicketIls !== undefined && { paidTicketIls }) },
       input.resolver,
       input.now,
     );
     if (res.ok) minted.push(res.booking.bookingId);
+    // A cancelled booking is an expected webhook re-delivery, not an orphaned
+    // paid seat — keep it out of `failed` so it never trips the refund alarm.
+    else if (res.error === 'cancelled') alreadyCancelled.push(holdId);
     else failed.push({ holdId, error: res.error });
   }
 
@@ -143,5 +175,12 @@ export const processRoundOrderWebhook = async (
     }
   }
 
-  return { status: 'processed', orderId, minted, failed, ...(companion ? { companion } : {}) };
+  return {
+    status: 'processed',
+    orderId,
+    minted,
+    failed,
+    alreadyCancelled,
+    ...(companion ? { companion } : {}),
+  };
 };

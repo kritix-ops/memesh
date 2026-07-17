@@ -90,6 +90,31 @@ test('mintBooking on a missing hold returns not_found', async () => {
   if (!res.ok) assert.equal(res.error, 'not_found');
 });
 
+test('mintBooking on a cancelled booking returns cancelled (not not_found)', async () => {
+  const db = await freshDb();
+  const { instId, customerId } = await setup(db);
+  const hold = await createHold(db, { roundInstanceId: instId, customerId, ...ticket }, NOW);
+  if (!hold.ok) return;
+  const minted = await mintBooking(db, { holdId: hold.holdId, wcOrderId: 'wc-3' }, resolver, NOW);
+  assert.equal(minted.ok, true);
+  // The customer cancels; then a paid-order webhook re-delivers for this hold.
+  await db.update(bookings).set({ status: 'cancelled' }).where(eq(bookings.id, hold.holdId));
+  const replay = await mintBooking(db, { holdId: hold.holdId, wcOrderId: 'wc-3' }, resolver, NOW);
+  assert.equal(replay.ok, false);
+  if (!replay.ok) assert.equal(replay.error, 'cancelled'); // a distinct, non-orphan signal
+});
+
+test('mintBooking snapshots paidTicketIls onto the booking when given', async () => {
+  const db = await freshDb();
+  const { instId, customerId } = await setup(db);
+  const hold = await createHold(db, { roundInstanceId: instId, customerId, ...ticket }, NOW);
+  if (!hold.ok) return;
+  const res = await mintBooking(db, { holdId: hold.holdId, wcOrderId: 'wc-4', paidTicketIls: 55 }, resolver, NOW);
+  assert.equal(res.ok, true);
+  const row = (await db.select().from(bookings).where(eq(bookings.id, hold.holdId)).limit(1))[0];
+  assert.equal(row!.paidTicketIls, 55);
+});
+
 test('mintBooking recovers an expired hold when a seat is still free', async () => {
   const db = await freshDb();
   const { instId, customerId } = await setup(db, 2);
