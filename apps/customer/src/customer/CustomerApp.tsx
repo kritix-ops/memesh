@@ -1090,6 +1090,7 @@ function CollapsibleBooking({
             booking={booking}
             onSwapped={onChanged}
             {...(onMoved ? { onMoved: () => onMoved(booking.bookingId) } : {})}
+            onCollapse={() => setOpen(false)}
             compact
           />
         </div>
@@ -2958,6 +2959,7 @@ function RoundBookingCard({
   booking,
   onSwapped,
   onMoved,
+  onCollapse,
   compact = false,
 }: {
   booking: CustomerRoundBooking;
@@ -2965,6 +2967,10 @@ function RoundBookingCard({
   /** Fired after a successful reschedule, once the list has reloaded — the
    *  parent highlights and scrolls to the booking's new slot in the list. */
   onMoved?: () => void;
+  /** Collapses the parent accordion — the "back" action next to reschedule /
+   *  cancel, so the customer can dismiss without changing anything (Yanay
+   *  2026-07-18). Omitted when the card isn't inside a collapsible. */
+  onCollapse?: () => void;
   /** Inside the accordion: drop the card chrome + the label/date lines (the
    *  collapsible header carries them) and render only the body. */
   compact?: boolean;
@@ -3214,6 +3220,24 @@ function RoundBookingCard({
           >
             {t('customer.booking.cancelButton')}
           </button>
+          {/* Neutral escape: dismiss without rescheduling or cancelling
+              (Yanay 2026-07-18). Plain text so it reads as tertiary. */}
+          {onCollapse && (
+            <button
+              onClick={onCollapse}
+              style={{
+                border: 'none',
+                background: 'transparent',
+                color: MUTED,
+                fontSize: 13.5,
+                fontWeight: 600,
+                cursor: 'pointer',
+                padding: '8px 16px',
+              }}
+            >
+              {t('customer.booking.backButton')}
+            </button>
+          )}
           <div
             style={{
               flexBasis: '100%',

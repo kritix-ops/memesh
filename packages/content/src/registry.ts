@@ -168,8 +168,7 @@ export const CONTENT_REGISTRY: ContentEntry[] = [
     key: 'customer.booking.punchcardNote',
     group: 'customer_booking',
     label: 'הערת ניצול כניסה מהכרטיסייה',
-    default:
-      'כניסה אחת כבר נוצלה מהכרטיסייה עבור ההזמנה הזו והיא שמורה לך לתאריך זה. שימו לב לא לנצל את כל הכניסות לפני כן.',
+    default: 'כניסה אחת כבר נוצלה מהכרטיסייה עבור ההזמנה הזו והיא שמורה לך לתאריך זה.',
     kind: 'long',
   },
   {
