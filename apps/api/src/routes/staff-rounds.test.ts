@@ -333,6 +333,31 @@ test('POST /staff/rounds/bookings/:id/cancel is ADMIN-only (cashier gets 403)', 
   assert.ok([404, 500].includes(ok.statusCode), `got ${ok.statusCode}`);
 });
 
+test('POST /staff/rounds/bookings/:id/cancel validates the optional manualRefund body', async () => {
+  const id = '00000000-0000-0000-0000-000000000000';
+  const admin = auth(await tokenFor('admin'));
+
+  // A non-boolean manualRefund is rejected before the money path runs.
+  const bad = await app.inject({
+    method: 'POST',
+    url: `/staff/rounds/bookings/${id}/cancel`,
+    headers: admin,
+    payload: { manualRefund: 'yes' },
+  });
+  assert.equal(bad.statusCode, 400);
+  assert.equal(bad.json().error, 'invalid_body');
+
+  // The manual-cancel override (the Grow-tail escape hatch) is a valid body and
+  // passes validation through to the cancel engine.
+  const forced = await app.inject({
+    method: 'POST',
+    url: `/staff/rounds/bookings/${id}/cancel`,
+    headers: admin,
+    payload: { manualRefund: true },
+  });
+  assert.ok([404, 500].includes(forced.statusCode), `got ${forced.statusCode}`);
+});
+
 test('GET /staff/customers/:id/rounds-today is staff-gated and validates the id', async () => {
   const noToken = await app.inject({
     method: 'GET',
