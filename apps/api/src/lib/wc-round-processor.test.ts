@@ -117,6 +117,22 @@ test('a malformed hold id is reported as failed, not thrown', async () => {
   assert.equal(res.failed[0]!.error, 'invalid_hold_id');
 });
 
+test('a re-delivery for an already-cancelled booking is benign, not a failure', async () => {
+  const db = await freshDb();
+  const holdId = await seatAndHold(db);
+  const payload = order({ line_items: [holdItem(holdId)] });
+  // First delivery mints the booking; then the customer cancels it.
+  await processRoundOrderWebhook(db, { topic: 'order.updated', payload, resolver, now: NOW });
+  await db.update(bookings).set({ status: 'cancelled' }).where(eq(bookings.id, holdId));
+  // A re-delivered webhook must NOT report this as an orphaned paid seat.
+  const res = await processRoundOrderWebhook(db, { topic: 'order.updated', payload, resolver, now: NOW });
+  assert.equal(res.status, 'processed');
+  if (res.status !== 'processed') return;
+  assert.equal(res.failed.length, 0); // no false "paid seat without a booking" alarm
+  assert.equal(res.minted.length, 0);
+  assert.deepEqual(res.alreadyCancelled, [holdId]);
+});
+
 test('an unparseable payload is rejected', async () => {
   const db = await freshDb();
   const res = await processRoundOrderWebhook(db, { topic: 'order.updated', payload: { nope: true }, resolver });

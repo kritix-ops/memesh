@@ -240,6 +240,7 @@ export const wcHandoffRoutes: FastifyPluginAsync = async (fastify) => {
                 orderId: roundResult.orderId,
                 minted: roundResult.minted.length,
                 failed: roundResult.failed.length,
+                alreadyCancelled: roundResult.alreadyCancelled.length,
                 companion: roundResult.companion,
               },
               '[wc handoff rounds] processed',

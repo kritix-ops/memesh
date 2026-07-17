@@ -35,7 +35,7 @@ export type MintedBooking = {
 
 export type MintBookingResult =
   | { ok: true; booking: MintedBooking; idempotentReplay: boolean }
-  | { ok: false; error: 'not_found' | 'forbidden' | 'sold_out_after_payment' };
+  | { ok: false; error: 'not_found' | 'forbidden' | 'sold_out_after_payment' | 'cancelled' };
 
 export const mintBooking = async (
   db: AnyPgDatabase,
@@ -61,8 +61,11 @@ export const mintBooking = async (
         idempotentReplay: true,
       };
     }
-    // A cancelled booking can't be minted.
-    if (booking.status === 'cancelled') return { ok: false, error: 'not_found' as const };
+    // A cancelled booking can't be minted — but this is NOT an orphaned paid
+    // seat. It means the booking was created and then deliberately cancelled,
+    // and a webhook is now re-delivering. Return a distinct `cancelled` so the
+    // caller treats it as an expected no-op, not a "paid seat with no booking".
+    if (booking.status === 'cancelled') return { ok: false, error: 'cancelled' as const };
 
     // If the hold is no longer active (expired by TTL or swept), re-check that a
     // seat is still free before confirming (hold-expired-during-payment, §4.2).
