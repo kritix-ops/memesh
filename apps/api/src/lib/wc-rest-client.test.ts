@@ -247,3 +247,62 @@ test('getOrder fetches status + order key by id', async () => {
   assert.equal(order.status, 'processing');
   assert.equal(order.orderKey, 'wc_order_xyz');
 });
+
+// ---------------------------------------------------------------------------
+// createOrderRefund — money path. A 2xx is NOT proof the gateway refunded, so
+// the client must fail closed unless a real refund (id + matching amount) came
+// back. Regression guard for the phantom-refund bug where WooCommerce answered
+// 200 with an empty body and the seat was freed with no money returned.
+// ---------------------------------------------------------------------------
+
+function refundClient(fetchImpl: unknown) {
+  return createWcRestClient({
+    baseUrl: 'https://memesh.co.il/wp-json/wc/v3',
+    consumerKey: 'ck',
+    consumerSecret: 'cs',
+    fetchImpl: fetchImpl as typeof fetch,
+  });
+}
+
+test('createOrderRefund POSTs api_refund with the amount and returns the confirmed refund', async () => {
+  let capturedUrl = '';
+  let capturedBody: Record<string, unknown> = {};
+  const client = refundClient(async (url: string, init: RequestInit) => {
+    capturedUrl = String(url);
+    capturedBody = JSON.parse(String(init.body)) as Record<string, unknown>;
+    return jsonResponse({ id: 5142, amount: '55.00' }, { status: 201 });
+  });
+
+  const refund = await client.createOrderRefund('5141', 55);
+  assert.match(capturedUrl, /\/orders\/5141\/refunds$/);
+  assert.equal(capturedBody.amount, '55.00');
+  assert.equal(capturedBody.api_refund, true);
+  assert.equal(refund.id, 5142);
+  assert.equal(refund.amount, '55.00');
+});
+
+test('createOrderRefund throws when WooCommerce returns 200 with no refund id (phantom refund)', async () => {
+  // The exact bug: gateway silently declined, WC still answered 200 with {}.
+  const client = refundClient(async () => jsonResponse({}, { status: 200 }));
+  await assert.rejects(() => client.createOrderRefund('5143', 45), /no refund id/);
+});
+
+test('createOrderRefund throws when WooCommerce returns 200 with an empty (non-JSON) body', async () => {
+  const client = refundClient(async () => new Response('', { status: 200 }));
+  await assert.rejects(() => client.createOrderRefund('5031', 45), /no refund id/);
+});
+
+test('createOrderRefund throws when the refund amount is zero', async () => {
+  const client = refundClient(async () => jsonResponse({ id: 77, amount: '0.00' }));
+  await assert.rejects(() => client.createOrderRefund('5030', 45), /moved no money/);
+});
+
+test('createOrderRefund throws when the refunded amount does not match the request', async () => {
+  const client = refundClient(async () => jsonResponse({ id: 78, amount: '30.00' }));
+  await assert.rejects(() => client.createOrderRefund('5028', 45), /amount mismatch/);
+});
+
+test('createOrderRefund throws on a non-2xx response', async () => {
+  const client = refundClient(async () => jsonResponse({ message: 'invalid amount' }, { status: 400 }));
+  await assert.rejects(() => client.createOrderRefund('5141', 55), /refund failed: 400/);
+});
