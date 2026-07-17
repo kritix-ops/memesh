@@ -648,7 +648,7 @@ export const CONTENT_REGISTRY: ContentEntry[] = [
     group: 'customer_bookflow',
     label: 'תקנון — כתובת הקישור',
     help: 'הכתובת שייפתח הקישור "לתקנון" בחלון הכללים. כתובת מלאה (https://...).',
-    default: 'https://memesh.co.il/terms',
+    default: 'https://memesh.co.il/takanon/',
     kind: 'short',
   },
   {
