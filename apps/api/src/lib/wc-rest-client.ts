@@ -71,10 +71,12 @@ export interface WcRestClient {
 
   /**
    * Create a refund on an order. `api_refund: true` asks WooCommerce to push the
-   * refund to the payment gateway (Meshulam/Grow) — this only actually moves
-   * money if the gateway supports programmatic refunds. Throws on non-2xx so the
-   * caller can treat "refund not confirmed" as a hard stop (never release a
-   * paid seat on an unconfirmed refund).
+   * refund to the payment gateway (PayPlus) — this only actually moves money if
+   * the gateway confirms it. Throws on non-2xx AND on a 2xx that carries no
+   * confirmed refund (missing id, zero amount, or an amount that doesn't match
+   * the request) — WooCommerce can answer 200 with an empty body when the
+   * gateway silently declines. The caller treats any throw as "refund not
+   * confirmed" and fails closed (never release a paid seat without money back).
    */
   createOrderRefund(orderId: string, amountIls: number, reason?: string): Promise<WcRefundResult>;
 
@@ -161,8 +163,36 @@ export const createWcRestClient = (config: WcRestClientConfig): WcRestClient => 
         const text = await res.text().catch(() => '');
         throw new Error(`[wc-rest] refund failed: ${res.status} ${text.slice(0, 200)}`);
       }
-      const body = (await res.json()) as { id: number; amount: string };
-      return { id: body.id, amount: body.amount };
+      // A 2xx does NOT prove money moved. WooCommerce (or the PayPlus gateway
+      // plugin) can answer 200 with an empty / no-refund body when the gateway
+      // silently declines — no `id`, no `amount`. Trusting the status alone frees
+      // the seat and tells the customer "refunded" while nothing came back. So
+      // require a real refund id AND a positive amount that matches what we asked
+      // for; anything else throws, and the caller fails closed (seat kept).
+      const body = (await res.json().catch(() => null)) as { id?: number; amount?: string } | null;
+      const refundId = body?.id;
+      const amountStr = body?.amount;
+      const refundedAmount = amountStr === undefined ? NaN : Math.abs(Number(amountStr));
+      const requested = Number(amountIls.toFixed(2));
+      if (typeof refundId !== 'number' || !Number.isInteger(refundId) || refundId <= 0) {
+        throw new Error(
+          `[wc-rest] refund not confirmed for order ${orderId}: WooCommerce returned no refund id ` +
+            `(gateway likely declined). body=${JSON.stringify(body).slice(0, 200)}`,
+        );
+      }
+      if (amountStr === undefined || !Number.isFinite(refundedAmount) || refundedAmount <= 0) {
+        throw new Error(
+          `[wc-rest] refund not confirmed for order ${orderId}: refund ${refundId} moved no money ` +
+            `(amount=${String(amountStr)})`,
+        );
+      }
+      if (Math.abs(refundedAmount - requested) > 0.01) {
+        throw new Error(
+          `[wc-rest] refund amount mismatch for order ${orderId}: asked ₪${requested}, ` +
+            `WooCommerce refunded ₪${refundedAmount} (refund ${refundId})`,
+        );
+      }
+      return { id: refundId, amount: amountStr };
     },
 
     createOrder: async (input) => {

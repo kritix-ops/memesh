@@ -14,6 +14,7 @@ export const CONTENT_GROUPS: ContentGroupMeta[] = [
   { id: 'customer_general', label: 'אזור אישי — כללי וניווט' },
   { id: 'customer_cards', label: 'אזור אישי — כרטיסיות' },
   { id: 'customer_bookflow', label: 'אזור אישי — הזמנת סבב' },
+  { id: 'customer_infopopup', label: 'אזור אישי — חלון כללים לפני הזמנה' },
   { id: 'customer_picker', label: 'אזור אישי — בחירת תאריך וסבב' },
   { id: 'customer_bookings', label: 'אזור אישי — רשימת ההזמנות' },
   { id: 'customer_booking', label: 'אזור אישי — ניהול הזמנה' },
@@ -168,8 +169,7 @@ export const CONTENT_REGISTRY: ContentEntry[] = [
     key: 'customer.booking.punchcardNote',
     group: 'customer_booking',
     label: 'הערת ניצול כניסה מהכרטיסייה',
-    default:
-      'כניסה אחת כבר נוצלה מהכרטיסייה עבור ההזמנה הזו והיא שמורה לך לתאריך זה. שימו לב לא לנצל את כל הכניסות לפני כן.',
+    default: 'כניסה אחת כבר נוצלה מהכרטיסייה עבור ההזמנה הזו והיא שמורה לך לתאריך זה.',
     kind: 'long',
   },
   {
@@ -451,6 +451,14 @@ export const CONTENT_REGISTRY: ContentEntry[] = [
   { key: 'customer.cards.upcomingFromCard', group: 'customer_cards', label: 'הערה — הזמנה עתידית מהכרטיסייה', default: 'יש לך הזמנה עתידית מכרטיסייה זו ·', kind: 'long' },
   { key: 'customer.cards.loadError', group: 'customer_cards', label: 'שגיאת טעינת כרטיסיות', default: 'לא הצלחנו לטעון את הכרטיסיות. רעננו את הדף.', kind: 'long' },
   { key: 'customer.cards.empty', group: 'customer_cards', label: 'אין כרטיסיות', default: 'אין כרטיסיות פעילות.', kind: 'short' },
+  {
+    key: 'customer.cards.notReservationNote',
+    group: 'customer_cards',
+    label: 'כרטיסייה — אינה שומרת מקום',
+    default:
+      'הכרטיסייה אינה מהווה הזמנת מקום. יש לבחור סבב לפני כל ביקור. הגעה ללא הרשמה מראש תתאפשר על בסיס מקום פנוי בלבד.',
+    kind: 'long',
+  },
 
   // ── אזור אישי — הזמנת סבב (PunchRoundBooking) ──────────────────────
   { key: 'customer.bookflow.title', group: 'customer_bookflow', label: 'כותרת — הזמנת סבב', default: 'הזמנת כניסה לסבב', kind: 'short' },
@@ -548,6 +556,285 @@ export const CONTENT_REGISTRY: ContentEntry[] = [
     placeholders: ['price'],
   },
   { key: 'customer.bookflow.confirm', group: 'customer_bookflow', label: 'כפתור — אישור והזמנה', default: 'אישור והזמנה', kind: 'short' },
+  {
+    key: 'customer.bookflow.roundIntro',
+    group: 'customer_bookflow',
+    label: 'הסבר — איך עובד סבב',
+    default:
+      'ניתן להגיע בכל שעה במהלך הסבב שנבחר, אך הביקור מסתיים בשעת הסיום המוצגת גם במקרה של הגעה מאוחרת.',
+    kind: 'long',
+  },
+  {
+    key: 'customer.bookflow.capacityNote',
+    group: 'customer_bookflow',
+    label: 'הבהרה — מה נספר במקומות הפנויים',
+    default:
+      'מספר המקומות הפנויים מתייחס למספר הילדים. כל ילד/ה כולל/ת מלווה אחד שאינו נספר לתפוסה.',
+    kind: 'long',
+  },
+  {
+    key: 'customer.bookflow.companionPolicy',
+    group: 'customer_bookflow',
+    label: 'הסבר — מלווים בהזמנה',
+    default:
+      'כל כרטיס ילד או תינוק כולל מלווה אחד. ניתן להוסיף מראש מלווה אחד נוסף בתשלום. מלווים נוספים מעבר לכך יוכלו להיכנס רק במקום, בתשלום ועל בסיס מקום פנוי.',
+    kind: 'long',
+  },
+  {
+    key: 'customer.bookflow.summaryTitle',
+    group: 'customer_bookflow',
+    label: 'סיכום — כותרת',
+    default: 'סיכום ההזמנה',
+    kind: 'short',
+  },
+  {
+    key: 'customer.bookflow.summaryDate',
+    group: 'customer_bookflow',
+    label: 'סיכום — תאריך',
+    help: '{{date}} תאריך הסבב.',
+    default: 'תאריך: {{date}}',
+    kind: 'short',
+    placeholders: ['date'],
+  },
+  {
+    key: 'customer.bookflow.summaryRound',
+    group: 'customer_bookflow',
+    label: 'סיכום — סבב',
+    help: '{{time}} טווח שעות הסבב.',
+    default: 'סבב: {{time}}',
+    kind: 'short',
+    placeholders: ['time'],
+  },
+  {
+    key: 'customer.bookflow.summaryChildren',
+    group: 'customer_bookflow',
+    label: 'סיכום — כרטיסי ילדים',
+    help: '{{count}} מספר כרטיסי הילדים.',
+    default: 'כרטיסי ילדים: {{count}}',
+    kind: 'short',
+    placeholders: ['count'],
+  },
+  {
+    key: 'customer.bookflow.summaryIncluded',
+    group: 'customer_bookflow',
+    label: 'סיכום — מלווים כלולים',
+    help: '{{count}} מספר המלווים הכלולים.',
+    default: 'מלווים כלולים: {{count}}',
+    kind: 'short',
+    placeholders: ['count'],
+  },
+  {
+    key: 'customer.bookflow.summaryExtra',
+    group: 'customer_bookflow',
+    label: 'סיכום — מלווים נוספים',
+    help: '{{count}} מספר המלווים הנוספים בתשלום.',
+    default: 'מלווים נוספים: {{count}}',
+    kind: 'short',
+    placeholders: ['count'],
+  },
+  {
+    key: 'customer.bookflow.summaryTotal',
+    group: 'customer_bookflow',
+    label: 'סיכום — סך הכול נכנסים',
+    help: '{{count}} סך כל הנכנסים (ילדים + מלווים).',
+    default: 'סך הכול נכנסים: {{count}}',
+    kind: 'short',
+    placeholders: ['count'],
+  },
+  // The terms URL the rules popup links to (customer.infopopup.termsLink). Kept
+  // editable so the link can point at the site's terms page without a deploy.
+  {
+    key: 'customer.bookflow.termsUrl',
+    group: 'customer_bookflow',
+    label: 'תקנון — כתובת הקישור',
+    help: 'הכתובת שייפתח הקישור "לתקנון" בחלון הכללים. כתובת מלאה (https://...).',
+    default: 'https://memesh.co.il/takanon/',
+    kind: 'short',
+  },
+  {
+    key: 'customer.bookflow.confirmedRecap',
+    group: 'customer_bookflow',
+    label: 'אישור הזמנה — תזכורת כללים',
+    default:
+      'ניתן להגיע בכל שעה במהלך הסבב, אך הוא מסתיים בשעה המצוינת. חובה להגיע עם גרביים לילדים ולמבוגרים. הכניסה לילדים עד גיל 6 בלבד ובליווי אדם בן 16 ומעלה. ביטול אפשרי עד 24 שעות לפני תחילת הסבב.',
+    kind: 'long',
+  },
+
+  // ── אזור אישי — חלון כללים לפני הזמנה (PreBookingInfoModal) ────────
+  // The blocking rules popup that fires before every round booking and every
+  // reschedule (Yanay, 2026-07-18 — expanded to six accordion sections for the
+  // punch-card slot flow). The customer must tap "קראתי" to proceed. Each
+  // section is a title + a one-line subtitle (both shown collapsed) + the full
+  // body (shown on expand). The footer terms link reuses customer.bookflow.termsUrl.
+  {
+    key: 'customer.infopopup.title',
+    group: 'customer_infopopup',
+    label: 'כותרת החלון',
+    default: 'כמה דברים חשובים לפני אישור הסבב',
+    kind: 'short',
+  },
+  {
+    key: 'customer.infopopup.s1.title',
+    group: 'customer_infopopup',
+    label: 'סעיף 1 — כותרת',
+    default: 'גילאי המשחקייה',
+    kind: 'short',
+  },
+  {
+    key: 'customer.infopopup.s1.subtitle',
+    group: 'customer_infopopup',
+    label: 'סעיף 1 — שורת תקציר',
+    default: 'המתחם מיועד לילדים עד גיל 6 בלבד.',
+    kind: 'short',
+  },
+  {
+    key: 'customer.infopopup.s1.body',
+    group: 'customer_infopopup',
+    label: 'סעיף 1 — טקסט מלא',
+    default:
+      'מֶמֶשׁ תוכננה במיוחד עבור תינוקות וילדים קטנים, ולכן הכניסה מיועדת לילדים עד גיל 6 בלבד.\nלא תתאפשר כניסה לילדים מעל גיל 6, גם אם הם מגיעים כאחים או כמלווים של ילדים צעירים יותר.\nמכיוון שרוב המבקרים במקום הם תינוקות וילדים קטנים, אנו מבקשים להקפיד במיוחד על השגחה צמודה על ילדים בני 5–6 ועל משחק זהיר ומתחשב.',
+    kind: 'long',
+  },
+  {
+    key: 'customer.infopopup.s2.title',
+    group: 'customer_infopopup',
+    label: 'סעיף 2 — כותרת',
+    default: 'גרביים — חובה באזורי המשחק',
+    kind: 'short',
+  },
+  {
+    key: 'customer.infopopup.s2.subtitle',
+    group: 'customer_infopopup',
+    label: 'סעיף 2 — שורת תקציר',
+    default: 'לילדים ולמבוגרים, כולל תינוקות. אפשר להביא מהבית או לרכוש במקום.',
+    kind: 'short',
+  },
+  {
+    key: 'customer.infopopup.s2.body',
+    group: 'customer_infopopup',
+    label: 'סעיף 2 — טקסט מלא',
+    default:
+      'הכניסה לאזורי המשחק היא עם גרביים בלבד — לילדים, למבוגרים ולתינוקות, גם אם התינוק עדיין אינו הולך.\nאין להיכנס לאזורי המשחק עם נעליים או ברגליים יחפות. הכלל מסייע לנו לשמור על ניקיון, היגיינה וחוויה נעימה לכל המבקרים.\nאפשר להביא גרביים מהבית, ואם שכחתם ניתן לרכוש אצלנו גרביים לילדים ולמבוגרים.',
+    kind: 'long',
+  },
+  {
+    key: 'customer.infopopup.s3.title',
+    group: 'customer_infopopup',
+    label: 'סעיף 3 — כותרת',
+    default: 'מה כוללת כל כניסה מהכרטיסייה?',
+    kind: 'short',
+  },
+  {
+    key: 'customer.infopopup.s3.subtitle',
+    group: 'customer_infopopup',
+    label: 'סעיף 3 — שורת תקציר',
+    default: 'כל כניסה כוללת ילד/ה ומלווה אחד/ת מגיל 16 ומעלה.',
+    kind: 'short',
+  },
+  {
+    key: 'customer.infopopup.s3.body',
+    group: 'customer_infopopup',
+    label: 'סעיף 3 — טקסט מלא',
+    default:
+      'כל כניסה מהכרטיסייה מיועדת לילד או לילדה מגיל הליכה ועד גיל 6, וכוללת מלווה אחד מגיל 16 ומעלה.\nלדוגמה:\nאם מגיעים שני ילדים ושני מלווים — יש לממש שתי כניסות מהכרטיסייה, ואין צורך לשלם על מלווה נוסף.\nאם מגיעים ילד אחד ושני מלווים — יש לממש כניסה אחת ולהוסיף מלווה נוסף בעלות 12 ₪.\nניתן להזמין מראש מלווה נוסף אחד לכל כניסה שממומשת מהכרטיסייה.\nכניסת מלווים נוספים מעבר לכך תתאפשר רק בהגעה למקום, בתשלום ועל בסיס מקום פנוי.\nכל מלווה חייב להיות בן 16 ומעלה, ובהגעה עשוי להתבקש להציג תעודת זהות או מסמך מזהה הכולל תאריך לידה.',
+    kind: 'long',
+  },
+  {
+    key: 'customer.infopopup.s4.title',
+    group: 'customer_infopopup',
+    label: 'סעיף 4 — כותרת',
+    default: 'הרשמה לסבב כניסה',
+    kind: 'short',
+  },
+  {
+    key: 'customer.infopopup.s4.subtitle',
+    group: 'customer_infopopup',
+    label: 'סעיף 4 — שורת תקציר',
+    default: 'ההזמנה תקפה לסבב שנבחר בלבד.',
+    kind: 'short',
+  },
+  {
+    key: 'customer.infopopup.s4.body',
+    group: 'customer_infopopup',
+    label: 'סעיף 4 — טקסט מלא',
+    default:
+      'הכרטיסייה אינה מהווה הזמנת מקום בפני עצמה. לפני כל ביקור יש לבחור תאריך וסבב כניסה.\nהזמנת הסבב שומרת מקום עבור הילדים והמלווים שנכללו בהזמנה.\nניתן להגיע בכל שעה במהלך הסבב, אך הביקור מסתיים בשעת הסיום המוצגת בהזמנה, גם במקרה של הגעה מאוחרת.\nהגעה ללא הרשמה מראש תתאפשר על בסיס מקום פנוי בלבד.',
+    kind: 'long',
+  },
+  {
+    key: 'customer.infopopup.s5.title',
+    group: 'customer_infopopup',
+    label: 'סעיף 5 — כותרת',
+    default: 'ביטול ושינוי הזמנה',
+    kind: 'short',
+  },
+  {
+    key: 'customer.infopopup.s5.subtitle',
+    group: 'customer_infopopup',
+    label: 'סעיף 5 — שורת תקציר',
+    default: 'ביטול עד 24 שעות לפני. שינוי עד תחילת הסבב המקורי ובכפוף לזמינות.',
+    kind: 'short',
+  },
+  {
+    key: 'customer.infopopup.s5.body',
+    group: 'customer_infopopup',
+    label: 'סעיף 5 — טקסט מלא',
+    default:
+      'ביטול הרשמה לסבב אפשרי עד 24 שעות לפני תחילת הסבב. בביטול שבוצע בזמן הכניסה תוחזר לכרטיסייה.\nשינוי תאריך או שעה אפשרי עד תחילת הסבב המקורי, בכפוף לזמינות בסבב החדש.\nבמקרה של אי־הגעה הכניסה לא תוחזר לכרטיסייה.',
+    kind: 'long',
+  },
+  {
+    key: 'customer.infopopup.s6.title',
+    group: 'customer_infopopup',
+    label: 'סעיף 6 — כותרת',
+    default: 'הגעה וחניה',
+    kind: 'short',
+  },
+  {
+    key: 'customer.infopopup.s6.subtitle',
+    group: 'customer_infopopup',
+    label: 'סעיף 6 — שורת תקציר',
+    default: 'החרושת 18, רמת השרון, בניין בית בלורי, קומה 4.',
+    kind: 'short',
+  },
+  {
+    key: 'customer.infopopup.s6.body',
+    group: 'customer_infopopup',
+    label: 'סעיף 6 — טקסט מלא',
+    default:
+      'אנחנו נמצאים ברחוב החרושת 18, רמת השרון, בבניין בית בלורי, קומה 4.\nכשיוצאים מהמעלית בקומה 4, פונים שמאלה וממשיכים עד סוף המסדרון.\nאם מגיעים ברכב: לאחר שעוברים את הבניין, אין לפנות ימינה לכיוון כביש 5. מומלץ להאט לפני הבניין של יוחננוף ולחפש חניה באזור.\nאין לנו חניה פרטית ואין לנו הסדר עם חניון כלשהו.\nאפשר לחפש ב־Waze את הכתובת "החרושת 17, רמת השרון". באזור יש חניה בכחול־לבן וגם מקומות חניה נוספים, בכפוף לזמינות.\nחניון יוחננוף הוא חניון בתשלום של הסופר, אינו קשור אלינו ואין לנו הסדר איתו.\nקישורי Waze לחניות באזור מופיעים גם בהיילייט "חניה" בעמוד האינסטגרם שלנו.',
+    kind: 'long',
+  },
+  {
+    key: 'customer.infopopup.termsPrefix',
+    group: 'customer_infopopup',
+    label: 'תחתית — טקסט לפני הקישור',
+    default: 'בהמשך ההזמנה אתם מסכימים',
+    kind: 'short',
+  },
+  {
+    key: 'customer.infopopup.termsLink',
+    group: 'customer_infopopup',
+    label: 'תחתית — טקסט הקישור לתקנון',
+    help: 'הטקסט של הקישור בתחתית החלון. הכתובת עצמה נערכת תחת "אזור אישי — הזמנת סבב".',
+    default: 'לתקנון האתר',
+    kind: 'short',
+  },
+  {
+    key: 'customer.infopopup.continue',
+    group: 'customer_infopopup',
+    label: 'כפתור אישור והמשך',
+    default: 'קראתי, אפשר לאשר את הסבב',
+    kind: 'short',
+  },
+  {
+    key: 'customer.infopopup.closeLabel',
+    group: 'customer_infopopup',
+    label: 'תווית נגישות — כפתור סגירה',
+    help: 'לא מוצג על המסך; נקרא בקורא מסך על כפתור ה-X.',
+    default: 'סגירת החלון',
+    kind: 'short',
+  },
 
   // ── אזור אישי — בחירת תאריך וסבב (DayStrip / MonthCalendar / …) ────
   { key: 'customer.picker.prevMonth', group: 'customer_picker', label: 'לוח שנה — חודש קודם', default: 'חודש קודם', kind: 'short' },
