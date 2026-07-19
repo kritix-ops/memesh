@@ -12,6 +12,7 @@ export type StaffActionType =
   | 'create_staff'
   | 'update_card_settings'
   | 'refund_entry'
+  | 'manual_refund_pending'
   | 'reassign_card'
   | 'edit_card'
   | 'update_role_permission'

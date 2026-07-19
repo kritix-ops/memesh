@@ -50,6 +50,43 @@ const validationStatus: Record<RoundSettingsValidationError['code'], number> = {
   closing_time_invalid: 400,
 };
 
+// Map a validated PATCH body to a DB patch: forward exactly the keys the caller
+// sent (an absent key must not overwrite the stored value). Extracted as a pure
+// function so the field-forwarding is unit-testable without a DB — a dropped key
+// here silently discards an admin's change (see the #115 toggles regression).
+export function buildRoundSettingsPatch(d: z.infer<typeof updateBodySchema>): UpdateRoundSettingsInput {
+  return {
+    ...(d.roundsEnabled !== undefined && { roundsEnabled: d.roundsEnabled }),
+    ...(d.holdTtlMinutes !== undefined && { holdTtlMinutes: d.holdTtlMinutes }),
+    ...(d.cancellationWindowHours !== undefined && {
+      cancellationWindowHours: d.cancellationWindowHours,
+    }),
+    ...(d.claimWindowMinutes !== undefined && { claimWindowMinutes: d.claimWindowMinutes }),
+    ...(d.activeHoursStart !== undefined && { activeHoursStart: d.activeHoursStart }),
+    ...(d.activeHoursEnd !== undefined && { activeHoursEnd: d.activeHoursEnd }),
+    ...(d.reminderOffsets !== undefined && { reminderOffsets: d.reminderOffsets }),
+    ...(d.preVisitReminderOffsets !== undefined && {
+      preVisitReminderOffsets: d.preVisitReminderOffsets,
+    }),
+    ...(d.bookingConfirmEmail !== undefined && { bookingConfirmEmail: d.bookingConfirmEmail }),
+    ...(d.bookingConfirmSms !== undefined && { bookingConfirmSms: d.bookingConfirmSms }),
+    ...(d.closingTime !== undefined && { closingTime: d.closingTime }),
+    ...(d.skipLastRoundReminder !== undefined && { skipLastRoundReminder: d.skipLastRoundReminder }),
+    ...(d.allowOverCapacityWalkIn !== undefined && {
+      allowOverCapacityWalkIn: d.allowOverCapacityWalkIn,
+    }),
+    ...(d.warnUpcomingReservationAtDoor !== undefined && {
+      warnUpcomingReservationAtDoor: d.warnUpcomingReservationAtDoor,
+    }),
+    ...(d.bookingHorizonDays !== undefined && { bookingHorizonDays: d.bookingHorizonDays }),
+    ...(d.markingGraceMinutes !== undefined && { markingGraceMinutes: d.markingGraceMinutes }),
+    ...(d.manualRefundOnCancel !== undefined && { manualRefundOnCancel: d.manualRefundOnCancel }),
+    ...(d.cancellationAlertEmail !== undefined && {
+      cancellationAlertEmail: d.cancellationAlertEmail,
+    }),
+  };
+}
+
 export const roundSettingsRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get('/admin/round-settings', { preHandler: requireRoleHook('admin') }, async () => {
     const settings = await getRoundSettings(db);
@@ -64,36 +101,7 @@ export const roundSettingsRoutes: FastifyPluginAsync = async (fastify) => {
       if (!parsed.success) {
         return reply.code(400).send({ error: 'invalid_body', issues: parsed.error.issues });
       }
-      const d = parsed.data;
-      const patch: UpdateRoundSettingsInput = {
-        ...(d.roundsEnabled !== undefined && { roundsEnabled: d.roundsEnabled }),
-        ...(d.holdTtlMinutes !== undefined && { holdTtlMinutes: d.holdTtlMinutes }),
-        ...(d.cancellationWindowHours !== undefined && {
-          cancellationWindowHours: d.cancellationWindowHours,
-        }),
-        ...(d.claimWindowMinutes !== undefined && { claimWindowMinutes: d.claimWindowMinutes }),
-        ...(d.activeHoursStart !== undefined && { activeHoursStart: d.activeHoursStart }),
-        ...(d.activeHoursEnd !== undefined && { activeHoursEnd: d.activeHoursEnd }),
-        ...(d.reminderOffsets !== undefined && { reminderOffsets: d.reminderOffsets }),
-        ...(d.closingTime !== undefined && { closingTime: d.closingTime }),
-        ...(d.skipLastRoundReminder !== undefined && {
-          skipLastRoundReminder: d.skipLastRoundReminder,
-        }),
-        ...(d.allowOverCapacityWalkIn !== undefined && {
-          allowOverCapacityWalkIn: d.allowOverCapacityWalkIn,
-        }),
-        ...(d.warnUpcomingReservationAtDoor !== undefined && {
-          warnUpcomingReservationAtDoor: d.warnUpcomingReservationAtDoor,
-        }),
-        ...(d.bookingHorizonDays !== undefined && { bookingHorizonDays: d.bookingHorizonDays }),
-        ...(d.markingGraceMinutes !== undefined && { markingGraceMinutes: d.markingGraceMinutes }),
-        ...(d.manualRefundOnCancel !== undefined && {
-          manualRefundOnCancel: d.manualRefundOnCancel,
-        }),
-        ...(d.cancellationAlertEmail !== undefined && {
-          cancellationAlertEmail: d.cancellationAlertEmail,
-        }),
-      };
+      const patch = buildRoundSettingsPatch(parsed.data);
       const result = await updateRoundSettings(db, patch);
       if (!result.ok) {
         return reply.code(validationStatus[result.error.code]).send({ error: result.error.code });

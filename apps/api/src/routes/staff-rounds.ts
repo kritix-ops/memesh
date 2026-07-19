@@ -446,7 +446,12 @@ export const staffRoundsRoutes: FastifyPluginAsync = async (fastify) => {
       const refund = makeRoundRefund(request.log);
       const result = await cancelBooking(
         db,
-        { bookingId, skipWindow: true, manualRefund: useManual },
+        {
+          bookingId,
+          skipWindow: true,
+          manualRefund: useManual,
+          ...(request.user?.id !== undefined && { refundActorStaffId: request.user.id }),
+        },
         { refund },
       );
       if (!result.ok) {
