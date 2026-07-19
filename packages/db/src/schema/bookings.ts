@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm';
 import {
   index,
+  integer,
   jsonb,
   pgEnum,
   pgTable,
@@ -80,6 +81,15 @@ export const bookings = pgTable(
     // Matches the punch_cards.wc_order_id shape (varchar not integer) so
     // reports can join on a single column type.
     wcOrderId: varchar('wc_order_id', { length: 64 }),
+    // The actual amount (₪, incl. VAT) charged for this booking's entrance-ticket
+    // line, snapshotted from the WooCommerce order at mint time. cancelBooking
+    // refunds THIS for the ticket portion instead of a value recomputed from
+    // current price settings, so a later WP price change can't skew a refund. The
+    // additional-companion add-on stays settings-derived (companion lines carry
+    // no hold id and aren't reliably attributable per booking in the webhook
+    // payload). Null for bookings minted before this column existed (they fall
+    // back to the settings ticket price) and for non-WC sources (punch/gift).
+    paidTicketIls: integer('paid_ticket_ils'),
     // Idempotency key for the WooCommerce checkout hold (super-brief §4.2).
     // WooCommerce re-creates order line items on every checkout attempt, and a
     // single cart can now carry several children on the SAME round (Yanay

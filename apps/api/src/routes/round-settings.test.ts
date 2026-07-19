@@ -95,3 +95,24 @@ test('PATCH /admin/round-settings rejects an unknown key with 400 invalid_body',
   assert.equal(res.statusCode, 400);
   assert.equal(res.json().error, 'invalid_body');
 });
+
+// Field-forwarding is unit-tested here (no DB) because the route harness has no
+// Postgres. Persistence itself is covered in packages/db/src/round-settings.test.ts.
+test('buildRoundSettingsPatch forwards the #115 notification toggles (audit blocker #2)', async () => {
+  const { buildRoundSettingsPatch } = await import('./round-settings.js');
+  const patch = buildRoundSettingsPatch({
+    preVisitReminderOffsets: [1440],
+    bookingConfirmEmail: false, // a false value must still be forwarded, not dropped
+    bookingConfirmSms: true,
+  });
+  assert.deepEqual(patch.preVisitReminderOffsets, [1440]);
+  assert.equal(patch.bookingConfirmEmail, false);
+  assert.equal(patch.bookingConfirmSms, true);
+});
+
+test('buildRoundSettingsPatch omits keys the caller did not send (no clobber)', async () => {
+  const { buildRoundSettingsPatch } = await import('./round-settings.js');
+  const patch = buildRoundSettingsPatch({ holdTtlMinutes: 20 });
+  assert.deepEqual(Object.keys(patch), ['holdTtlMinutes']);
+  assert.equal('bookingConfirmSms' in patch, false);
+});

@@ -246,6 +246,20 @@
       "when": 1783977133857,
       "tag": "0034_thin_mongoose",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1784296078391,
+      "tag": "0035_organic_jane_foster",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1784328028205,
+      "tag": "0036_talented_fixer",
+      "breakpoints": true
     }
   ]
 }

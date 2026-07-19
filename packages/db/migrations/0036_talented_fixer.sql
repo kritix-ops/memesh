@@ -1,0 +1,1 @@
+ALTER TABLE "bookings" ADD COLUMN "paid_ticket_ils" integer;

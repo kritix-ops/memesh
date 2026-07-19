@@ -12,7 +12,7 @@ import { createHold } from './rounds-hold';
 import { mintBooking } from './rounds-mint';
 import { bookRoundWithPunch } from './rounds-punch';
 import { createRound } from './rounds';
-import { bookings, punchCardEntries, punchCards, roundInstances } from './schema';
+import { bookings, punchCardEntries, punchCards, roundInstances, staffActions } from './schema';
 
 async function freshDb() {
   const db = drizzle({ client: new PGlite() });
@@ -105,6 +105,40 @@ test('cancelBooking in manual mode frees the seat without calling the refund', a
   assert.equal(res.wcOrderId, 'wc-1001');
   const row = (await db.select().from(bookings).where(eq(bookings.id, bookingId)).limit(1))[0];
   assert.equal(row!.status, 'cancelled'); // seat freed even though money hasn't moved
+});
+
+test('cancelBooking in manual mode records a durable manual_refund_pending staff action (audit blocker #3)', async () => {
+  const db = await freshDb();
+  const { bookingId, customerId } = await setup(db);
+  const card = await getCardSettings(db);
+  const refund = async () => true;
+  // Customer-initiated manual cancel with NO alert email configured. The owed
+  // refund must survive as a queryable row, not just a warn log that scrolls away.
+  const res = await cancelBooking(db, { bookingId, customerId, manualRefund: true }, { refund }, NOW);
+  assert.equal(res.ok, true);
+  const actions = await db
+    .select()
+    .from(staffActions)
+    .where(eq(staffActions.action, 'manual_refund_pending'));
+  assert.equal(actions.length, 1);
+  assert.equal(actions[0]!.staffId, null); // customer-initiated → no staff attributed
+  assert.ok(
+    actions[0]!.summary.includes(String(card.roundChildOverWalkingPriceIls)),
+    'the recorded summary carries the owed amount',
+  );
+});
+
+test('cancelBooking in AUTO mode writes no manual_refund_pending row', async () => {
+  const db = await freshDb();
+  const { bookingId, customerId } = await setup(db);
+  const refund = async () => true; // auto refund confirmed
+  const res = await cancelBooking(db, { bookingId, customerId, manualRefund: false }, { refund }, NOW);
+  assert.equal(res.ok, true);
+  const actions = await db
+    .select()
+    .from(staffActions)
+    .where(eq(staffActions.action, 'manual_refund_pending'));
+  assert.equal(actions.length, 0); // money already back — nothing owed to record
 });
 
 test('cancelBooking rejects a non-owner without refunding', async () => {

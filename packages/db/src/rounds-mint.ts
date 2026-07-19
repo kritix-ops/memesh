@@ -20,6 +20,12 @@ export type MintBookingInput = {
   /** Overrides the provisional hold source (e.g. 'punchcard'). */
   source?: 'paid' | 'punchcard' | 'gift' | 'manual';
   /**
+   * Actual amount (₪, incl. VAT) charged for this booking's WooCommerce ticket
+   * line, snapshotted onto the booking so the cancellation refund uses the real
+   * charge instead of a settings-derived price. Set only on the paid WC mint.
+   */
+  paidTicketIls?: number;
+  /**
    * When set, the hold must belong to this customer or the mint is rejected.
    * Used by customer-initiated confirmation (the dev-pay stub); the real WC
    * webhook path is server-to-server and leaves it unset.
@@ -106,6 +112,7 @@ export const mintBooking = async (
         holdExpiresAt: null,
         ...(input.wcOrderId ? { wcOrderId: input.wcOrderId } : {}),
         ...(input.source ? { source: input.source } : {}),
+        ...(input.paidTicketIls !== undefined ? { paidTicketIls: input.paidTicketIls } : {}),
         updatedAt: now,
       })
       .where(eq(bookings.id, booking.id))

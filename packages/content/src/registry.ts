@@ -21,6 +21,7 @@ export const CONTENT_GROUPS: ContentGroupMeta[] = [
   { id: 'customer_waitlist', label: 'אזור אישי — רשימת המתנה' },
   { id: 'customer_profile', label: 'אזור אישי — פרופיל' },
   { id: 'email_cancel', label: 'מיילים — ביטול הזמנה' },
+  { id: 'booking_notify', label: 'הודעות ללקוח — אישור הזמנה ותזכורת' },
   { id: 'staff_general', label: 'צוות — כללי וניווט' },
   { id: 'staff_rounds', label: 'צוות — מסך סבבים' },
   { id: 'staff_pos', label: 'צוות — קופה' },
@@ -964,6 +965,104 @@ export const CONTENT_REGISTRY: ContentEntry[] = [
     label: 'מייל ללקוח — סיום',
     default: 'הזיכוי יטופל ויוחזר לאמצעי התשלום שלך בקרוב. אם יש שאלה, אפשר לפנות אלינו.',
     kind: 'long',
+  },
+
+  // ── הודעות ללקוח — אישור הזמנה ותזכורת (Yanay #10 + #11) ───────────
+  // Sent the moment a round booking is confirmed (#10) and again before the
+  // visit (#11). Email + SMS share the copy below; the app fills {{name}},
+  // {{date}}, {{time}} (round window), {{end}} (end time). All admin-editable.
+  {
+    key: 'notify.confirm.smsBody',
+    group: 'booking_notify',
+    label: 'אישור הזמנה — SMS',
+    help: '{{date}} תאריך, {{time}} טווח הסבב.',
+    default:
+      'ההזמנה שלכם למֶמֶשׁ אושרה לתאריך {{date}} בסבב {{time}}. חובה להגיע עם גרביים, כניסה לילדים עד גיל 6 בלבד. לצפייה בהזמנה ובקוד ה־QR: https://my.memesh.co.il',
+    kind: 'long',
+    placeholders: ['date', 'time'],
+  },
+  {
+    key: 'notify.confirm.emailSubject',
+    group: 'booking_notify',
+    label: 'אישור הזמנה — נושא המייל',
+    default: 'ההזמנה שלכם למֶמֶשׁ אושרה',
+    kind: 'short',
+  },
+  {
+    key: 'notify.confirm.emailHeading',
+    group: 'booking_notify',
+    label: 'אישור הזמנה — כותרת',
+    default: 'ההזמנה שלכם למֶמֶשׁ אושרה',
+    kind: 'short',
+  },
+  {
+    key: 'notify.confirm.emailGreeting',
+    group: 'booking_notify',
+    label: 'אישור הזמנה — פנייה',
+    help: '{{name}} שם הלקוח/ה.',
+    default: '{{name}}, שלום!',
+    kind: 'short',
+    placeholders: ['name'],
+  },
+  {
+    key: 'notify.confirm.emailBody',
+    group: 'booking_notify',
+    label: 'אישור הזמנה — גוף המייל',
+    help: '{{date}} תאריך, {{time}} טווח הסבב.',
+    default:
+      'ההזמנה שלכם לתאריך {{date}} בסבב {{time}} אושרה.\nניתן להגיע בכל שעה במהלך הסבב, אך הוא מסתיים בשעה המצוינת.\nחובה להגיע עם גרביים לילדים ולמבוגרים.\nהכניסה לילדים עד גיל 6 בלבד ובליווי אדם בן 16 ומעלה.\nביטול אפשרי עד 24 שעות לפני תחילת הסבב. במקרה של אי־הגעה לא יינתן החזר ולא יוחזר ניקוב.',
+    kind: 'long',
+    placeholders: ['date', 'time'],
+  },
+  {
+    key: 'notify.confirm.emailFooter',
+    group: 'booking_notify',
+    label: 'אישור הזמנה — סיום',
+    default: 'לצפייה בהזמנה ובקוד ה־QR: https://my.memesh.co.il',
+    kind: 'long',
+  },
+  {
+    key: 'notify.preVisit.smsBody',
+    group: 'booking_notify',
+    label: 'תזכורת לפני הביקור — SMS',
+    help: '{{time}} טווח הסבב, {{end}} שעת הסיום.',
+    default:
+      'מחכים לכם מחר במֶמֶשׁ בסבב {{time}}. ניתן להגיע בכל שעה במהלך הסבב, אך הוא מסתיים ב־{{end}}. זכרו להביא גרביים לילדים ולמבוגרים. הכניסה לילדים עד גיל 6 בלבד.',
+    kind: 'long',
+    placeholders: ['time', 'end'],
+  },
+  {
+    key: 'notify.preVisit.emailSubject',
+    group: 'booking_notify',
+    label: 'תזכורת לפני הביקור — נושא המייל',
+    default: 'תזכורת לקראת הביקור שלכם במֶמֶשׁ',
+    kind: 'short',
+  },
+  {
+    key: 'notify.preVisit.emailHeading',
+    group: 'booking_notify',
+    label: 'תזכורת לפני הביקור — כותרת',
+    default: 'מחכים לכם במֶמֶשׁ',
+    kind: 'short',
+  },
+  {
+    key: 'notify.preVisit.emailGreeting',
+    group: 'booking_notify',
+    label: 'תזכורת לפני הביקור — פנייה',
+    help: '{{name}} שם הלקוח/ה.',
+    default: '{{name}}, שלום!',
+    kind: 'short',
+    placeholders: ['name'],
+  },
+  {
+    key: 'notify.preVisit.emailBody',
+    group: 'booking_notify',
+    label: 'תזכורת לפני הביקור — גוף המייל',
+    help: '{{date}} תאריך, {{time}} טווח הסבב, {{end}} שעת הסיום.',
+    default:
+      'מזכירים שיש לכם ביקור בתאריך {{date}} בסבב {{time}}.\nניתן להגיע בכל שעה במהלך הסבב, אך הוא מסתיים ב־{{end}}.\nזכרו להביא גרביים לילדים ולמבוגרים.\nהכניסה לילדים עד גיל 6 בלבד.',
+    kind: 'long',
+    placeholders: ['date', 'time', 'end'],
   },
 
   // ── צוות — כללי וניווט (App shell) ────────────────────────────────

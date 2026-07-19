@@ -9,10 +9,10 @@
 // ON CONFLICT DO NOTHING) is the idempotency guard, so each (round, offset) fires
 // exactly once even across overlapping cron runs.
 
-import { and, eq, ne } from 'drizzle-orm';
+import { and, eq, gte, lte, ne } from 'drizzle-orm';
 import type { PgDatabase } from 'drizzle-orm/pg-core';
 import { getRoundSettings } from './round-settings';
-import { roundStartWallMs, venueTodayIso, venueWallMs } from './round-time';
+import { addIsoDays, roundStartWallMs, venueTodayIso, venueWallMs } from './round-time';
 import { bookings, customers, roundInstances, roundReminderLog, rounds } from './schema/index';
 import { WALKIN_SENTINEL_PHONE } from './walkin-customer';
 
@@ -39,6 +39,34 @@ export interface DueReminder {
 }
 
 const hhmm = (t: string): string => t.slice(0, 5);
+
+/**
+ * The confirmed-booking recipients of a round, deduped by customer is NOT done
+ * here — a customer with two children in the round is one person and should get
+ * one reminder, so callers dedupe by phone. Anonymous cash walk-ins book under
+ * the sentinel customer (placeholder phone) and are excluded.
+ */
+const loadConfirmedRecipients = async (
+  db: AnyPgDatabase,
+  roundInstanceId: string,
+): Promise<ReminderRecipient[]> => {
+  const rows = await db
+    .select({ firstName: customers.firstName, phone: customers.phone, email: customers.email })
+    .from(bookings)
+    .innerJoin(customers, eq(customers.id, bookings.customerId))
+    .where(
+      and(
+        eq(bookings.roundInstanceId, roundInstanceId),
+        eq(bookings.status, 'confirmed'),
+        ne(customers.phone, WALKIN_SENTINEL_PHONE),
+      ),
+    );
+  // One person, one reminder — a parent who booked two children is a single
+  // phone/email, so collapse duplicate contacts.
+  const byPhone = new Map<string, ReminderRecipient>();
+  for (const r of rows) if (!byPhone.has(r.phone)) byPhone.set(r.phone, r);
+  return [...byPhone.values()];
+};
 
 /**
  * Find, claim, and return the stay-duration reminders due at `now`, each with
@@ -83,24 +111,12 @@ export const claimDueReminders = async (
       // Claim: first writer for this (round, offset) wins; the rest skip.
       const claimed = await db
         .insert(roundReminderLog)
-        .values({ roundInstanceId: inst.id, offsetMinutes: offset, sentAt: now })
+        .values({ roundInstanceId: inst.id, kind: 'stay', offsetMinutes: offset, sentAt: now })
         .onConflictDoNothing()
         .returning({ id: roundReminderLog.id });
       if (claimed.length === 0) continue;
 
-      const recipients = await db
-        .select({ firstName: customers.firstName, phone: customers.phone, email: customers.email })
-        .from(bookings)
-        .innerJoin(customers, eq(customers.id, bookings.customerId))
-        // Anonymous cash walk-ins book under the sentinel customer, which has a
-        // placeholder phone — never hand it to the SMS cron.
-        .where(
-          and(
-            eq(bookings.roundInstanceId, inst.id),
-            eq(bookings.status, 'confirmed'),
-            ne(customers.phone, WALKIN_SENTINEL_PHONE),
-          ),
-        );
+      const recipients = await loadConfirmedRecipients(db, inst.id);
 
       await db
         .update(roundReminderLog)
@@ -108,6 +124,89 @@ export const claimDueReminders = async (
         .where(
           and(
             eq(roundReminderLog.roundInstanceId, inst.id),
+            eq(roundReminderLog.kind, 'stay'),
+            eq(roundReminderLog.offsetMinutes, offset),
+          ),
+        );
+
+      due.push({
+        roundInstanceId: inst.id,
+        offsetMinutes: offset,
+        roundLabel: inst.label,
+        startTime: hhmm(inst.startTime),
+        endTime: hhmm(inst.endTime),
+        date: inst.date,
+        recipients,
+      });
+    }
+  }
+  return due;
+};
+
+/**
+ * Find, claim, and return the pre-visit reminders due at `now` (Yanay #11). Same
+ * claim/idempotency machinery as the stay-duration reminder, but keyed off the
+ * round's START and logged under kind='previsit' so a pre-visit offset never
+ * collides with a stay-duration one. Offsets are minutes before start (default
+ * [1440] = 24h → "מחכים לכם מחר"), so the due rounds sit up to two days out; the
+ * scan window is bounded by the largest configured offset. Empty offsets = off.
+ */
+export const claimDuePreVisitReminders = async (
+  db: AnyPgDatabase,
+  now: Date = new Date(),
+): Promise<DueReminder[]> => {
+  const settings = await getRoundSettings(db);
+  if (settings.preVisitReminderOffsets.length === 0) return [];
+
+  const nowWall = venueWallMs(now);
+  const todayIso = venueTodayIso(now);
+  // A reminder N minutes before start is due when the round is N minutes ahead,
+  // so the furthest-out due round sits ceil(maxOffset / 1440) days from today.
+  const maxOffset = Math.max(...settings.preVisitReminderOffsets);
+  const windowEndIso = addIsoDays(todayIso, Math.ceil(maxOffset / 1440));
+
+  const instances = await db
+    .select({
+      id: roundInstances.id,
+      date: roundInstances.date,
+      label: rounds.displayName,
+      startTime: rounds.startTime,
+      endTime: rounds.endTime,
+    })
+    .from(roundInstances)
+    .innerJoin(rounds, eq(rounds.id, roundInstances.roundId))
+    .where(
+      and(
+        gte(roundInstances.date, todayIso),
+        lte(roundInstances.date, windowEndIso),
+        eq(roundInstances.isClosed, false),
+      ),
+    );
+  if (instances.length === 0) return [];
+
+  const due: DueReminder[] = [];
+  for (const inst of instances) {
+    const startWall = roundStartWallMs(inst.date, hhmm(inst.startTime));
+    for (const offset of settings.preVisitReminderOffsets) {
+      const delta = nowWall - (startWall - offset * 60_000);
+      if (delta < 0 || delta >= DUE_WINDOW_MS) continue; // not due this tick
+
+      const claimed = await db
+        .insert(roundReminderLog)
+        .values({ roundInstanceId: inst.id, kind: 'previsit', offsetMinutes: offset, sentAt: now })
+        .onConflictDoNothing()
+        .returning({ id: roundReminderLog.id });
+      if (claimed.length === 0) continue;
+
+      const recipients = await loadConfirmedRecipients(db, inst.id);
+
+      await db
+        .update(roundReminderLog)
+        .set({ recipientCount: recipients.length })
+        .where(
+          and(
+            eq(roundReminderLog.roundInstanceId, inst.id),
+            eq(roundReminderLog.kind, 'previsit'),
             eq(roundReminderLog.offsetMinutes, offset),
           ),
         );

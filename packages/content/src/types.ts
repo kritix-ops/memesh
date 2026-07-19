@@ -19,6 +19,7 @@ export type ContentGroup =
   | 'customer_profile'
   | 'customer_waitlist'
   | 'email_cancel'
+  | 'booking_notify'
   | 'staff_general'
   | 'staff_rounds'
   | 'staff_pos';

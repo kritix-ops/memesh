@@ -11,8 +11,9 @@
 // by hand. This trades the fail-closed money guarantee for a working cancel —
 // an explicit, reversible operator choice, off again once auto-refund returns.
 
-import { eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import type { PgDatabase } from 'drizzle-orm/pg-core';
+import { logStaffAction } from './actions';
 import { getCardSettings } from './card-settings';
 import { getRoundSettings } from './round-settings';
 import { isWithinCancelWindow } from './round-time';
@@ -48,6 +49,14 @@ export type CancelBookingInput = {
    * once auto-refund works again.
    */
   manualRefund?: boolean;
+  /**
+   * The staff member performing a manual-refund cancel, if any. In manual mode a
+   * durable `manual_refund_pending` staff-action row is written inside the cancel
+   * transaction so the owed refund is queryable (not just a warn log); this
+   * stamps who initiated it. Omitted for a customer-initiated cancel (staffId
+   * null).
+   */
+  refundActorStaffId?: string;
 };
 
 export type CancelBookingDeps = {
@@ -157,6 +166,7 @@ export const cancelBooking = async (
         wcOrderId: bookings.wcOrderId,
         ticketType: bookings.ticketType,
         additionalCompanions: bookings.additionalCompanions,
+        paidTicketIls: bookings.paidTicketIls,
         date: roundInstances.date,
         startTime: rounds.startTime,
       })
@@ -190,12 +200,17 @@ export const cancelBooking = async (
     let refundAmountIls = 0;
 
     if (b.source === 'paid') {
-      // Refund value = ticket price by type + companions × companion price.
+      // Refund value = ticket price + companions × companion price. The ticket
+      // price comes from what WooCommerce actually charged (snapshotted at mint,
+      // `paidTicketIls`) so a later price-setting change can't skew the refund;
+      // it falls back to the settings price for bookings minted before that
+      // snapshot existed. The companion add-on stays settings-derived.
       const cardSettings = await getCardSettings(tx);
       const ticketPrice =
-        b.ticketType === 'child_under_walking'
+        b.paidTicketIls ??
+        (b.ticketType === 'child_under_walking'
           ? cardSettings.roundChildBabyPriceIls
-          : cardSettings.roundChildOverWalkingPriceIls;
+          : cardSettings.roundChildOverWalkingPriceIls);
       refundAmountIls = ticketPrice + b.additionalCompanions * cardSettings.roundAdditionalCompanionPriceIls;
       if (input.manualRefund) {
         // Interim: release the seat now; the money refund is handed to staff.
@@ -243,23 +258,45 @@ export const cancelBooking = async (
           .for('update');
         const card = cardRows[0];
         if (card) {
-          const restored = Math.max(0, card.usedEntries - entry.entriesConsumed);
-          const reactivate = !card.isActive && card.cancelledAt === null;
-          await tx
+          // Atomically flip the entry to refunded. The `refunded_at IS NULL`
+          // guard is what prevents a concurrent staff refundEntry on the same
+          // entry from crediting the punch back twice (TOCTOU): the
+          // `entry.refundedAt === null` read above is only a fast-path. If the
+          // entry was already refunded, this matches 0 rows and the card is
+          // left untouched.
+          const flipped = await tx
             .update(punchCardEntries)
             .set({ refundedAt: now, refundReason: 'round booking cancelled' })
-            .where(eq(punchCardEntries.id, entry.id));
-          await tx
-            .update(punchCards)
-            .set({ usedEntries: restored, ...(reactivate && { isActive: true }), updatedAt: now })
-            .where(eq(punchCards.id, card.id));
-          punchReturned = true;
+            .where(and(eq(punchCardEntries.id, entry.id), isNull(punchCardEntries.refundedAt)))
+            .returning({ id: punchCardEntries.id });
+          if (flipped.length > 0) {
+            const restored = Math.max(0, card.usedEntries - entry.entriesConsumed);
+            const reactivate = !card.isActive && card.cancelledAt === null;
+            await tx
+              .update(punchCards)
+              .set({ usedEntries: restored, ...(reactivate && { isActive: true }), updatedAt: now })
+              .where(eq(punchCards.id, card.id));
+            punchReturned = true;
+          }
         }
       }
     }
     // (gift/manual sources don't exist in the v1 flow; gift refund lands with §7.)
 
     await tx.update(bookings).set({ status: 'cancelled', updatedAt: now }).where(eq(bookings.id, b.id));
+
+    // Manual-refund mode frees the seat but hands the money back to staff by
+    // hand. Persist a durable, queryable record of the owed refund INSIDE this
+    // transaction so the obligation survives even when no cancellation-alert
+    // email is configured (otherwise it existed only as a scroll-away warn log).
+    if (refundPending && refundAmountIls > 0) {
+      await logStaffAction(tx, {
+        action: 'manual_refund_pending',
+        summary: `החזר ידני נדרש · ₪${refundAmountIls} · הזמנת WooCommerce ${b.wcOrderId ?? '—'}`,
+        ...(input.refundActorStaffId !== undefined && { staffId: input.refundActorStaffId }),
+        now,
+      });
+    }
     // The route promotes the waitlist for this freed seat after the tx commits.
     return {
       ok: true as const,

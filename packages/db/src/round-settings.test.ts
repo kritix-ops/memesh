@@ -3,7 +3,11 @@ import { test } from 'node:test';
 import { PGlite } from '@electric-sql/pglite';
 import { drizzle } from 'drizzle-orm/pglite';
 import { migrate } from 'drizzle-orm/pglite/migrator';
-import { getRoundSettings, updateRoundSettings, validateRoundSettingsPatch } from './round-settings';
+import {
+  getRoundSettings,
+  updateRoundSettings,
+  validateRoundSettingsPatch,
+} from './round-settings';
 
 async function freshDb() {
   const client = new PGlite();
@@ -27,16 +31,34 @@ test('getRoundSettings returns the seeded defaults', async () => {
 test('validateRoundSettingsPatch enforces ranges', () => {
   assert.equal(validateRoundSettingsPatch({ holdTtlMinutes: 0 })?.code, 'hold_ttl_out_of_range');
   assert.equal(validateRoundSettingsPatch({ holdTtlMinutes: 999 })?.code, 'hold_ttl_out_of_range');
-  assert.equal(validateRoundSettingsPatch({ claimWindowMinutes: 0 })?.code, 'claim_window_out_of_range');
+  assert.equal(
+    validateRoundSettingsPatch({ claimWindowMinutes: 0 })?.code,
+    'claim_window_out_of_range',
+  );
   assert.equal(
     validateRoundSettingsPatch({ cancellationWindowHours: -1 })?.code,
     'cancellation_window_out_of_range',
   );
-  assert.equal(validateRoundSettingsPatch({ bookingHorizonDays: 0 })?.code, 'booking_horizon_out_of_range');
-  assert.equal(validateRoundSettingsPatch({ bookingHorizonDays: 999 })?.code, 'booking_horizon_out_of_range');
-  assert.equal(validateRoundSettingsPatch({ markingGraceMinutes: -1 })?.code, 'marking_grace_out_of_range');
-  assert.equal(validateRoundSettingsPatch({ markingGraceMinutes: 999 })?.code, 'marking_grace_out_of_range');
-  assert.equal(validateRoundSettingsPatch({ holdTtlMinutes: 20, cancellationWindowHours: 48 }), null);
+  assert.equal(
+    validateRoundSettingsPatch({ bookingHorizonDays: 0 })?.code,
+    'booking_horizon_out_of_range',
+  );
+  assert.equal(
+    validateRoundSettingsPatch({ bookingHorizonDays: 999 })?.code,
+    'booking_horizon_out_of_range',
+  );
+  assert.equal(
+    validateRoundSettingsPatch({ markingGraceMinutes: -1 })?.code,
+    'marking_grace_out_of_range',
+  );
+  assert.equal(
+    validateRoundSettingsPatch({ markingGraceMinutes: 999 })?.code,
+    'marking_grace_out_of_range',
+  );
+  assert.equal(
+    validateRoundSettingsPatch({ holdTtlMinutes: 20, cancellationWindowHours: 48 }),
+    null,
+  );
   assert.equal(validateRoundSettingsPatch({ bookingHorizonDays: 30 }), null);
   assert.equal(validateRoundSettingsPatch({ markingGraceMinutes: 0 }), null); // 0 = hard lock, valid
   assert.equal(
@@ -45,6 +67,36 @@ test('validateRoundSettingsPatch enforces ranges', () => {
   );
   assert.equal(validateRoundSettingsPatch({ cancellationAlertEmail: 'ops@memesh.co.il' }), null);
   assert.equal(validateRoundSettingsPatch({ cancellationAlertEmail: '' }), null); // clears the alert
+  // Pre-visit reminder offsets (Yanay #11): up to 5, each 1-2880 min (48h).
+  assert.equal(
+    validateRoundSettingsPatch({ preVisitReminderOffsets: [0] })?.code,
+    'pre_visit_reminder_offsets_invalid',
+  );
+  assert.equal(
+    validateRoundSettingsPatch({ preVisitReminderOffsets: [3000] })?.code,
+    'pre_visit_reminder_offsets_invalid',
+  );
+  assert.equal(validateRoundSettingsPatch({ preVisitReminderOffsets: [1440] }), null);
+  assert.equal(validateRoundSettingsPatch({ preVisitReminderOffsets: [] }), null); // disables
+});
+
+test('updateRoundSettings persists the booking-notification fields', async () => {
+  const db = await freshDb();
+  // Defaults: confirmations on, pre-visit reminder 24h before start.
+  const seed = await getRoundSettings(db);
+  assert.equal(seed.bookingConfirmEmail, true);
+  assert.equal(seed.bookingConfirmSms, true);
+  assert.deepEqual(seed.preVisitReminderOffsets, [1440]);
+
+  const res = await updateRoundSettings(db, {
+    bookingConfirmSms: false,
+    preVisitReminderOffsets: [1440, 120],
+  });
+  assert.equal(res.ok, true);
+  const row = await getRoundSettings(db);
+  assert.equal(row.bookingConfirmSms, false);
+  assert.equal(row.bookingConfirmEmail, true); // untouched
+  assert.deepEqual(row.preVisitReminderOffsets, [1440, 120]);
 });
 
 test('updateRoundSettings persists the manual-refund cancellation knobs', async () => {

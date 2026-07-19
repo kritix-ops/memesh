@@ -1,4 +1,4 @@
-import { desc, eq } from 'drizzle-orm';
+import { and, desc, eq, isNull } from 'drizzle-orm';
 import type { PgDatabase } from 'drizzle-orm/pg-core';
 import { logStaffAction } from './actions';
 import { getCardSettings } from './card-settings';
@@ -335,14 +335,12 @@ export async function refundEntry(
     if (!card) return { ok: false, reason: 'entry_not_found' };
     if (card.cancelledAt) return { ok: false, reason: 'card_cancelled' };
 
-    // Restore exactly what this row consumed — single-entry scans give back 1,
-    // multi-entry scans give back N. Clamp at zero defensively.
-    const nextUsed = Math.max(0, card.usedEntries - entry.entriesConsumed);
-    // Reactivate if exhaustion was the reason the card went inactive (no
-    // cancelledAt). Refunding an already-active card just leaves it active.
-    const reactivated = !card.isActive && card.cancelledAt === null;
-
-    await tx
+    // Atomically flip the entry to refunded. The `refunded_at IS NULL` guard is
+    // what actually prevents a concurrent refund/cancel on the SAME entry from
+    // both crediting a punch back (TOCTOU): the pre-lock `entry.refundedAt` read
+    // above is only a fast-path, not a guard. If another actor already refunded
+    // this entry, the UPDATE matches 0 rows and we stop before touching the card.
+    const flipped = await tx
       .update(punchCardEntries)
       .set({
         refundedAt: now,
@@ -350,7 +348,16 @@ export async function refundEntry(
         approvedBy: input.approvedBy,
         refundReason: input.reason,
       })
-      .where(eq(punchCardEntries.id, entry.id));
+      .where(and(eq(punchCardEntries.id, entry.id), isNull(punchCardEntries.refundedAt)))
+      .returning({ id: punchCardEntries.id });
+    if (flipped.length === 0) return { ok: false, reason: 'already_refunded' };
+
+    // Only now credit the card, exactly once. Restore what this row consumed —
+    // single-entry scans give back 1, multi-entry scans give back N. Clamp at
+    // zero defensively. Reactivate only if exhaustion was why the card went
+    // inactive (no cancelledAt); an already-active card stays active.
+    const nextUsed = Math.max(0, card.usedEntries - entry.entriesConsumed);
+    const reactivated = !card.isActive && card.cancelledAt === null;
 
     await tx
       .update(punchCards)

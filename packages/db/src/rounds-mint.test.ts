@@ -104,6 +104,17 @@ test('mintBooking on a cancelled booking returns cancelled (not not_found)', asy
   if (!replay.ok) assert.equal(replay.error, 'cancelled'); // a distinct, non-orphan signal
 });
 
+test('mintBooking snapshots paidTicketIls onto the booking when given', async () => {
+  const db = await freshDb();
+  const { instId, customerId } = await setup(db);
+  const hold = await createHold(db, { roundInstanceId: instId, customerId, ...ticket }, NOW);
+  if (!hold.ok) return;
+  const res = await mintBooking(db, { holdId: hold.holdId, wcOrderId: 'wc-4', paidTicketIls: 55 }, resolver, NOW);
+  assert.equal(res.ok, true);
+  const row = (await db.select().from(bookings).where(eq(bookings.id, hold.holdId)).limit(1))[0];
+  assert.equal(row!.paidTicketIls, 55);
+});
+
 test('mintBooking recovers an expired hold when a seat is still free', async () => {
   const db = await freshDb();
   const { instId, customerId } = await setup(db, 2);

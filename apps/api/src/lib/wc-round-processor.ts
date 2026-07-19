@@ -28,7 +28,13 @@ const HOLD_ID_KEY = '_memesh_hold_id';
 const COMPANION_BOOKING_KEY = '_memesh_companion_booking_id';
 
 const metaItemSchema = z.object({ key: z.string(), value: z.unknown() });
-const lineItemSchema = z.object({ meta_data: z.array(metaItemSchema).optional() });
+// WC reports the line net (`total`) and its tax (`total_tax`) as decimal
+// strings; the customer paid the sum. We snapshot that gross onto the booking.
+const lineItemSchema = z.object({
+  meta_data: z.array(metaItemSchema).optional(),
+  total: z.string().optional(),
+  total_tax: z.string().optional(),
+});
 const orderSchema = z.object({
   id: z.number(),
   status: z.string(),
@@ -48,6 +54,19 @@ const readMetaString = (
     if (m.key === key && typeof m.value === 'string') return m.value.trim();
   }
   return undefined;
+};
+
+// The gross ₪ charged for a ticket line = net + tax, rounded to whole shekels
+// (round prices are integers). Returns undefined when the line carries no
+// totals, so the mint leaves paidTicketIls null and the refund falls back to the
+// settings price.
+const lineGrossIls = (li: {
+  total?: string | undefined;
+  total_tax?: string | undefined;
+}): number | undefined => {
+  if (li.total === undefined && li.total_tax === undefined) return undefined;
+  const gross = Number(li.total ?? 0) + Number(li.total_tax ?? 0);
+  return Number.isFinite(gross) && gross > 0 ? Math.round(gross) : undefined;
 };
 
 export interface ProcessRoundOrderInput {
@@ -107,25 +126,27 @@ export const processRoundOrderWebhook = async (
   }
 
   const orderId = String(order.id);
-  const holdIds: string[] = [];
+  // Each ticket line carries its own hold id, so its line total is exactly this
+  // booking's ticket charge — even when one order holds several children.
+  const holds: Array<{ holdId: string; paidTicketIls: number | undefined }> = [];
   for (const li of order.line_items) {
     const holdId = readMetaString(li.meta_data, HOLD_ID_KEY);
-    if (holdId) holdIds.push(holdId);
+    if (holdId) holds.push({ holdId, paidTicketIls: lineGrossIls(li) });
   }
   const companionBookingId = readMetaString(order.meta_data, COMPANION_BOOKING_KEY);
-  if (holdIds.length === 0 && !companionBookingId) return { status: 'no_round_items' };
+  if (holds.length === 0 && !companionBookingId) return { status: 'no_round_items' };
 
   const minted: string[] = [];
   const failed: Array<{ holdId: string; error: string }> = [];
   const alreadyCancelled: string[] = [];
-  for (const holdId of holdIds) {
+  for (const { holdId, paidTicketIls } of holds) {
     if (!UUID_RE.test(holdId)) {
       failed.push({ holdId, error: 'invalid_hold_id' });
       continue;
     }
     const res = await mintBooking(
       db,
-      { holdId, wcOrderId: orderId, source: 'paid' },
+      { holdId, wcOrderId: orderId, source: 'paid', ...(paidTicketIls !== undefined && { paidTicketIls }) },
       input.resolver,
       input.now,
     );
