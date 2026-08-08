@@ -90,7 +90,7 @@ test('a second capacity edit still propagates (no old-default guessing)', async 
   assert.equal(far.capacity, 70);
 });
 
-test('booked dates keep their capacity and come back in the report', async () => {
+test('a booked date follows a raise — its seats still fit', async () => {
   const db = await freshDb();
   const created = await createRound(db, { ...baseInput, defaultCapacity: 10 }, NOW);
   assert.equal(created.ok, true);
@@ -101,11 +101,43 @@ test('booked dates keep their capacity and come back in the report', async () =>
   const res = await updateRound(db, created.round.id, { defaultCapacity: 25 }, NOW);
   assert.equal(res.ok, true);
   if (!res.ok) return;
+  assert.equal(res.propagation.capacityUpdated, 365, 'one booking is no reason to freeze');
+  assert.deepEqual(res.propagation.capacityKeptDates, []);
+  assert.equal((await instanceOn(db, created.round.id, '2026-08-20')).capacity, 25);
+});
+
+test('a booked date follows a cut when its seats still fit (Yanay 60→50)', async () => {
+  const db = await freshDb();
+  const created = await createRound(db, { ...baseInput, defaultCapacity: 60 }, NOW);
+  assert.equal(created.ok, true);
+  if (!created.ok) return;
+  const booked = await instanceOn(db, created.round.id, '2026-08-20');
+  for (let i = 0; i < 4; i += 1) await bookSeat(db, booked.id, `050000041${i}`);
+
+  const res = await updateRound(db, created.round.id, { defaultCapacity: 50 }, NOW);
+  assert.equal(res.ok, true);
+  if (!res.ok) return;
+  assert.equal(res.propagation.capacityUpdated, 365, '4 registered fit in 50 — nothing to keep');
+  assert.deepEqual(res.propagation.capacityKeptDates, []);
+  assert.equal((await instanceOn(db, created.round.id, '2026-08-20')).capacity, 50);
+});
+
+test('a date with more bookings than the new capacity is kept and reported', async () => {
+  const db = await freshDb();
+  const created = await createRound(db, { ...baseInput, defaultCapacity: 4 }, NOW);
+  assert.equal(created.ok, true);
+  if (!created.ok) return;
+  const booked = await instanceOn(db, created.round.id, '2026-08-20');
+  for (let i = 0; i < 4; i += 1) await bookSeat(db, booked.id, `050000042${i}`);
+
+  const res = await updateRound(db, created.round.id, { defaultCapacity: 2 }, NOW);
+  assert.equal(res.ok, true);
+  if (!res.ok) return;
   assert.equal(res.propagation.capacityUpdated, 364);
   assert.deepEqual(res.propagation.capacityKeptDates, ['2026-08-20']);
 
-  assert.equal((await instanceOn(db, created.round.id, '2026-08-20')).capacity, 10, 'kept');
-  assert.equal((await instanceOn(db, created.round.id, '2026-08-21')).capacity, 25, 'updated');
+  assert.equal((await instanceOn(db, created.round.id, '2026-08-20')).capacity, 4, 'kept — 4 > 2');
+  assert.equal((await instanceOn(db, created.round.id, '2026-08-21')).capacity, 2, 'updated');
 });
 
 test('a cancelled-only date follows the template like an empty one', async () => {
