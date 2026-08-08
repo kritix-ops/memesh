@@ -151,7 +151,8 @@ export const createRound = async (
 export type RoundPropagation = {
   /** Future instances whose capacity followed the template edit. */
   capacityUpdated: number;
-  /** Future dates that kept their old capacity because seats are taken there. */
+  /** Future dates that kept their old capacity because more seats are taken
+   *  there than the new capacity holds. */
   capacityKeptDates: string[];
   /** Future instances deleted because their weekday left daysActive. */
   instancesRemoved: number;
@@ -662,8 +663,11 @@ export const listUpcomingReservationsForCustomer = async (
  * the whole booking window.
  *   - defaultCapacity change → every instance from venue-today on takes the
  *     new capacity, EXCEPT dates the admin set by hand (capacity_overridden)
- *     and dates where seats are already taken — changing those is a human
- *     decision, so they come back in the report instead.
+ *     and dates where more seats are already taken than the new capacity
+ *     holds — shrinking those below their bookings is a human decision, so
+ *     they come back in the report instead. A booked date whose seats still
+ *     fit follows the template like any other (Yanay 2026-08-08: lowering
+ *     60→50 must reach a date with 4 registrations).
  *   - weekday removed from daysActive → its future instances are deleted,
  *     EXCEPT dates any booking ever touched (bookings are the audit trail,
  *     same stance as deleteRound) — those also come back in the report.
@@ -684,11 +688,11 @@ export const propagateRoundTemplateChange = async (
     removedDayKeptDates: [],
   };
 
-  // Same seats-taken predicate as availability: confirmed + used + unexpired
-  // holds. A date with only cancelled/expired bookings has no seats to
-  // protect, so it follows the template like any empty date.
-  const seatsTaken = sql`EXISTS (
-    SELECT 1 FROM ${bookings}
+  // Same seats-taken count as availability (super-brief §1.3): confirmed +
+  // used + unexpired holds. A date with only cancelled/expired bookings has
+  // no seats to protect, so it follows the template like any empty date.
+  const seatsTakenCount = sql`(
+    SELECT COUNT(*) FROM ${bookings}
     WHERE ${bookings.roundInstanceId} = ${roundInstances.id}
       AND (${bookings.status} IN ('confirmed','used')
         OR (${bookings.status} = 'held' AND ${bookings.holdExpiresAt} > ${now}))
@@ -704,7 +708,7 @@ export const propagateRoundTemplateChange = async (
           gte(roundInstances.date, todayIso),
           eq(roundInstances.capacityOverridden, false),
           sql`${roundInstances.capacity} <> ${after.defaultCapacity}`,
-          seatsTaken,
+          sql`${seatsTakenCount} > ${after.defaultCapacity}`,
         ),
       );
     result.capacityKeptDates = kept.map((r) => r.date).sort();
@@ -717,7 +721,7 @@ export const propagateRoundTemplateChange = async (
           eq(roundInstances.roundId, after.id),
           gte(roundInstances.date, todayIso),
           eq(roundInstances.capacityOverridden, false),
-          sql`NOT (${seatsTaken})`,
+          sql`${seatsTakenCount} <= ${after.defaultCapacity}`,
         ),
       )
       .returning({ id: roundInstances.id });

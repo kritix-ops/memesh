@@ -852,8 +852,8 @@ function RoundForm({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
-  // Future dates the server left untouched (bookings there) after this edit —
-  // the form stays open until the admin acknowledges the list.
+  // Future dates the server left untouched after this edit (bookings there
+  // exceed the change) — the form stays open until the admin acknowledges.
   const [keptDates, setKeptDates] = useState<string[] | null>(null);
 
   const toggleDay = (bit: number) => setDays((prev) => prev ^ (1 << bit));
@@ -918,8 +918,9 @@ function RoundForm({
       setError(humanizeRoundError(res.error));
       return;
     }
-    // Booked dates kept their old capacity (or survived a weekday removal) —
-    // hold the form open until the admin has seen the list.
+    // Dates the sweep could not follow the edit on (more bookings than the
+    // new capacity, or a removed weekday anchored by bookings) — hold the
+    // form open until the admin has seen the list.
     const prop = res.data.propagation;
     const kept = prop
       ? [...new Set([...prop.capacityKeptDates, ...prop.removedDayKeptDates])].sort()
@@ -1065,7 +1066,8 @@ function RoundForm({
           >
             <div style={{ fontWeight: 600 }}>הסבב נשמר, אבל שימו לב</div>
             <div style={{ lineHeight: 1.6 }}>
-              בתאריכים הבאים כבר יש הזמנות, ולכן הם שמרו על ההגדרות הקודמות:{' '}
+              בתאריכים הבאים יש כבר יותר נרשמים מהקיבולת החדשה, או שהם ביום שהוסר מהסבב ויש
+              בו הזמנות, ולכן הם שמרו על ההגדרות הקודמות:{' '}
               {keptDates.map(fmtIsoDate).join(', ')}. אם צריך לשנות גם אותם, טפלו בהם דרך לוח
               הסבבים וצרו קשר עם הלקוחות שהזמינו.
             </div>
