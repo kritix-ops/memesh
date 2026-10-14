@@ -162,6 +162,16 @@ export const fromDateInput = (s: string): Date | null => {
 };
 
 /**
+ * Same parse, but to the END of that local day (23:59:59.999). Range "to"
+ * inputs must use this: an inclusive end date parsed to 00:00 would silently
+ * exclude everything that happened during the selected last day.
+ */
+export const fromDateInputEnd = (s: string): Date | null => {
+  const d = fromDateInput(s);
+  return d ? endOfDay(d) : null;
+};
+
+/**
  * Today's date at the venue (Asia/Jerusalem), YYYY-MM-DD — the client-side
  * mirror of the server's venueTodayIso. Round dates are venue-calendar days,
  * so "is this booking today?" must never use the browser's local day.

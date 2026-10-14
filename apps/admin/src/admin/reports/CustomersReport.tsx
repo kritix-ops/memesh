@@ -6,6 +6,7 @@ import {
 } from '../../lib/api/reports';
 import { downloadCsv, presetRange, printReport, toCsv } from '../../lib/export';
 import { parseDaysInput } from './filter-inputs';
+import { loggableFilters } from './report-log';
 import {
   DateRangeField,
   EmptyState,
@@ -64,12 +65,18 @@ export function CustomersReport() {
     let cancelled = false;
     setLoading(true);
     setError(null);
+    console.info('[web admin reports] customers fetch', { filters: loggableFilters(filters) });
     (async () => {
       const res = await fetchCustomersReport(filters);
       if (cancelled) return;
       setLoading(false);
-      if (res.ok) setRows(res.data.rows);
-      else setError(res.error);
+      if (res.ok) {
+        console.info('[web admin reports] customers fetch ok', { rows: res.data.rows.length });
+        setRows(res.data.rows);
+      } else {
+        console.warn('[web admin reports] customers fetch failed', { error: res.error });
+        setError(res.error);
+      }
     })();
     return () => {
       cancelled = true;

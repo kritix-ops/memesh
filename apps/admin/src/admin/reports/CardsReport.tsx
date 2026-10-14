@@ -5,7 +5,9 @@ import {
   type CardsReportRow,
 } from '../../lib/api/reports';
 import { downloadCsv, presetRange, printReport, toCsv } from '../../lib/export';
+import { isCardCurrentlyActive } from '../card-status';
 import { parseDaysInput, parsePctInput } from './filter-inputs';
+import { loggableFilters } from './report-log';
 import {
   DateRangeField,
   EmptyState,
@@ -68,12 +70,18 @@ export function CardsReport() {
     let cancelled = false;
     setLoading(true);
     setError(null);
+    console.info('[web admin reports] cards fetch', { filters: loggableFilters(filters) });
     (async () => {
       const res = await fetchCardsReport(filters);
       if (cancelled) return;
       setLoading(false);
-      if (res.ok) setRows(res.data.rows);
-      else setError(res.error);
+      if (res.ok) {
+        console.info('[web admin reports] cards fetch ok', { rows: res.data.rows.length });
+        setRows(res.data.rows);
+      } else {
+        console.warn('[web admin reports] cards fetch failed', { error: res.error });
+        setError(res.error);
+      }
     })();
     return () => {
       cancelled = true;
@@ -100,7 +108,7 @@ export function CardsReport() {
 
   const statusLabel = (r: CardsReportRow): string => {
     if (r.cancelledAt) return 'בוטלה';
-    if (!r.isActive) return 'לא פעילה';
+    if (!isCardCurrentlyActive(r)) return 'לא פעילה';
     return 'פעילה';
   };
 

@@ -6,6 +6,7 @@ import {
   type TicketsReportSummary,
 } from '../../lib/api/reports';
 import { downloadCsv, printReport, toCsv, toDateInput, venueTodayIso } from '../../lib/export';
+import { loggableFilters } from './report-log';
 import {
   DateRangeField,
   EmptyState,
@@ -77,15 +78,21 @@ export function TicketsReport() {
     let cancelled = false;
     setLoading(true);
     setError(null);
+    console.info('[web admin reports] tickets fetch', { filters: loggableFilters(filters) });
     (async () => {
       const res = await fetchTicketsReport(filters);
       if (cancelled) return;
       setLoading(false);
       if (res.ok) {
+        console.info('[web admin reports] tickets fetch ok', {
+          rows: res.data.rows.length,
+          total: res.data.total,
+        });
         setRows(res.data.rows);
         setTotal(res.data.total);
         setSummary(res.data.summary);
       } else {
+        console.warn('[web admin reports] tickets fetch failed', { error: res.error });
         setError(res.error);
       }
     })();

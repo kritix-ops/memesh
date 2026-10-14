@@ -12,7 +12,8 @@
 // yesterday (Yoav 2026-07-05 — the staff panel said "no rounds today" on a
 // Sunday because it queried the server's Saturday).
 
-const VENUE_TZ = 'Asia/Jerusalem';
+/** The venue's IANA timezone: the single source of truth for every venue-clock computation. */
+export const VENUE_TZ = 'Asia/Jerusalem';
 
 /** `now` as venue wall-clock time, as epoch-ms of that wall time treated as UTC. */
 export function venueWallMs(now: Date): number {
