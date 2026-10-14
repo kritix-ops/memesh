@@ -60,6 +60,7 @@ import {
   type PermissionDescriptor,
 } from '../lib/api/role-permissions';
 import { useViewport } from '../useViewport';
+import { isCardCurrentlyActive } from './card-status';
 import { CreateCardForAdminModal, type AdminCreateInput } from './CreateCardForAdminModal';
 import { EditCardModal, type EditCardSubmit } from './EditCardModal';
 import { Holidays } from './Holidays';
@@ -1356,7 +1357,7 @@ function CancelCardModal({
 
 function cardStatusBadge(c: AdminCardRow): { text: string; bg: string; color: string } {
   if (c.cancelledAt) return { text: 'בוטלה', bg: '#fbecec', color: '#c25a5a' };
-  if (!c.isActive) return { text: 'לא פעילה', bg: '#ececec', color: '#9aa3a6' };
+  if (!isCardCurrentlyActive(c)) return { text: 'לא פעילה', bg: '#ececec', color: '#9aa3a6' };
   return { text: 'פעילה', bg: '#f0f5e3', color: '#6f8f37' };
 }
 
@@ -1490,6 +1491,7 @@ function CardDetailBody({
   const badge = cardStatusBadge({
     cancelledAt: card.cancelledAt,
     isActive: card.isActive,
+    expiresAt: card.expiresAt,
   } as AdminCardRow);
   return (
     <>
@@ -2572,7 +2574,7 @@ function CustomerDetailBody({
         cards.map((c, i) => {
           const status = c.cancelledAt
             ? { text: 'בוטלה', bg: '#fbecec', color: '#c25a5a' }
-            : c.isActive
+            : isCardCurrentlyActive(c)
               ? { text: 'פעילה', bg: '#f0f5e3', color: '#6f8f37' }
               : { text: 'לא פעילה', bg: '#ececec', color: '#9aa3a6' };
           const showAdminActions = isAdmin && !c.cancelledAt;

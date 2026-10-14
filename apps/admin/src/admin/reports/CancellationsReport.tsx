@@ -6,6 +6,7 @@ import {
   type CancellationsReportRow,
 } from '../../lib/api/reports';
 import { downloadCsv, presetRange, printReport, toCsv } from '../../lib/export';
+import { loggableFilters } from './report-log';
 import {
   DateRangeField,
   EmptyState,
@@ -65,16 +66,24 @@ export function CancellationsReport() {
     let cancelled = false;
     setLoading(true);
     setError(null);
+    console.info('[web admin reports] cancellations fetch', { filters: loggableFilters(filters) });
     (async () => {
       const res = await fetchCancellationsReport(filters);
       if (cancelled) return;
       setLoading(false);
       if (res.ok) {
+        console.info('[web admin reports] cancellations fetch ok', {
+          rows: res.data.rows.length,
+          total: res.data.total,
+          cardCount: res.data.cardCount,
+          entryCount: res.data.entryCount,
+        });
         setRows(res.data.rows);
         setTotal(res.data.total);
         setCardCount(res.data.cardCount);
         setEntryCount(res.data.entryCount);
       } else {
+        console.warn('[web admin reports] cancellations fetch failed', { error: res.error });
         setError(res.error);
       }
     })();
