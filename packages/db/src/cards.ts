@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { generateSerial, signToken, type KeyResolver } from '@memesh/qr-engine';
-import { and, desc, eq, gt, ilike, isNotNull, isNull, lte, or, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, ilike, isNotNull, isNull, lte, or, sql, type SQL } from 'drizzle-orm';
 import { alias, type PgDatabase } from 'drizzle-orm/pg-core';
 import { logStaffAction } from './actions';
 import { getCardSettings } from './card-settings';
@@ -22,6 +22,31 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 // Accept any PostgreSQL Drizzle database (node-postgres in prod, PGlite in tests).
 type AnyPgDatabase = PgDatabase<any, any, any>;
+
+/**
+ * A card that is genuinely usable right now: flagged active AND not past its
+ * expiry date. `isActive` alone is not enough: nothing flips it when
+ * `expiresAt` passes (only exhaustion and cancellation do), so date-expired
+ * cards keep isActive=true in the row. Boundary matches the punch flow:
+ * expiresAt <= now is expired. Single source of truth for listCards and the
+ * admin reports.
+ */
+export const cardIsCurrentlyActive = (now: Date): SQL =>
+  and(
+    eq(punchCards.isActive, true),
+    or(isNull(punchCards.expiresAt), gt(punchCards.expiresAt, now)),
+  )!;
+
+/**
+ * Expired = not cancelled, and either exhausted (isActive flipped) or past
+ * expires_at (isActive still true). Exact complement of cardIsCurrentlyActive
+ * among non-cancelled cards.
+ */
+export const cardIsExpired = (now: Date): SQL =>
+  and(
+    isNull(punchCards.cancelledAt),
+    or(eq(punchCards.isActive, false), lte(punchCards.expiresAt, now)),
+  )!;
 
 const extractRows = (result: unknown): Array<Record<string, unknown>> => {
   if (
@@ -501,13 +526,11 @@ export const listCards = async (db: AnyPgDatabase, input: ListCardsInput = {}) =
   const now = input.now ?? new Date();
   const conds = [];
   if (input.status === 'active') {
-    conds.push(eq(punchCards.isActive, true));
-    conds.push(or(isNull(punchCards.expiresAt), gt(punchCards.expiresAt, now))!);
+    conds.push(cardIsCurrentlyActive(now));
   } else if (input.status === 'cancelled') {
     conds.push(isNotNull(punchCards.cancelledAt));
   } else if (input.status === 'expired') {
-    conds.push(isNull(punchCards.cancelledAt));
-    conds.push(or(eq(punchCards.isActive, false), lte(punchCards.expiresAt, now))!);
+    conds.push(cardIsExpired(now));
   }
   const q = input.q?.trim();
   if (q) {

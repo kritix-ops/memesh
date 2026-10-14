@@ -75,6 +75,26 @@ test('cancelBooking refunds the booking value and releases the seat', async () =
   assert.equal(row!.status, 'cancelled');
 });
 
+test('cancelBooking refunds the snapshotted paidTicketIls over the settings price', async () => {
+  const db = await freshDb();
+  const { bookingId, customerId } = await setup(db);
+  const card = await getCardSettings(db);
+  // The seat was actually charged a different amount than the current settings
+  // price (roundChildOverWalkingPriceIls). The refund must follow the real charge.
+  const paid = card.roundChildOverWalkingPriceIls + 7;
+  await db.update(bookings).set({ paidTicketIls: paid }).where(eq(bookings.id, bookingId));
+  const calls: number[] = [];
+  const refund = async (_order: string, amount: number) => {
+    calls.push(amount);
+    return true;
+  };
+  const res = await cancelBooking(db, { bookingId, customerId }, { refund }, NOW);
+  assert.equal(res.ok, true);
+  if (!res.ok) return;
+  assert.equal(res.refundAmountIls, paid); // the actual charge, not the settings price
+  assert.deepEqual(calls, [paid]);
+});
+
 test('cancelBooking does not release the seat when the refund is not confirmed', async () => {
   const db = await freshDb();
   const { bookingId, customerId } = await setup(db);

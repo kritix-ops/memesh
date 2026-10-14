@@ -5,7 +5,6 @@ import {
   desc,
   eq,
   exists,
-  gt,
   gte,
   ilike,
   inArray,
@@ -23,6 +22,7 @@ import {
 import { alias, type PgDatabase } from 'drizzle-orm/pg-core';
 import { getCustomerById } from './accounts';
 import { getCardSettings } from './card-settings';
+import { cardIsCurrentlyActive, cardIsExpired } from './cards';
 import { VENUE_TZ } from './round-time';
 import {
   bookings,
@@ -53,19 +53,6 @@ const countRows = async (
   const rows = await db.select({ n: count() }).from(table).where(where);
   return Number(rows[0]?.n ?? 0);
 };
-
-/**
- * A card that is genuinely usable right now: flagged active AND not past its
- * expiry date. `isActive` alone is not enough: nothing flips it when
- * `expiresAt` passes (only exhaustion and cancellation do), so date-expired
- * cards keep isActive=true in the row. Boundary matches the punch flow:
- * expiresAt <= now is expired.
- */
-const cardIsCurrentlyActive = (now: Date): SQL =>
-  and(
-    eq(punchCards.isActive, true),
-    or(isNull(punchCards.expiresAt), gt(punchCards.expiresAt, now)),
-  )!;
 
 export interface DashboardStats {
   entriesLast24h: number;
@@ -426,12 +413,7 @@ export const cardsReport = async (
   }
   if (filters.status === 'active') conds.push(cardIsCurrentlyActive(now));
   if (filters.status === 'cancelled') conds.push(isNotNull(punchCards.cancelledAt));
-  if (filters.status === 'expired') {
-    // Expired covers exhaustion (isActive flipped) AND date-expiry (isActive
-    // still true; nothing flips it when expiresAt passes).
-    conds.push(isNull(punchCards.cancelledAt));
-    conds.push(or(eq(punchCards.isActive, false), lte(punchCards.expiresAt, now))!);
-  }
+  if (filters.status === 'expired') conds.push(cardIsExpired(now));
   if (filters.source) conds.push(eq(punchCards.source, filters.source));
   if (filters.soldFrom) conds.push(gte(punchCards.createdAt, filters.soldFrom));
   if (filters.soldTo) conds.push(lte(punchCards.createdAt, filters.soldTo));
