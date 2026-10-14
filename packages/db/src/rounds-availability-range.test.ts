@@ -13,7 +13,7 @@ import { updateRoundSettings } from './round-settings';
 import { roundAvailabilityRange } from './rounds-availability-range';
 import { createScheduleRule } from './rounds-schedule';
 import { createRound } from './rounds';
-import { bookings, roundInstances } from './schema';
+import { bookings, roundInstances, roundScheduleRules } from './schema';
 import { and, eq } from 'drizzle-orm';
 
 async function freshDb() {
@@ -98,6 +98,28 @@ test('range: a free_play rule day drops filtered rounds and is not required', as
   // The neighbor day has no rule — default mandatory, round offered.
   assert.equal(range[1]!.roundsRequired, true);
   assert.equal(range[1]!.rounds.length, 1);
+});
+
+test('range: a special-hours (free_play) day surfaces its open/close bounds', async () => {
+  const db = await freshDb();
+  await dailyRound(db);
+  const rule = await createScheduleRule(db, { dateFrom: FROM, windows: [], outside: 'free_play' });
+  if (!rule.ok) throw new Error('rule');
+  // Holiday-sync-style open/close hours on a free-play day (special hours /
+  // Friday early-close). Written directly here the way the sync would.
+  await db
+    .update(roundScheduleRules)
+    .set({ openFrom: '09:00', openUntil: '13:00' })
+    .where(eq(roundScheduleRules.id, rule.rule.id));
+
+  const range = await roundAvailabilityRange(db, FROM, 2, NOW);
+  assert.equal(range[0]!.openFrom, '09:00');
+  assert.equal(range[0]!.openUntil, '13:00');
+  assert.equal(range[0]!.roundsRequired, false); // still sellable
+  assert.equal(range[0]!.closed, false);
+  // A day with no rule carries no hours.
+  assert.equal(range[1]!.openFrom, null);
+  assert.equal(range[1]!.openUntil, null);
 });
 
 test('range: a closed rule day keeps roundsRequired true with fitting rounds only', async () => {
