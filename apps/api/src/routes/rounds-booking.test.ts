@@ -109,6 +109,11 @@ test('GET /rounds/availability-range is public and returns one entry per day', a
   );
   for (const day of body.days) {
     assert.equal(typeof day.roundsRequired, 'boolean');
+    // Special-hours / early-close bounds reach the picker: "HH:MM" or null.
+    for (const key of ['openFrom', 'openUntil'] as const) {
+      assert.ok(key in day, `day carries ${key}`);
+      assert.ok(day[key] === null || /^\d{2}:\d{2}$/.test(day[key]), `${key} is HH:MM or null`);
+    }
     assert.ok(Array.isArray(day.rounds), 'rounds is an array');
     for (const r of day.rounds) {
       // Public shape must not leak internal fields.
